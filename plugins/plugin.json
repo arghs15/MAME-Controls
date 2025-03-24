@@ -1,0 +1,10 @@
+{
+  "plugin": {
+    "name": "mame_controls",
+    "description": "MAME Controls Display",
+    "version": "0.1",
+    "author": "Custom Plugin",
+    "type": "plugin",
+    "start": "true"
+  }
+}
