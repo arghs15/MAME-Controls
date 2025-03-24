@@ -4308,7 +4308,7 @@ class MAMEControlConfig(ctk.CTk):
             traceback.print_exc()
 
     def start_xinput_polling(self):
-        """Start polling for controller input using the inputs package"""
+        """Start polling for controller input with improved detection"""
         try:
             # Try to import inputs module
             from inputs import devices, get_gamepad
@@ -4324,36 +4324,84 @@ class MAMEControlConfig(ctk.CTk):
             # Flag to prevent multiple polling loops
             self.xinput_polling_active = True
             
-            # Define the polling function
-            def check_controller_input():
-                if not hasattr(self, 'preview_window') or not self.preview_window.winfo_exists():
-                    self.xinput_polling_active = False
-                    return
-                    
-                try:
-                    # Try to get gamepad events
-                    events = get_gamepad()
-                    for event in events:
-                        # A button is usually BTN_SOUTH
-                        if event.ev_type == "Key" and event.state == 1:  # Button pressed down
-                            if event.code in ["BTN_SOUTH", "BTN_EAST", "BTN_START"]:  # A, B, or Start buttons
-                                print(f"Controller button pressed: {event.code}, closing preview")
-                                self.close_preview()
-                                return
-                    
-                    # Continue polling if window still exists
-                    if self.xinput_polling_active:
-                        self.preview_window.after(100, check_controller_input)
-                        
-                except Exception as e:
-                    print(f"Controller polling error: {e}")
-                    # Try again if still active
-                    if self.xinput_polling_active:
-                        self.preview_window.after(100, check_controller_input)
+            # Track last detected button press time to prevent multiple triggers
+            self.last_button_press_time = 0
             
-            # Start the polling loop
-            self.preview_window.after(100, check_controller_input)
-            print("Started controller input polling")
+            # Create a dedicated thread for controller polling
+            import threading
+            import time
+            import queue
+            
+            # Create a queue for button events
+            self.controller_event_queue = queue.Queue()
+            
+            # Thread function for continuous controller polling
+            def controller_polling_thread():
+                try:
+                    while self.xinput_polling_active:
+                        try:
+                            # Get events from controller
+                            events = get_gamepad()
+                            
+                            # Look for button presses
+                            for event in events:
+                                if event.ev_type == "Key" and event.state == 1:
+                                    # Put button press event in queue
+                                    self.controller_event_queue.put(event.code)
+                                    
+                        except Exception as e:
+                            # Ignore expected errors
+                            if "No more events to read" not in str(e):
+                                print(f"Controller polling error: {e}")
+                            
+                        # Short sleep to avoid consuming too much CPU
+                        time.sleep(0.01)
+                except Exception as e:
+                    print(f"Controller thread error: {e}")
+                
+                print("Controller polling thread ended")
+            
+            # Start the polling thread
+            self.controller_thread = threading.Thread(target=controller_polling_thread)
+            self.controller_thread.daemon = True
+            self.controller_thread.start()
+            
+            # Function to check the event queue from the main thread
+            def check_controller_queue():
+                # Skip if window is closed or polling inactive
+                if not hasattr(self, 'preview_window') or not self.preview_window.winfo_exists() or not self.xinput_polling_active:
+                    return
+                
+                # Process up to 5 events at a time
+                for _ in range(5):
+                    if self.controller_event_queue.empty():
+                        break
+                    
+                    try:
+                        # Get button code from queue
+                        button_code = self.controller_event_queue.get_nowait()
+                        
+                        # Check debounce time (300ms)
+                        current_time = time.time()
+                        if current_time - self.last_button_press_time > 0.3:
+                            print(f"Controller button pressed: {button_code}")
+                            self.last_button_press_time = current_time
+                            
+                            # Close the preview
+                            self.close_preview()
+                            return
+                    except queue.Empty:
+                        break
+                    except Exception as e:
+                        print(f"Error processing controller event: {e}")
+                
+                # Schedule next check if window still exists
+                if hasattr(self, 'preview_window') and self.preview_window.winfo_exists() and self.xinput_polling_active:
+                    self.preview_window.after(33, check_controller_queue)  # ~30Hz checking
+            
+            # Start the event queue checker
+            self.preview_window.after(100, check_controller_queue)
+            print("Started improved controller support")
             return True
             
         except ImportError:
@@ -4362,6 +4410,44 @@ class MAMEControlConfig(ctk.CTk):
         except Exception as e:
             print(f"Error setting up controller input: {e}")
             return False
+    
+    def close_preview(self):
+        """Close the preview window properly and clean up resources"""
+        print("Close preview called")
+        
+        # Stop controller polling
+        self.xinput_polling_active = False
+        
+        # Close the main preview window if it exists
+        if hasattr(self, 'preview_window') and self.preview_window.winfo_exists():
+            try:
+                # Clean up any canvas references first
+                if hasattr(self, 'preview_canvas'):
+                    # Clear stored item references to avoid memory leaks
+                    self.preview_canvas.delete("all")
+                    
+                # Clear text item references
+                if hasattr(self, 'text_items'):
+                    self.text_items = {}
+                    
+                # Destroy the window
+                self.preview_window.destroy()
+                print("Main preview window closed")
+            except Exception as e:
+                print(f"Error closing main preview window: {e}")
+        
+        # Also close any exact preview windows
+        if hasattr(self, 'exact_preview_window') and self.exact_preview_window.winfo_exists():
+            try:
+                self.exact_preview_window.destroy()
+                print("Exact preview window closed")
+            except Exception as e:
+                print(f"Error closing exact preview window: {e}")
+        
+        # If we're in standalone mode, exit the application
+        if not hasattr(self, 'game_list') or not self.game_list.winfo_exists():
+            print("In standalone mode, exiting application")
+            self.after(100, self.quit_application)
     
     def force_window_focus(self):
         """Force the preview window to take focus"""
@@ -4398,41 +4484,6 @@ class MAMEControlConfig(ctk.CTk):
                 print("Forced focus on preview window")
         except Exception as e:
             print(f"Error forcing window focus: {e}")
-    
-    def close_preview(self):
-        """Close the preview window properly and clean up resources"""
-        print("Close preview called")
-        
-        # Close the main preview window if it exists
-        if hasattr(self, 'preview_window') and self.preview_window.winfo_exists():
-            try:
-                # Clean up any canvas references first
-                if hasattr(self, 'preview_canvas'):
-                    # Clear stored item references to avoid memory leaks
-                    self.preview_canvas.delete("all")
-                    
-                # Clear text item references
-                if hasattr(self, 'text_items'):
-                    self.text_items = {}
-                    
-                # Destroy the window
-                self.preview_window.destroy()
-                print("Main preview window closed")
-            except Exception as e:
-                print(f"Error closing main preview window: {e}")
-        
-        # Also close any exact preview windows
-        if hasattr(self, 'exact_preview_window') and self.exact_preview_window.winfo_exists():
-            try:
-                self.exact_preview_window.destroy()
-                print("Exact preview window closed")
-            except Exception as e:
-                print(f"Error closing exact preview window: {e}")
-        
-        # If we're in standalone mode, exit the application
-        if not hasattr(self, 'game_list') or not self.game_list.winfo_exists():
-            print("In standalone mode, exiting application")
-            self.after(100, self.quit_application)
 
     def monitor_mame_process(self, check_interval=2.0):
         """Monitor MAME process and close preview when MAME closes"""
