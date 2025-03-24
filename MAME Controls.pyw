@@ -4283,6 +4283,15 @@ class MAMEControlConfig(ctk.CTk):
         try:
             self.show_preview()
             print("Preview window displayed successfully")
+            
+            # Force the window to take focus
+            if hasattr(self, 'preview_window') and self.preview_window.winfo_exists():
+                self.preview_window.attributes('-topmost', True)
+                self.preview_window.after(100, lambda: self.force_window_focus())
+                
+            # Start controller input polling
+            self.start_xinput_polling()
+            
         except Exception as e:
             print(f"Error showing preview: {str(e)}")
             import traceback
@@ -4298,6 +4307,98 @@ class MAMEControlConfig(ctk.CTk):
             import traceback
             traceback.print_exc()
 
+    def start_xinput_polling(self):
+        """Start polling for controller input using the inputs package"""
+        try:
+            # Try to import inputs module
+            from inputs import devices, get_gamepad
+            
+            # Check if gamepads are available
+            gamepads = [device for device in devices.gamepads]
+            if not gamepads:
+                print("No gamepads detected, controller support disabled")
+                return False
+                
+            print(f"Found gamepad: {gamepads[0].name}, enabling controller support")
+            
+            # Flag to prevent multiple polling loops
+            self.xinput_polling_active = True
+            
+            # Define the polling function
+            def check_controller_input():
+                if not hasattr(self, 'preview_window') or not self.preview_window.winfo_exists():
+                    self.xinput_polling_active = False
+                    return
+                    
+                try:
+                    # Try to get gamepad events
+                    events = get_gamepad()
+                    for event in events:
+                        # A button is usually BTN_SOUTH
+                        if event.ev_type == "Key" and event.state == 1:  # Button pressed down
+                            if event.code in ["BTN_SOUTH", "BTN_EAST", "BTN_START"]:  # A, B, or Start buttons
+                                print(f"Controller button pressed: {event.code}, closing preview")
+                                self.close_preview()
+                                return
+                    
+                    # Continue polling if window still exists
+                    if self.xinput_polling_active:
+                        self.preview_window.after(100, check_controller_input)
+                        
+                except Exception as e:
+                    print(f"Controller polling error: {e}")
+                    # Try again if still active
+                    if self.xinput_polling_active:
+                        self.preview_window.after(100, check_controller_input)
+            
+            # Start the polling loop
+            self.preview_window.after(100, check_controller_input)
+            print("Started controller input polling")
+            return True
+            
+        except ImportError:
+            print("Inputs package not available, controller support disabled")
+            return False
+        except Exception as e:
+            print(f"Error setting up controller input: {e}")
+            return False
+    
+    def force_window_focus(self):
+        """Force the preview window to take focus"""
+        try:
+            if hasattr(self, 'preview_window') and self.preview_window.winfo_exists():
+                # Platform-specific focus approaches
+                import platform
+                system = platform.system()
+                
+                if system == "Windows":
+                    # Windows-specific approach
+                    self.preview_window.focus_force()  # Standard Tkinter approach
+                    
+                    # Additional Windows-specific focus method
+                    try:
+                        import win32gui
+                        import win32con
+                        hwnd = int(self.preview_window.winfo_id())
+                        win32gui.SetWindowPos(hwnd, win32con.HWND_TOPMOST, 0, 0, 0, 0, 
+                                            win32con.SWP_NOMOVE | win32con.SWP_NOSIZE)
+                        win32gui.SetForegroundWindow(hwnd)
+                    except ImportError:
+                        # Fall back to standard methods if win32gui not available
+                        self.preview_window.lift()
+                        self.preview_window.focus_set()
+                        self.preview_window.grab_set()
+                else:
+                    # Standard Tkinter approaches for other systems
+                    self.preview_window.lift()
+                    self.preview_window.focus_force()
+                    self.preview_window.focus_set()
+                    self.preview_window.grab_set()
+                    
+                print("Forced focus on preview window")
+        except Exception as e:
+            print(f"Error forcing window focus: {e}")
+    
     def close_preview(self):
         """Close the preview window properly and clean up resources"""
         print("Close preview called")
