@@ -1,92 +1,92 @@
--- Minimal MAME Controls launcher
+-- MAME Controls Menu Plugin with F9 hotkey
 local exports = {}
 exports.name = "mame_controls"
 exports.version = "0.1"
-exports.description = "MAME Controls Launcher"
+exports.description = "MAME Controls Display"
 exports.license = "MIT"
-exports.author = { name = "Custom Plugin" }
+exports.author = { name = "Custom" }
 
 function exports.startplugin()
-    -- Variables to track state
-    local waiting_for_rom = false
-    local check_counter = 0
-    local max_checks = 300  -- Check for up to 5 seconds (at 60 fps)
-    
-    -- Create a log file for debugging
-    local log_file = io.open("mame_controls_log.txt", "w")
-    if log_file then
-        log_file:write("Plugin started at " .. os.date() .. "\n")
-        log_file:close()
-    end
-    
-    -- Register to be notified when a game starts
-    emu.register_start(function()
-        waiting_for_rom = true
-        check_counter = 0
-        
-        local log_file = io.open("mame_controls_log.txt", "a")
-        if log_file then
-            log_file:write("Game start detected at " .. os.date() .. "\n")
-            log_file:close()
-        end
-    end)
-    
-    -- Check each frame to see if we have a valid ROM name
-    emu.register_frame(function()
-        if not waiting_for_rom then
-            return
-        end
-        
-        -- Increment our counter
-        check_counter = check_counter + 1
-        
-        -- Only check every 10 frames to reduce overhead
-        if check_counter % 10 == 0 then
-            local rom_name = emu.romname()
-            
-            -- Log periodically for debugging
-            if check_counter % 60 == 0 then
-                local log_file = io.open("mame_controls_log.txt", "a")
-                if log_file then
-                    log_file:write("Check " .. check_counter .. ": ROM name = '" .. tostring(rom_name) .. "'\n")
-                    log_file:close()
-                end
+    -- Variables to track key state
+    local f9_pressed = false
+
+    -- Function to show controls
+    local function show_controls()
+        -- Get the ROM name
+        local game_name = emu.romname()
+
+        -- Only proceed if we have a valid game name
+        if game_name and game_name ~= "" and game_name ~= "___empty" then
+            -- Pause MAME if the function exists
+            if emu.pause then
+                emu.pause()
             end
             
-            -- Check if we have a valid ROM name
-            if rom_name and rom_name ~= "" and rom_name ~= "___empty" then
-                -- We have a valid ROM name, launch the preview
-                local log_file = io.open("mame_controls_log.txt", "a")
-                if log_file then
-                    log_file:write("Valid ROM detected: " .. rom_name .. " at " .. os.date() .. "\n")
-                    log_file:close()
-                end
-                
-                -- Run with simple command (no manager:machine call)
-                local command = string.format('python "MAME Controls.pyw" --preview-only --game %s --screen 2 --auto-close', rom_name)
-                os.execute(command .. " &")
-                
-                -- Don't check anymore
-                waiting_for_rom = false
-            elseif check_counter >= max_checks then
-                -- Give up after max_checks
-                local log_file = io.open("mame_controls_log.txt", "a")
-                if log_file then
-                    log_file:write("Giving up after " .. check_counter .. " checks\n")
-                    log_file:close()
-                end
-                
-                waiting_for_rom = false
+            -- Run the controls viewer
+            local command = string.format('pythonw "MAME Controls.pyw" --preview-only --game %s --screen 1', game_name)
+            os.execute(command)
+            
+            -- Unpause MAME if the function exists
+            if emu.unpause then
+                emu.unpause()
             end
         end
-    end)
-    
-    -- Log completion of startup
-    local log_file = io.open("mame_controls_log.txt", "a")
-    if log_file then
-        log_file:write("Plugin initialization complete\n")
-        log_file:close()
     end
+
+    -- Simple menu with one option
+    local function make_menu()
+        local menu = {}
+        menu[1] = {"Show Controls (F9)", "", 0}
+        return menu
+    end
+
+    -- Menu callback function - handles menu selections
+    local function menu_callback(index, event)
+        if event == "select" then
+            show_controls()
+            return true
+        end
+        return false
+    end
+
+    -- Add frame done callback to check for F9 key
+    emu.register_frame_done(function()
+        -- Only check if we have necessary components
+        if not manager or not manager.machine then
+            return false
+        end
+        
+        local machine = manager.machine
+        if not machine.input then
+            return false
+        end
+        
+        -- Get the input manager
+        local input = machine.input
+        
+        -- Try to get the F9 key state
+        local key_state = false
+        if input.seq_pressed then
+            -- Create a sequence for F9 key
+            local seq = input:seq_from_tokens("KEYCODE_F9")
+            if seq then
+                key_state = input:seq_pressed(seq)
+            end
+        end
+        
+        -- Detect rising edge (key just pressed)
+        if key_state and not f9_pressed then
+            show_controls()
+        end
+        
+        -- Update pressed state
+        f9_pressed = key_state
+        
+        return false  -- Keep the callback active
+    end)
+
+    -- Register our menu with MAME
+    emu.register_menu(menu_callback, make_menu, "Controls")
 end
 
 return exports
