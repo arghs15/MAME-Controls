@@ -506,6 +506,152 @@ class MAMEControlConfig(ctk.CTk):
         else:
             return joycode_mappings.get(mapping, mapping)
 
+    def identify_generic_controls(self):
+        """Identify games that only have generic control names"""
+        generic_control_games = []
+        missing_control_games = []
+        
+        # Generic action names that indicate default mappings
+        generic_actions = [
+            "A Button", "B Button", "X Button", "Y Button", 
+            "LB Button", "RB Button", "LT Button", "RT Button",
+            "Up", "Down", "Left", "Right"
+        ]
+        
+        for rom_name in sorted(self.available_roms):
+            # First check if game data exists at all
+            game_data = self.get_game_data(rom_name)
+            if not game_data:
+                missing_control_games.append(rom_name)
+                continue
+                
+            # Check if controls are just generic
+            has_custom_controls = False
+            for player in game_data.get('players', []):
+                for label in player.get('labels', []):
+                    action = label['value']
+                    # If we find any non-generic action, mark this game as having custom controls
+                    if action not in generic_actions:
+                        has_custom_controls = True
+                        break
+                if has_custom_controls:
+                    break
+                    
+            # If no custom controls found, add to list
+            if not has_custom_controls and game_data.get('players'):
+                generic_control_games.append((rom_name, game_data.get('gamename', rom_name)))
+        
+        return generic_control_games, missing_control_games
+
+    def show_generic_controls_dialog(self):
+        """Show dialog with games that have only generic controls"""
+        generic_games, missing_games = self.identify_generic_controls()
+        
+        # Create dialog
+        dialog = ctk.CTkToplevel(self)
+        dialog.title("Games Lacking Real Controls")
+        dialog.geometry("800x600")
+        dialog.transient(self)
+        dialog.grab_set()
+        
+        # Create tabs
+        tabview = ctk.CTkTabview(dialog)
+        tabview.pack(expand=True, fill="both", padx=10, pady=10)
+        
+        # Summary tab
+        summary_tab = tabview.add("Summary")
+        stats_text = (
+            f"Total ROMs: {len(self.available_roms)}\n"
+            f"ROMs with generic controls: {len(generic_games)}\n"
+            f"ROMs with missing controls: {len(missing_games)}\n\n"
+            f"Games needing real control data: {len(generic_games) + len(missing_games)}"
+        )
+        stats_label = ctk.CTkLabel(
+            summary_tab,
+            text=stats_text,
+            font=("Arial", 14),
+            justify="left"
+        )
+        stats_label.pack(padx=20, pady=20, anchor="w")
+        
+        # Generic Controls tab
+        generic_tab = tabview.add("Generic Controls")
+        if generic_games:
+            generic_text = ctk.CTkTextbox(generic_tab)
+            generic_text.pack(expand=True, fill="both", padx=10, pady=10)
+            
+            for rom, game_name in generic_games:
+                generic_text.insert("end", f"{rom} - {game_name}\n")
+                    
+            generic_text.configure(state="disabled")
+        else:
+            ctk.CTkLabel(
+                generic_tab,
+                text="No games with generic controls found!",
+                font=("Arial", 14)
+            ).pack(expand=True)
+        
+        # Missing Controls tab
+        missing_tab = tabview.add("Missing Controls")
+        if missing_games:
+            missing_text = ctk.CTkTextbox(missing_tab)
+            missing_text.pack(expand=True, fill="both", padx=10, pady=10)
+            
+            for rom in sorted(missing_games):
+                missing_text.insert("end", f"{rom}\n")
+                    
+            missing_text.configure(state="disabled")
+        else:
+            ctk.CTkLabel(
+                missing_tab,
+                text="No games with missing controls found!",
+                font=("Arial", 14)
+            ).pack(expand=True)
+        
+        # Add export button
+        def export_analysis():
+            try:
+                file_path = os.path.join(self.mame_dir, "missing_controls_analysis.txt")
+                with open(file_path, 'w', encoding='utf-8') as f:
+                    f.write("MAME Missing Controls Analysis\n")
+                    f.write("============================\n\n")
+                    f.write(stats_text + "\n\n")
+                    
+                    f.write("Games with Generic Controls:\n")
+                    f.write("===========================\n")
+                    for rom, game_name in generic_games:
+                        f.write(f"{rom} - {game_name}\n")
+                    f.write("\n")
+                    
+                    f.write("Games with Missing Controls:\n")
+                    f.write("===========================\n")
+                    for rom in sorted(missing_games):
+                        f.write(f"{rom}\n")
+                        
+                messagebox.showinfo("Export Complete", 
+                                f"Analysis exported to:\n{file_path}")
+            except Exception as e:
+                messagebox.showerror("Export Error", str(e))
+        
+        # Export button
+        export_button = ctk.CTkButton(
+            dialog,
+            text="Export Analysis",
+            command=export_analysis
+        )
+        export_button.pack(pady=10)
+        
+        # Close button
+        close_button = ctk.CTkButton(
+            dialog,
+            text="Close",
+            command=dialog.destroy
+        )
+        close_button.pack(pady=10)
+        
+        # Select Summary tab by default
+        tabview.set("Summary")
+    
     def format_control_name(self, control_name: str) -> str:
         """Convert MAME control names to friendly names based on input type"""
         if not self.use_xinput:
@@ -715,6 +861,14 @@ class MAMEControlConfig(ctk.CTk):
             width=150
         )
         self.generate_configs_button.grid(row=0, column=2, padx=5, pady=5, sticky="e")
+
+        self.generic_controls_button = ctk.CTkButton(
+            self.stats_frame,
+            text="Find Missing Controls",
+            command=self.show_generic_controls_dialog,
+            width=150
+        )
+        self.generic_controls_button.grid(row=0, column=5, padx=5, pady=5, sticky="e")
 
         # Search box
         self.search_var = ctk.StringVar()
@@ -5061,7 +5215,7 @@ class MAMEControlConfig(ctk.CTk):
             log_file.write(f"\n\n--- LOGO DEBUG for ROM: {rom_name} ---\n")
             
             # Use the correct path for the logo directory
-            logo_dir = os.path.join("F:", "Deluxe Universe", "collections", "Arcades", "medium_artwork", "logo")
+            logo_dir = os.path.join("D:", "Deluxe Universe", "collections", "Arcades", "medium_artwork", "logo")
             
             log_file.write(f"Looking for logo in: {logo_dir}\n")
             print(f"Looking for logo in: {logo_dir}")
@@ -5325,30 +5479,35 @@ class MAMEControlConfig(ctk.CTk):
         """Load logo settings from config file"""
         settings_path = os.path.join(self.mame_dir, "logo_settings.json")
         
-        # Default settings - set logo_visible to True by default
-        settings = {
-            'logo_visible': True,
-            'logo_position': 'top-left',  # Or whatever default position you prefer
-        }
+        # Default settings - explicitly set logo_visible to True by default
+        self.logo_visible = True  # Set it directly first
+        self.logo_position = 'top-left'  # Default position
         
         try:
             if os.path.exists(settings_path):
                 with open(settings_path, 'r') as f:
                     saved_settings = json.load(f)
-                    settings.update(saved_settings)
+                    # Only update if the setting exists and is explicitly False
+                    if 'logo_visible' in saved_settings:
+                        self.logo_visible = bool(saved_settings['logo_visible'])
+                    if 'logo_position' in saved_settings:
+                        self.logo_position = saved_settings['logo_position']
             else:
                 # If no settings file exists, create one with defaults
+                settings = {
+                    'logo_visible': True,
+                    'logo_position': 'top-left'
+                }
                 with open(settings_path, 'w') as f:
                     json.dump(settings, f)
         except Exception as e:
             print(f"Error loading logo settings: {e}")
+            # Ensure defaults are set even on error
+            self.logo_visible = True
+            self.logo_position = 'top-left'
         
-        # Store settings as attributes
-        self.logo_visible = settings['logo_visible']
-        self.logo_position = settings['logo_position']
-        
-        print(f"Loaded logo settings: {settings}")
-        return settings
+        print(f"Loaded logo settings: visible={self.logo_visible}, position={self.logo_position}")
+        return {'logo_visible': self.logo_visible, 'logo_position': self.logo_position}
 
     def add_logo_to_image(self, image, rom_name, max_width=None, max_height=None):
         """Add logo to the image if available and visible according to settings"""
