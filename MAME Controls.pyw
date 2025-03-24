@@ -1595,6 +1595,25 @@ class MAMEControlConfig(ctk.CTk):
             canvas.create_image(x, y, image=photo, anchor="nw")
             canvas.image = photo  # Keep a reference to prevent garbage collection
             
+            # Initialize logo display
+            self.preview_logo_item = None
+            self.preview_logo_photo = None
+
+            # Load logo settings
+            if not hasattr(self, 'logo_visible') or not hasattr(self, 'logo_position'):
+                self.load_logo_settings()
+                print(f"Loaded logo settings: visible={self.logo_visible}, position={self.logo_position}")
+
+            # Add logo immediately if it should be visible
+            if self.logo_visible:
+                try:
+                    self.add_logo_to_preview_canvas()
+                    print("Added logo during preview initialization")
+                except Exception as e:
+                    print(f"Error adding logo during initialization: {e}")
+                    import traceback
+                    traceback.print_exc()
+            
             # Store canvas and image info for text placement
             self.preview_canvas = canvas
             self.image_x = x
@@ -1800,8 +1819,15 @@ class MAMEControlConfig(ctk.CTk):
             )
             texts_button.pack(side="left", padx=button_padx)
 
+            # Initialize logo settings
             if not hasattr(self, 'logo_visible') or not hasattr(self, 'logo_position'):
                 self.load_logo_settings()
+                print(f"Loaded logo settings: visible={self.logo_visible}, position={self.logo_position}")
+            
+            # Schedule the logo to be added after the window has fully rendered (300ms delay)
+            if self.logo_visible:
+                self.preview_window.after(300, self.add_logo_to_preview_canvas)
+                print("Scheduled logo to be added after window initialization")
             
             # Add logo visibility toggle button to bottom row
             logo_toggle_text = "Hide Logo" if self.logo_visible else "Show Logo"
@@ -1855,6 +1881,29 @@ class MAMEControlConfig(ctk.CTk):
             )
             exact_preview_button.pack(side="left", padx=button_padx)
 
+             # Add a repeated check to ensure logo appears
+            def ping_logo_visibility(attempt=1, max_attempts=5):
+                """Try multiple times to ensure logo is visible"""
+                if not hasattr(self, 'preview_window') or not self.preview_window.winfo_exists():
+                    return  # Window closed, stop trying
+                    
+                if self.logo_visible and (not hasattr(self, 'preview_logo_item') or not self.preview_logo_item):
+                    print(f"Logo visibility check attempt {attempt} - adding logo now")
+                    success = self.add_logo_to_preview_canvas()
+                    
+                    # If unsuccessful and we haven't reached max attempts, try again
+                    if not success and attempt < max_attempts:
+                        self.preview_window.after(250, lambda: ping_logo_visibility(attempt + 1, max_attempts))
+                    elif success:
+                        print(f"Logo successfully added on attempt {attempt}")
+                    else:
+                        print(f"Failed to add logo after {attempt} attempts")
+                elif hasattr(self, 'preview_logo_item') and self.preview_logo_item:
+                    print(f"Logo already visible on attempt {attempt}")
+            
+            # Schedule the first check after 200ms
+            self.preview_window.after(200, ping_logo_visibility)
+            
             # Add toggle screen button to bottom row
             def toggle_screen():
                 # Cycle to the next available monitor
@@ -4160,7 +4209,7 @@ class MAMEControlConfig(ctk.CTk):
             messagebox.showerror("Error", f"Could not save positions: {e}")
 
     
-    def show_preview_standalone(self, rom_name, auto_close=False):
+    def show_preview_standalone(self, rom_name, auto_close=False, force_logo=False):
         """Show the preview for a specific ROM without running the main app"""
         print(f"Starting standalone preview for ROM: {rom_name}")
         
@@ -4175,6 +4224,20 @@ class MAMEControlConfig(ctk.CTk):
         
         # Load settings (for screen preference and button visibility)
         self.load_settings()
+        
+        # Force logo visibility if requested
+        if force_logo:
+            self.logo_visible = True
+            self.save_logo_settings()
+            print("Forced logo visibility enabled")
+        
+        # Ensure preview folder exists
+        if hasattr(self, 'ensure_preview_folder'):
+            preview_dir = self.ensure_preview_folder()
+        else:
+            preview_dir = os.path.join(self.mame_dir, "preview")
+            if not os.path.exists(preview_dir):
+                os.makedirs(preview_dir)
         
         # Ensure preview folder exists
         if hasattr(self, 'ensure_preview_folder'):
@@ -5664,71 +5727,56 @@ class MAMEControlConfig(ctk.CTk):
         return False
     
     def get_logo_path(self, rom_name):
-        """Find logo path for a given ROM name with extensive debugging"""
+        """Find logo path for a given ROM with support for relative and external paths"""
         import os
         
-        # Force logging to file to ensure we capture everything
-        log_path = os.path.join(self.mame_dir, "logo_debug.log")
-        with open(log_path, 'a') as log_file:
-            log_file.write(f"\n\n--- LOGO DEBUG for ROM: {rom_name} ---\n")
-            
-            # Use the correct path for the logo directory
-            logo_dir = os.path.join("D:", "Deluxe Universe", "collections", "Arcades", "medium_artwork", "logo")
-            
-            log_file.write(f"Looking for logo in: {logo_dir}\n")
-            print(f"Looking for logo in: {logo_dir}")
-            
-            # Check if directory exists
-            if not os.path.exists(logo_dir):
-                message = f"ERROR: Logo directory not found: {logo_dir}"
-                log_file.write(message + "\n")
-                print(message)
-                return None
-            
-            # List all files in the directory
+        # First try the local directories
+        local_paths = [
+            os.path.join(self.mame_dir, "logos"),
+            os.path.join(self.mame_dir, "preview", "logos"),
+            os.path.join(self.mame_dir, "artwork", "logos"),
+            os.path.join(os.path.dirname(os.path.abspath(__file__)), "logos")
+        ]
+        
+        # Then try your specific path structure
+        # Handle relative paths from MAME directory
+        relative_path = os.path.join(self.mame_dir, "..", "..", "collections", "Arcades", "medium_artwork", "logo")
+        absolute_path = os.path.abspath(relative_path)
+        
+        # Add your specific paths to the search list
+        specific_paths = [
+            absolute_path,  # Try the normalized absolute path first
+            "..\\..\\collections\\Arcades\\medium_artwork\\logo",  # Raw relative path with backslashes
+            os.path.join(self.mame_dir, "..\\..\\collections\\Arcades\\medium_artwork\\logo")  # Combined with MAME dir
+        ]
+        
+        # Combine all paths, with preference to local paths first
+        all_paths = local_paths + specific_paths
+        
+        print(f"Looking for logo for {rom_name} in multiple directories")
+        
+        # Check each directory for the logo
+        for logo_dir in all_paths:
             try:
-                dir_files = os.listdir(logo_dir)
-                log_file.write(f"Found {len(dir_files)} files in logo directory.\n")
-                if dir_files:
-                    log_file.write(f"Sample files: {dir_files[:5]}\n")
+                # Normalize path slashes for Windows
+                norm_dir = os.path.normpath(logo_dir)
+                
+                if os.path.exists(norm_dir):
+                    print(f"Checking logo directory: {norm_dir}")
+                    
+                    # Try exact match with various extensions
+                    for ext in ['.png', '.jpg', '.jpeg']:
+                        logo_path = os.path.join(norm_dir, f"{rom_name}{ext}")
+                        norm_path = os.path.normpath(logo_path)
+                        
+                        if os.path.exists(norm_path):
+                            print(f"Found logo: {norm_path}")
+                            return norm_path
             except Exception as e:
-                log_file.write(f"ERROR listing directory contents: {e}\n")
-                dir_files = []
-            
-            # Check for direct match first
-            for ext in ['.png', '.jpg', '.jpeg']:
-                logo_path = os.path.join(logo_dir, f"{rom_name}{ext}")
-                log_file.write(f"Checking for: {logo_path}\n")
-                if os.path.exists(logo_path):
-                    log_file.write(f"SUCCESS: Found direct match logo: {logo_path}\n")
-                    return logo_path
-            
-            # Check for case-insensitive match
-            log_file.write("No direct match, trying case-insensitive match...\n")
-            for filename in dir_files:
-                base_name, ext = os.path.splitext(filename.lower())
-                if base_name == rom_name.lower() and ext.lower() in ['.png', '.jpg', '.jpeg']:
-                    logo_path = os.path.join(logo_dir, filename)
-                    log_file.write(f"SUCCESS: Found case-insensitive match: {logo_path}\n")
-                    return logo_path
-            
-            # Try partial match as fallback
-            log_file.write("No case-insensitive match, trying partial match...\n")
-            potential_matches = []
-            for filename in dir_files:
-                base_name, ext = os.path.splitext(filename.lower())
-                if (rom_name.lower() in base_name or base_name in rom_name.lower()) and ext.lower() in ['.png', '.jpg', '.jpeg']:
-                    potential_matches.append(filename)
-            
-            if potential_matches:
-                # Use the shortest match (likely the closest)
-                match = min(potential_matches, key=len)
-                logo_path = os.path.join(logo_dir, match)
-                log_file.write(f"SUCCESS: Found partial match: {logo_path}\n")
-                return logo_path
-            
-            log_file.write(f"ERROR: No logo found for {rom_name}\n")
-            return None
+                print(f"Error checking path {logo_dir}: {e}")
+        
+        print(f"No logo found for {rom_name} in any directory")
+        return None
 
     def add_logo_controls_to_preview(self):
         """Add controls for logo visibility and positioning in the preview window with detailed debugging"""
@@ -5818,30 +5866,41 @@ class MAMEControlConfig(ctk.CTk):
             print("button_row2 not found!")
 
     def toggle_logo_visibility(self):
-        """Toggle the visibility of the logo in preview"""
-        # Toggle the state
-        self.logo_visible = not self.logo_visible
+        """Toggle the visibility of the logo in preview with improved reliability"""
+        print("\n=== Toggling logo visibility ===")
         
-        # Update the button text
-        toggle_text = "Hide Logo" if self.logo_visible else "Show Logo"
+        # Toggle the state
+        old_value = getattr(self, 'logo_visible', True)
+        self.logo_visible = not old_value
+        print(f"Logo visibility changed from {old_value} to {self.logo_visible}")
+        
+        # Update the button text if it exists
         if hasattr(self, 'logo_toggle_button') and self.logo_toggle_button.winfo_exists():
+            toggle_text = "Hide Logo" if self.logo_visible else "Show Logo"
             self.logo_toggle_button.configure(text=toggle_text)
+            print(f"Updated button text to: {toggle_text}")
         
         # Update canvas logo
         if hasattr(self, 'preview_canvas') and self.preview_canvas.winfo_exists():
             if self.logo_visible:
                 # Force add logo
-                self.add_logo_to_preview_canvas()
+                success = self.add_logo_to_preview_canvas()
+                print(f"Logo add attempt result: {success}")
             else:
                 # Remove logo if it exists
                 if hasattr(self, 'preview_logo_item') and self.preview_logo_item:
-                    self.preview_canvas.delete(self.preview_logo_item)
-                    self.preview_logo_item = None
-                    self.preview_logo_photo = None
+                    try:
+                        self.preview_canvas.delete(self.preview_logo_item)
+                        print("Removed logo from canvas")
+                        self.preview_logo_item = None
+                        self.preview_logo_photo = None
+                    except Exception as e:
+                        print(f"Error removing logo: {e}")
         
         # Save the setting
         self.save_logo_settings()
-        print(f"Logo visibility toggled to: {self.logo_visible}")
+        print(f"Saved logo settings, visibility={self.logo_visible}")
+        print("=== Toggle logo complete ===\n")
 
     def show_logo_position_dialog(self):
         """Show dialog to configure logo position"""
@@ -6685,71 +6744,133 @@ class MAMEControlConfig(ctk.CTk):
         print("--- LOGO POSITION CONTROL ADDED ---\n")
 
     def add_logo_to_preview_canvas(self):
-        """Add logo to the preview canvas based on current settings"""
+        """Add logo to the preview canvas with better error handling and size checks"""
         print("\n=== Starting add_logo_to_preview_canvas ===")
         
-        # First remove any existing logo
-        if hasattr(self, 'preview_logo_item') and self.preview_logo_item:
-            print("Removing existing logo item")
-            self.preview_canvas.delete(self.preview_logo_item)
-            self.preview_logo_item = None
-            self.preview_logo_photo = None
-        
-        # Get the logo path
-        logo_path = self.get_logo_path(self.current_game)
-        if not logo_path:
-            print(f"No logo found for {self.current_game}")
-            return
+        try:
+            # Make sure we have a canvas
+            if not hasattr(self, 'preview_canvas') or not self.preview_canvas.winfo_exists():
+                print("No preview canvas available")
+                return False
+                
+            # Check if logo visibility is enabled
+            if not hasattr(self, 'logo_visible') or not self.logo_visible:
+                print("Logo visibility is disabled")
+                return False
+                
+            # First remove any existing logo
+            if hasattr(self, 'preview_logo_item') and self.preview_logo_item:
+                print("Removing existing logo item")
+                try:
+                    self.preview_canvas.delete(self.preview_logo_item)
+                except Exception as e:
+                    print(f"Error removing existing logo: {e}")
+                self.preview_logo_item = None
+                self.preview_logo_photo = None
             
-        print(f"Found logo path: {logo_path}")
-        
-        # Load and resize the logo
-        logo_img = Image.open(logo_path)
-        
-        # Calculate appropriate size using the consistent class variables
-        canvas_width = self.preview_canvas.winfo_width()
-        canvas_height = self.preview_canvas.winfo_height()
-        
-        # Use the class-level settings
-        max_width = int(canvas_width * (self.logo_width_percentage / 100))
-        max_height = int(canvas_height * (self.logo_height_percentage / 100))
-        
-        # Calculate scale factor
-        logo_width, logo_height = logo_img.size
-        scale = min(max_width / max(logo_width, 1), max_height / max(logo_height, 1))
-        
-        # Resize the logo
-        new_width = max(int(logo_width * scale), 1)
-        new_height = max(int(logo_height * scale), 1)
-        logo_img = logo_img.resize((new_width, new_height), Image.LANCZOS)
-        
-        # Convert to PhotoImage for Tkinter
-        photo = ImageTk.PhotoImage(logo_img)
-        
-        # Position the logo based on logo_position setting
-        padding = 20
-        
-        if self.logo_position == 'top-left':
-            x, y = padding, padding
-        elif self.logo_position == 'top-right':
-            x, y = canvas_width - new_width - padding, padding
-        elif self.logo_position == 'bottom-left':
-            x, y = padding, canvas_height - new_height - padding
-        elif self.logo_position == 'bottom-center':
-            x, y = (canvas_width - new_width) // 2, canvas_height - new_height - padding
-        elif self.logo_position == 'bottom-right':
-            x, y = canvas_width - new_width - padding, canvas_height - new_height - padding
-        else:  # Default to top-center
-            x, y = (canvas_width - new_width) // 2, padding
-        
-        # Create the image on the canvas
-        img_item = self.preview_canvas.create_image(x, y, image=photo, anchor="nw")
-        
-        # Store references as class attributes
-        self.preview_logo_photo = photo  # Keep a reference to prevent garbage collection
-        self.preview_logo_item = img_item
-        
-        print(f"Added logo to preview canvas for {self.current_game} at position {self.logo_position}")
+            # Make sure we have a game selected
+            if not hasattr(self, 'current_game') or not self.current_game:
+                print("No current game selected")
+                return False
+            
+            # Get the logo path
+            logo_path = self.get_logo_path(self.current_game)
+            if not logo_path:
+                print(f"No logo found for {self.current_game}")
+                return False
+                
+            print(f"Found logo path: {logo_path}")
+            
+            # Load the logo
+            from PIL import Image, ImageTk
+            try:
+                logo_img = Image.open(logo_path)
+                print(f"Loaded logo image: {logo_img.size} {logo_img.mode}")
+            except Exception as e:
+                print(f"Error loading logo image: {e}")
+                return False
+            
+            # Calculate appropriate size - with safety checks
+            canvas_width = self.preview_canvas.winfo_width()
+            canvas_height = self.preview_canvas.winfo_height()
+            print(f"Canvas size: {canvas_width}x{canvas_height}")
+            
+            # If canvas size is too small, use the window size or reasonable defaults
+            if canvas_width <= 1 or canvas_height <= 1:
+                if hasattr(self, 'preview_window'):
+                    # Try to get window size instead
+                    canvas_width = self.preview_window.winfo_width()
+                    canvas_height = self.preview_window.winfo_height()
+                    print(f"Using window size instead: {canvas_width}x{canvas_height}")
+                    
+                    # If window size is also invalid, use reasonable defaults
+                    if canvas_width <= 1 or canvas_height <= 1:
+                        canvas_width = 1920
+                        canvas_height = 1080
+                        print(f"Using default size: {canvas_width}x{canvas_height}")
+                else:
+                    # Use reasonable defaults
+                    canvas_width = 1920
+                    canvas_height = 1080
+                    print(f"Using default size: {canvas_width}x{canvas_height}")
+            
+            # Use percentage-based sizing
+            max_width = int(canvas_width * (self.logo_width_percentage / 100))
+            max_height = int(canvas_height * (self.logo_height_percentage / 100))
+            
+            # Enforce minimum size for visibility
+            max_width = max(max_width, 100)
+            max_height = max(max_height, 32)
+            
+            # Calculate scale factor
+            logo_width, logo_height = logo_img.size
+            scale = min(max_width / max(logo_width, 1), max_height / max(logo_height, 1))
+            
+            # Resize the logo
+            new_width = max(int(logo_width * scale), 1)
+            new_height = max(int(logo_height * scale), 1)
+            print(f"Resizing logo from {logo_width}x{logo_height} to {new_width}x{new_height}")
+            logo_img = logo_img.resize((new_width, new_height), Image.LANCZOS)
+            
+            # Convert to PhotoImage for Tkinter
+            photo = ImageTk.PhotoImage(logo_img)
+            
+            # Position the logo based on logo_position setting
+            padding = 20
+            
+            if not hasattr(self, 'logo_position'):
+                self.logo_position = 'top-left'  # Default position
+                
+            if self.logo_position == 'top-left':
+                x, y = padding, padding
+            elif self.logo_position == 'top-right':
+                x, y = canvas_width - new_width - padding, padding
+            elif self.logo_position == 'bottom-left':
+                x, y = padding, canvas_height - new_height - padding
+            elif self.logo_position == 'bottom-center':
+                x, y = (canvas_width - new_width) // 2, canvas_height - new_height - padding
+            elif self.logo_position == 'bottom-right':
+                x, y = canvas_width - new_width - padding, canvas_height - new_height - padding
+            else:  # Default to top-center
+                x, y = (canvas_width - new_width) // 2, padding
+            
+            print(f"Placing logo at position: {x},{y} ({self.logo_position})")
+            
+            # Create the image on the canvas
+            img_item = self.preview_canvas.create_image(x, y, image=photo, anchor="nw")
+            
+            # Store references as class attributes
+            self.preview_logo_photo = photo  # Keep a reference to prevent garbage collection
+            self.preview_logo_item = img_item
+            
+            print(f"Successfully added logo to preview canvas")
+            return True
+            
+        except Exception as e:
+            print(f"Error in add_logo_to_preview_canvas: {e}")
+            import traceback
+            traceback.print_exc()
+            return False
     
 if __name__ == "__main__":
     import argparse
@@ -6760,6 +6881,8 @@ if __name__ == "__main__":
     parser.add_argument('--game', type=str, help='Specify the ROM name to preview')
     parser.add_argument('--screen', type=int, default=2, help='Screen number to display preview on (default: 2)')
     parser.add_argument('--auto-close', action='store_true', help='Automatically close preview when MAME exits')
+    # Add to the argparse section in your __main__ block
+    parser.add_argument('--force-logo', action='store_true', help='Force logo visibility in preview mode')
     args = parser.parse_args()
     
     if args.preview_only and args.game:
@@ -6773,8 +6896,11 @@ if __name__ == "__main__":
         # Hide buttons in preview-only mode
         app.hide_preview_buttons = True
         
+        # Force logo if specified
+        force_logo = getattr(args, 'force_logo', False)
+        
         # Show the standalone preview
-        app.show_preview_standalone(args.game, auto_close=args.auto_close)
+        app.show_preview_standalone(args.game, auto_close=args.auto_close, force_logo=force_logo)
     else:
         # Normal mode: start the full application
         app = MAMEControlConfig()
