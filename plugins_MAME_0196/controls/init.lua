@@ -18,6 +18,7 @@ function exports.startplugin()
         print("Game: " .. (game_name or "nil"))
         
         if game_name and game_name ~= "" then
+            -- Simply run the command without trying to pause
             local command = string.format('pythonw "MAME Controls.pyw" --preview-only --game %s --screen 1', game_name)
             print("Running: " .. command)
             os.execute(command)
@@ -29,10 +30,15 @@ function exports.startplugin()
     local start_time = os.time()
     
     emu.register_periodic(function()
-        -- Wait 3 seconds before showing controls
+        -- Wait 1 second before showing controls
         if not controls_shown and os.time() - start_time > 1 then
             show_controls()
         end
+    end)
+    
+    -- Reset when game stops
+    emu.register_stop(function()
+        controls_shown = false
     end)
     
     print("Controls plugin loaded (periodic version)")
