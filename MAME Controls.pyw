@@ -187,7 +187,7 @@ class MAMEControlConfig(ctk.CTk):
         self.custom_configs = {}
         self.current_game = None
         self.use_xinput = True
-        
+        self.show_rom_info = False  # Set to False to hide ROM info
         # Logo size settings (as percentages)
         self.logo_width_percentage = 15
         self.logo_height_percentage = 15
@@ -221,6 +221,11 @@ class MAMEControlConfig(ctk.CTk):
                 self.quit()
                 return
 
+            # Now we can load settings that depend on mame_dir
+            self.load_logo_settings()
+            self.load_bezel_settings()
+            self.load_layer_settings()  # Add this line to load layer settings
+
             self.ensure_font_available()
 
             # Create the interface
@@ -252,6 +257,10 @@ class MAMEControlConfig(ctk.CTk):
             # For preview-only mode, just initialize minimal attributes
             self.fullscreen = True
             self.preferred_preview_screen = 2  # Default to second screen
+            
+            # We should still load layer settings even in preview-only mode
+            if hasattr(self, 'mame_dir') and self.mame_dir:
+                self.load_layer_settings()
             
             # Hide the main window completely
             self.withdraw()
@@ -1592,8 +1601,12 @@ class MAMEControlConfig(ctk.CTk):
             # Center the image
             x = max((win_width - new_width) // 2, 0)
             y = max((win_height - new_height) // 2, 0)
-            canvas.create_image(x, y, image=photo, anchor="nw")
+            # After creating the background image
+            canvas.create_image(x, y, image=photo, anchor="nw", tags="background_image")
             canvas.image = photo  # Keep a reference to prevent garbage collection
+
+            # Apply proper layering
+            self.apply_layering()
             
             # Initialize logo display
             self.preview_logo_item = None
@@ -4706,6 +4719,9 @@ class MAMEControlConfig(ctk.CTk):
             
             # Add logo to the image
             bg_img = self.add_logo_to_image(bg_img, self.current_game)
+
+            # Add bezel to the image (should be last to ensure it goes behind everything)
+            bg_img = self.add_bezel_to_image(bg_img, self.current_game)
             
             # Save the image
             bg_img.save(output_path, format="PNG")
@@ -5402,7 +5418,7 @@ class MAMEControlConfig(ctk.CTk):
         if hasattr(self, 'exact_preview_window') and self.exact_preview_window.winfo_exists():
             print("Closing existing exact preview window")
             self.exact_preview_window.destroy()
-            
+                
         try:
             print("\n--- STARTING EXACT PREVIEW ---")
             
@@ -5421,7 +5437,7 @@ class MAMEControlConfig(ctk.CTk):
             if not font_path:
                 messagebox.showerror("Error", f"Font file not found! Please add {settings['font_name']} to the fonts folder.")
                 return
-                
+                    
             # Load font directly from file
             try:
                 font = ImageFont.truetype(font_path, font_size)
@@ -5432,7 +5448,37 @@ class MAMEControlConfig(ctk.CTk):
                 messagebox.showerror("Font Error", f"Could not load font: {str(e)}")
                 return
             
-            # Find the background image
+            # Create a base black image
+            target_width, target_height = 1920, 1080  # Standard full HD size
+            base_img = Image.new('RGBA', (target_width, target_height), (0, 0, 0, 255))
+            
+            # Get layer ordering (or use default)
+            if not hasattr(self, 'layer_order'):
+                self.layer_order = {
+                    'bezel': 1,       # Lowest layer (furthest back)
+                    'background': 2,
+                    'logo': 3,
+                    'text': 4         # Highest layer (closest to front)
+                }
+                
+            # Create a dictionary to hold all layered components
+            layers = {}
+            
+            # 1. Load bezel if enabled
+            if hasattr(self, 'bezel_visible') and self.bezel_visible:
+                bezel_path = self.get_bezel_path(self.current_game)
+                if bezel_path and os.path.exists(bezel_path):
+                    try:
+                        bezel_img = Image.open(bezel_path)
+                        bezel_img = bezel_img.resize((target_width, target_height), Image.LANCZOS)
+                        if bezel_img.mode != 'RGBA':
+                            bezel_img = bezel_img.convert('RGBA')
+                        layers['bezel'] = {'image': bezel_img, 'order': self.layer_order['bezel']}
+                        print(f"Added bezel to layers, order: {self.layer_order['bezel']}")
+                    except Exception as e:
+                        print(f"Error loading bezel: {e}")
+            
+            # 2. Load the background image
             background_path = None
             preview_dir = self.ensure_preview_folder()
             
@@ -5451,50 +5497,43 @@ class MAMEControlConfig(ctk.CTk):
                     print(f"Using default background: {background_path}")
                     break
             
-            # Create the image (with size matching the preview)
-            target_width, target_height = 1920, 1080  # Standard full HD size
-            
             if background_path:
                 try:
                     bg_img = Image.open(background_path)
-                    print(f"Opened background image: {bg_img.size}")
-                    # Resize if needed
-                    if bg_img.size != (target_width, target_height):
-                        bg_img = bg_img.resize((target_width, target_height), Image.LANCZOS)
-                        print(f"Resized to: {bg_img.size}")
+                    bg_img = bg_img.resize((target_width, target_height), Image.LANCZOS)
+                    if bg_img.mode != 'RGBA':
+                        bg_img = bg_img.convert('RGBA')
+                    layers['background'] = {'image': bg_img, 'order': self.layer_order['background']}
+                    print(f"Added background to layers, order: {self.layer_order['background']}")
                 except Exception as e:
                     print(f"Error loading background: {e}")
-                    bg_img = Image.new('RGB', (target_width, target_height), 'black')
-                    print("Created new black image")
-            else:
-                # Create a blank black image
-                bg_img = Image.new('RGB', (target_width, target_height), 'black')
-                print("No background found, created new black image")
             
-            # Create draw object
-            draw = ImageDraw.Draw(bg_img)
+            # 3. Create a blank transparent layer for text
+            text_layer = Image.new('RGBA', (target_width, target_height), (0, 0, 0, 0))
+            text_draw = ImageDraw.Draw(text_layer)
             
-            # Get game data
+            # 4. Draw game title and info on text layer
             game_data = self.get_game_data(self.current_game)
-            
             if game_data:
-                # Draw title
+                # Draw title (always show this)
                 game_title = game_data['gamename']
-                print(f"Drawing title: {game_title}")
-                draw.text((target_width//2, 60), game_title, fill="white", anchor="mt", font=title_font)
-                draw.text((target_width//2, 110), f"ROM: {self.current_game}", fill="gray", anchor="mt", font=font)
+                text_draw.text((target_width//2, 60), game_title, fill=(255, 255, 255, 255), anchor="mt", font=title_font)
                 
-                # Add any details if available
-                if 'miscDetails' in game_data:
-                    draw.text((target_width//2, 150), game_data['miscDetails'], 
-                            fill="gray", anchor="mt", font=font)
+                # Only draw ROM info if show_rom_info is True (same flag as in show_preview)
+                if getattr(self, 'show_rom_info', False):
+                    text_draw.text((target_width//2, 110), f"ROM: {self.current_game}", fill=(150, 150, 150, 255), anchor="mt", font=font)
+                    
+                    # Add any details if available
+                    if 'miscDetails' in game_data:
+                        text_draw.text((target_width//2, 150), game_data['miscDetails'], 
+                                fill=(150, 150, 150, 255), anchor="mt", font=font)
             
-            # Draw all currently visible text items using their exact positions
+            # 5. Draw all currently visible text items on text layer
             if hasattr(self, 'text_items'):
                 print(f"Found {len(self.text_items)} text items to render")
                 
                 for control_name, data in self.text_items.items():
-                    # Skip hidden items if we're in the preview window
+                    # Skip hidden items
                     try:
                         if (hasattr(self, 'preview_canvas') and self.preview_canvas.winfo_exists() and
                             'text' in data and
@@ -5504,7 +5543,7 @@ class MAMEControlConfig(ctk.CTk):
                     except Exception as e:
                         print(f"Error checking visibility for {control_name}: {e}")
                     
-                    # Get position and text (with error handling)
+                    # Get position and text
                     try:
                         text_x = data['x']
                         text_y = data['y']
@@ -5523,7 +5562,7 @@ class MAMEControlConfig(ctk.CTk):
                         # Apply bold effect based on settings
                         if bold_strength == 0:
                             # No bold effect
-                            draw.text((text_x, adjusted_y), display_text, fill="white", font=font)
+                            text_draw.text((text_x, adjusted_y), display_text, fill=(255, 255, 255, 255), font=font)
                         else:
                             # Draw shadows for bold effect
                             offsets = []
@@ -5536,24 +5575,78 @@ class MAMEControlConfig(ctk.CTk):
                                 
                             # Draw shadows
                             for dx, dy in offsets:
-                                draw.text((text_x+dx, adjusted_y+dy), display_text, fill="black", font=font)
+                                text_draw.text((text_x+dx, adjusted_y+dy), display_text, fill=(0, 0, 0, 255), font=font)
                             
                             # Draw main text
-                            draw.text((text_x, adjusted_y), display_text, fill="white", font=font)
+                            text_draw.text((text_x, adjusted_y), display_text, fill=(255, 255, 255, 255), font=font)
                         
                     except Exception as e:
                         print(f"Error drawing text for {control_name}: {e}")
                         continue
-            else:
-                print("No text_items attribute found!")
             
-            # Add logo to the image
-            print("Adding logo to image")
-            bg_img = self.add_logo_to_image(bg_img, self.current_game)
+            # Add text layer to layers dict
+            layers['text'] = {'image': text_layer, 'order': self.layer_order['text']}
+            print(f"Added text to layers, order: {self.layer_order['text']}")
+            
+            # 6. Load logo if enabled
+            if hasattr(self, 'logo_visible') and self.logo_visible:
+                logo_path = self.get_logo_path(self.current_game)
+                if logo_path and os.path.exists(logo_path):
+                    try:
+                        logo_img = Image.open(logo_path)
+                        if logo_img.mode != 'RGBA':
+                            logo_img = logo_img.convert('RGBA')
+                        
+                        # Calculate size
+                        max_width = int(target_width * (self.logo_width_percentage / 100))
+                        max_height = int(target_height * (self.logo_height_percentage / 100))
+                        logo_width, logo_height = logo_img.size
+                        scale_factor = min(max_width / max(logo_width, 1), max_height / max(logo_height, 1))
+                        new_width = max(int(logo_width * scale_factor), 1)
+                        new_height = max(int(logo_height * scale_factor), 1)
+                        logo_img = logo_img.resize((new_width, new_height), Image.LANCZOS)
+                        
+                        # Create a full-size transparent image for the logo
+                        logo_layer = Image.new('RGBA', (target_width, target_height), (0, 0, 0, 0))
+                        
+                        # Calculate position
+                        padding = 20
+                        if self.logo_position == 'top-left':
+                            position = (padding, padding)
+                        elif self.logo_position == 'top-right':
+                            position = (target_width - new_width - padding, padding)
+                        elif self.logo_position == 'bottom-left':
+                            position = (padding, target_height - new_height - padding)
+                        elif self.logo_position == 'bottom-center':
+                            position = ((target_width - new_width) // 2, target_height - new_height - padding)
+                        elif self.logo_position == 'bottom-right':
+                            position = (target_width - new_width - padding, target_height - new_height - padding)
+                        else:  # Default to top-center
+                            position = ((target_width - new_width) // 2, padding)
+                        
+                        # Paste logo onto the transparent layer
+                        logo_layer.paste(logo_img, position, logo_img)
+                        
+                        # Add to layers
+                        layers['logo'] = {'image': logo_layer, 'order': self.layer_order['logo']}
+                        print(f"Added logo to layers, order: {self.layer_order['logo']}")
+                    except Exception as e:
+                        print(f"Error adding logo: {e}")
+            
+            # 7. Composite all layers in order
+            # Sort layers by order
+            sorted_layers = sorted(layers.items(), key=lambda x: x[1]['order'])
+            
+            # Composite from bottom to top
+            composite_img = base_img.copy()
+            for layer_name, layer_data in sorted_layers:
+                print(f"Compositing layer: {layer_name} (order {layer_data['order']})")
+                composite_img = Image.alpha_composite(composite_img, layer_data['image'])
+            
+            # Convert final image back to RGB for display
+            final_img = composite_img.convert('RGB')
+            print("Image composition complete")
 
-            # The rest of the method stays the same...
-            print("Image preparation complete, creating display window")
-            
             # Now display this image in a window
             self.exact_preview_window = ctk.CTkToplevel(self)
             self.exact_preview_window.title(f"Exact Image Preview: {self.current_game}")
@@ -5577,7 +5670,7 @@ class MAMEControlConfig(ctk.CTk):
             print(f"Displaying at size: {display_width}x{display_height}")
             
             # Resize for display
-            display_img = bg_img.resize((display_width, display_height), Image.LANCZOS)
+            display_img = final_img.resize((display_width, display_height), Image.LANCZOS)
             
             # Convert to PhotoImage
             print("Converting to PhotoImage")
@@ -5625,7 +5718,7 @@ class MAMEControlConfig(ctk.CTk):
         except Exception as e:
             messagebox.showerror("Error", f"Failed to create preview: {str(e)}")
             print(f"Error creating preview: {e}")
-            traceback.print_exc()
+            traceback.print_
 
     def toggle_logo_and_refresh(self, preview_window, canvas, photo, original_img, display_width, display_height):
         """Toggle logo visibility and refresh the exact preview image"""
@@ -5877,6 +5970,497 @@ class MAMEControlConfig(ctk.CTk):
         print("ScoutCond Bold font not found in common locations.")
         print("Please place ScoutCond-Bold.otf or ScoutCond-Bold.ttf in the 'fonts' directory.")
         return False
+    
+    def apply_layering(self):
+        """Apply proper z-order layering to all canvas elements based on settings"""
+        if not hasattr(self, 'preview_canvas') or not self.preview_canvas.winfo_exists():
+            return False
+            
+        # Get layering settings - could be stored in a settings file
+        if not hasattr(self, 'layer_order'):
+            # Default layering: bezel on bottom, then background, then logo, then text
+            self.layer_order = {
+                'bezel': 1,    # Lowest layer (furthest back)
+                'background': 2,
+                'logo': 3,
+                'text': 4      # Highest layer (closest to front)
+            }
+        
+        try:
+            # Get all items that we need to layer
+            canvas = self.preview_canvas
+            
+            # Background image is always at the bottom by default
+            background_item = canvas.find_withtag("background_image")
+            if background_item and len(background_item) > 0:
+                if self.layer_order['background'] == 1:
+                    canvas.lower(background_item[0])  # Send to very back
+                
+            # Handle bezel
+            if hasattr(self, 'preview_bezel_item') and self.preview_bezel_item:
+                if self.layer_order['bezel'] == 1:
+                    canvas.lower(self.preview_bezel_item)  # Send to very back
+                elif self.layer_order['bezel'] > self.layer_order['background']:
+                    canvas.lift(self.preview_bezel_item, background_item[0] if background_item else None)
+            
+            # Handle logo
+            if hasattr(self, 'preview_logo_item') and self.preview_logo_item:
+                # Determine what to place the logo above
+                if self.layer_order['logo'] > self.layer_order['bezel'] and hasattr(self, 'preview_bezel_item'):
+                    canvas.lift(self.preview_logo_item, self.preview_bezel_item)
+                elif self.layer_order['logo'] > self.layer_order['background'] and background_item:
+                    canvas.lift(self.preview_logo_item, background_item[0])
+                elif self.layer_order['logo'] == 1:
+                    canvas.lower(self.preview_logo_item)
+                    
+            # Text items should typically be on top
+            if self.layer_order['text'] == 4 and hasattr(self, 'text_items'):
+                for control_name, data in self.text_items.items():
+                    if 'text' in data:
+                        canvas.lift(data['text'])  # Bring text to front
+                    if 'shadow' in data and data['shadow']:
+                        canvas.lift(data['shadow'])  # Bring shadow to front (but behind text)
+                        canvas.lower(data['shadow'], data['text'])  # Ensure shadow is behind text
+            
+            return True
+        except Exception as e:
+            print(f"Error applying layering: {e}")
+            return False
+    
+    def show_layer_settings_dialog(self):
+        """Show dialog to configure layer ordering"""
+        if not hasattr(self, 'layer_order'):
+            # Default layering: bezel on bottom, then background, then logo, then text
+            self.layer_order = {
+                'bezel': 1,    # Lowest layer (furthest back)
+                'background': 2,
+                'logo': 3,
+                'text': 4      # Highest layer (closest to front)
+            }
+        
+        dialog = ctk.CTkToplevel(self)
+        dialog.title("Layer Order Settings")
+        dialog.geometry("400x300")
+        dialog.transient(self)
+        dialog.grab_set()
+        
+        # Create sliders for each element
+        ctk.CTkLabel(dialog, text="Layer Order Settings", font=("Arial", 16, "bold")).pack(pady=(20, 10))
+        ctk.CTkLabel(dialog, text="Drag sliders to adjust layer order (higher = in front)").pack(pady=(0, 20))
+        
+        # Create variables to store slider values
+        bezel_var = ctk.IntVar(value=self.layer_order['bezel'])
+        bg_var = ctk.IntVar(value=self.layer_order['background'])
+        logo_var = ctk.IntVar(value=self.layer_order['logo'])
+        text_var = ctk.IntVar(value=self.layer_order['text'])
+        
+        # Create slider frames
+        slider_frame = ctk.CTkFrame(dialog)
+        slider_frame.pack(fill="x", padx=20, pady=10)
+        
+        # Add sliders with labels
+        def create_slider(parent, label, variable):
+            row = ctk.CTkFrame(parent)
+            row.pack(fill="x", pady=5)
+            
+            ctk.CTkLabel(row, text=f"{label}:", width=100).pack(side="left", padx=(0, 10))
+            
+            slider = ctk.CTkSlider(
+                row,
+                from_=1,
+                to=4,
+                number_of_steps=3,
+                variable=variable
+            )
+            slider.pack(side="left", fill="x", expand=True, padx=5)
+            
+            value_label = ctk.CTkLabel(row, text=str(variable.get()), width=30)
+            value_label.pack(side="left", padx=(10, 0))
+            
+            # Update value label when slider changes
+            def update_value(_):
+                value_label.configure(text=str(int(variable.get())))
+            
+            slider.configure(command=update_value)
+            
+            return slider
+        
+        bezel_slider = create_slider(slider_frame, "Bezel", bezel_var)
+        bg_slider = create_slider(slider_frame, "Background", bg_var)
+        logo_slider = create_slider(slider_frame, "Logo", logo_var)
+        text_slider = create_slider(slider_frame, "Text", text_var)
+        
+        # Buttons frame
+        button_frame = ctk.CTkFrame(dialog)
+        button_frame.pack(pady=20, fill="x")
+        
+        def apply_layer_changes():
+            # Update layer order
+            self.layer_order = {
+                'bezel': int(bezel_var.get()),
+                'background': int(bg_var.get()),
+                'logo': int(logo_var.get()),
+                'text': int(text_var.get())
+            }
+            
+            # Save settings
+            success = self.save_layer_settings()
+            if success:
+                print("Layer settings saved successfully")
+            else:
+                print("Failed to save layer settings")
+            
+            # Apply the new layering
+            self.apply_layering()
+            
+            dialog.destroy()
+        
+        apply_button = ctk.CTkButton(
+            button_frame,
+            text="Apply",
+            command=apply_layer_changes
+        )
+        apply_button.pack(side="left", padx=20)
+        
+        cancel_button = ctk.CTkButton(
+            button_frame,
+            text="Cancel",
+            command=dialog.destroy
+        )
+        cancel_button.pack(side="right", padx=20)
+    
+    def save_layer_settings(self):
+        """Save layer order settings to file"""
+        if not hasattr(self, 'mame_dir') or not self.mame_dir:
+            print("Error: Cannot save layer settings - mame_dir not set")
+            return
+            
+        settings_path = os.path.join(self.mame_dir, "layer_settings.json")
+        
+        try:
+            # Make sure we have a layer_order to save
+            if not hasattr(self, 'layer_order'):
+                self.layer_order = {
+                    'bezel': 1,    # Lowest layer (furthest back)
+                    'background': 2,
+                    'logo': 3,
+                    'text': 4      # Highest layer (closest to front)
+                }
+                
+            with open(settings_path, 'w') as f:
+                json.dump(self.layer_order, f)
+            print(f"Saved layer settings: {self.layer_order}")
+            return True
+        except Exception as e:
+            print(f"Error saving layer settings: {e}")
+            return False
+
+    def load_layer_settings(self):
+        """Load layer order settings from file"""
+        if not hasattr(self, 'mame_dir') or not self.mame_dir:
+            print("Cannot load layer settings - mame_dir not set")
+            # Set default layer order
+            self.layer_order = {
+                'bezel': 1,    # Lowest layer (furthest back)
+                'background': 2,
+                'logo': 3,
+                'text': 4      # Highest layer (closest to front)
+            }
+            return
+        
+        settings_path = os.path.join(self.mame_dir, "layer_settings.json")
+        
+        # Default settings
+        self.layer_order = {
+            'bezel': 1,    # Lowest layer (furthest back)
+            'background': 2,
+            'logo': 3,
+            'text': 4      # Highest layer (closest to front)
+        }
+        
+        try:
+            if os.path.exists(settings_path):
+                with open(settings_path, 'r') as f:
+                    saved_settings = json.load(f)
+                    # Validate the settings format
+                    required_keys = ['bezel', 'background', 'logo', 'text']
+                    if all(key in saved_settings for key in required_keys):
+                        self.layer_order = saved_settings
+                        print(f"Loaded layer settings: {self.layer_order}")
+                    else:
+                        print(f"Invalid layer settings format, using defaults")
+            else:
+                print(f"Layer settings file not found, using defaults")
+                # Create the file with defaults
+                self.save_layer_settings()
+        except Exception as e:
+            print(f"Error loading layer settings: {e}")
+    
+    def get_bezel_path(self, rom_name):
+        """Find bezel path for a given ROM"""
+        import os
+        
+        # Define potential bezel locations with priority order
+        bezel_paths = [
+            # Direct paths in artwork directory
+            os.path.join(self.mame_dir, "artwork", rom_name, "Bezel.png"),
+            os.path.join(self.mame_dir, "artwork", rom_name, "bezel.png"),
+            
+            # Secondary paths
+            os.path.join(self.mame_dir, "bezels", f"{rom_name}.png"),
+            os.path.join(self.mame_dir, "preview", "bezels", f"{rom_name}.png"),
+            
+            # Default fallback bezel
+            os.path.join(self.mame_dir, "artwork", "default", "Bezel.png"),
+            os.path.join(self.mame_dir, "bezels", "default.png")
+        ]
+        
+        print(f"Looking for bezel for {rom_name}")
+        
+        # Check each location
+        for bezel_path in bezel_paths:
+            norm_path = os.path.normpath(bezel_path)
+            if os.path.exists(norm_path):
+                print(f"Found bezel: {norm_path}")
+                return norm_path
+        
+        print(f"No bezel found for {rom_name}")
+        return None
+
+    def load_bezel_settings(self):
+        """Load bezel visibility settings"""
+        settings_path = os.path.join(self.mame_dir, "bezel_settings.json")
+        
+        # Default settings
+        self.bezel_visible = True  # Visible by default
+        
+        try:
+            if os.path.exists(settings_path):
+                with open(settings_path, 'r') as f:
+                    saved_settings = json.load(f)
+                    
+                    # Only update if explicitly set
+                    if 'bezel_visible' in saved_settings:
+                        self.bezel_visible = bool(saved_settings['bezel_visible'])
+            else:
+                # Create default settings file if it doesn't exist
+                settings = {'bezel_visible': True}
+                with open(settings_path, 'w') as f:
+                    json.dump(settings, f)
+        except Exception as e:
+            print(f"Error loading bezel settings: {e}")
+            self.bezel_visible = True
+            
+        print(f"Loaded bezel settings: visible={self.bezel_visible}")
+        return {'bezel_visible': self.bezel_visible}
+
+    def save_bezel_settings(self):
+        """Save bezel visibility settings"""
+        settings_path = os.path.join(self.mame_dir, "bezel_settings.json")
+        
+        try:
+            # Load existing settings or create new
+            settings = {}
+            if os.path.exists(settings_path):
+                with open(settings_path, 'r') as f:
+                    settings = json.load(f)
+            
+            # Update with current bezel visibility
+            settings['bezel_visible'] = self.bezel_visible
+            
+            # Save settings
+            with open(settings_path, 'w') as f:
+                json.dump(settings, f)
+                
+            print(f"Saved bezel settings: visible={self.bezel_visible}")
+        except Exception as e:
+            print(f"Error saving bezel settings: {e}")
+
+    def toggle_bezel_visibility(self):
+        """Toggle bezel visibility in preview"""
+        print("\n=== Toggling bezel visibility ===")
+        
+        # Toggle state
+        old_value = getattr(self, 'bezel_visible', True)
+        self.bezel_visible = not old_value
+        print(f"Bezel visibility changed from {old_value} to {self.bezel_visible}")
+        
+        # Update button text if it exists
+        if hasattr(self, 'bezel_toggle_button') and self.bezel_toggle_button.winfo_exists():
+            toggle_text = "Hide Bezel" if self.bezel_visible else "Show Bezel"
+            self.bezel_toggle_button.configure(text=toggle_text)
+            print(f"Updated button text to: {toggle_text}")
+        
+        # Update canvas bezel
+        if hasattr(self, 'preview_canvas') and self.preview_canvas.winfo_exists():
+            if self.bezel_visible:
+                # Add bezel to canvas
+                success = self.add_bezel_to_preview_canvas()
+                print(f"Bezel add attempt result: {success}")
+            else:
+                # Remove bezel if it exists
+                if hasattr(self, 'preview_bezel_item') and self.preview_bezel_item:
+                    try:
+                        self.preview_canvas.delete(self.preview_bezel_item)
+                        print("Removed bezel from canvas")
+                        self.preview_bezel_item = None
+                        self.preview_bezel_photo = None
+                    except Exception as e:
+                        print(f"Error removing bezel: {e}")
+        
+        # Save the setting
+        self.save_bezel_settings()
+        print("=== Toggle bezel complete ===\n")
+
+    def add_bezel_to_preview_canvas(self):
+        """Add bezel to the preview canvas with proper z-order control"""
+        print("\n=== Starting add_bezel_to_preview_canvas ===")
+        
+        try:
+            # Make sure we have a canvas
+            if not hasattr(self, 'preview_canvas') or not self.preview_canvas.winfo_exists():
+                print("No preview canvas available")
+                return False
+                
+            # Check if bezel visibility is enabled
+            if not hasattr(self, 'bezel_visible') or not self.bezel_visible:
+                print("Bezel visibility is disabled")
+                return False
+                
+            # First remove any existing bezel
+            if hasattr(self, 'preview_bezel_item') and self.preview_bezel_item:
+                print("Removing existing bezel item")
+                try:
+                    self.preview_canvas.delete(self.preview_bezel_item)
+                except Exception as e:
+                    print(f"Error removing existing bezel: {e}")
+                self.preview_bezel_item = None
+                self.preview_bezel_photo = None
+            
+            # Make sure we have a game selected
+            if not hasattr(self, 'current_game') or not self.current_game:
+                print("No current game selected")
+                return False
+            
+            # Get the bezel path
+            bezel_path = self.get_bezel_path(self.current_game)
+            if not bezel_path:
+                print(f"No bezel found for {self.current_game}")
+                return False
+                
+            print(f"Found bezel path: {bezel_path}")
+            
+            # Load the bezel
+            from PIL import Image, ImageTk
+            try:
+                bezel_img = Image.open(bezel_path)
+                print(f"Loaded bezel image: {bezel_img.size} {bezel_img.mode}")
+            except Exception as e:
+                print(f"Error loading bezel image: {e}")
+                return False
+            
+            # Get canvas dimensions
+            canvas_width = self.preview_canvas.winfo_width()
+            canvas_height = self.preview_canvas.winfo_height()
+            print(f"Canvas size: {canvas_width}x{canvas_height}")
+            
+            # If canvas size is too small, use reasonable defaults
+            if canvas_width <= 1 or canvas_height <= 1:
+                if hasattr(self, 'preview_window'):
+                    # Try window size
+                    canvas_width = self.preview_window.winfo_width()
+                    canvas_height = self.preview_window.winfo_height()
+                    print(f"Using window size: {canvas_width}x{canvas_height}")
+                    
+                    # If still invalid, use defaults
+                    if canvas_width <= 1 or canvas_height <= 1:
+                        canvas_width = 1920
+                        canvas_height = 1080
+                        print(f"Using default size: {canvas_width}x{canvas_height}")
+                else:
+                    canvas_width = 1920
+                    canvas_height = 1080
+                    print(f"Using default size: {canvas_width}x{canvas_height}")
+            
+            # Resize bezel to fit canvas exactly
+            bezel_img = bezel_img.resize((canvas_width, canvas_height), Image.LANCZOS)
+            print(f"Resized bezel to: {canvas_width}x{canvas_height}")
+            
+            # Convert to PhotoImage for Tkinter
+            photo = ImageTk.PhotoImage(bezel_img)
+            
+            # Create the bezel image on the canvas
+            img_item = self.preview_canvas.create_image(0, 0, image=photo, anchor="nw")
+            
+            # Store references
+            self.preview_bezel_photo = photo  # Keep reference to prevent garbage collection
+            self.preview_bezel_item = img_item
+            
+            # Apply the layering based on the setting
+            self.apply_layering()
+            
+            print(f"Successfully added bezel to preview canvas")
+            return True
+                
+        except Exception as e:
+            print(f"Error in add_bezel_to_preview_canvas: {e}")
+            import traceback
+            traceback.print_exc()
+            return False
+    
+    def add_bezel_to_image(self, image, rom_name):
+        """Add bezel to the image for saving"""
+        import os
+        from PIL import Image
+        
+        # Load bezel settings if not already loaded
+        if not hasattr(self, 'bezel_visible'):
+            self.load_bezel_settings()
+        
+        # If bezel is set to hidden, return the original image
+        if not self.bezel_visible:
+            print(f"Bezel visibility is off, skipping bezel for {rom_name}")
+            return image
+        
+        # Get bezel path
+        bezel_path = self.get_bezel_path(rom_name)
+        if not bezel_path:
+            print(f"No bezel found for {rom_name}, returning original image")
+            return image  # Return original if no bezel found
+        
+        try:
+            # Open bezel image
+            print(f"Opening bezel file: {bezel_path}")
+            bezel_img = Image.open(bezel_path)
+            print(f"Bezel image opened successfully: {bezel_img.size} {bezel_img.mode}")
+            
+            # Resize bezel to match the image size
+            img_width, img_height = image.size
+            bezel_img = bezel_img.resize((img_width, img_height), Image.LANCZOS)
+            
+            # Make sure bezel has alpha channel for transparency
+            if bezel_img.mode != 'RGBA':
+                print(f"Converting bezel from {bezel_img.mode} to RGBA")
+                bezel_img = bezel_img.convert('RGBA')
+            
+            # Create a new composite image
+            # Start with the bezel as bottom layer
+            result = bezel_img.copy()
+            
+            # Composite the game image on top (will respect alpha in both images)
+            if image.mode != 'RGBA':
+                image = image.convert('RGBA')
+            
+            result.paste(image, (0, 0), image)
+            
+            print(f"Bezel successfully composited with image for {rom_name}")
+            return result
+        
+        except Exception as e:
+            print(f"Error adding bezel for {rom_name}: {e}")
+            import traceback
+            traceback.print_exc()
+            return image  # Return original on error
     
     def get_logo_path(self, rom_name):
         """Find logo path for a given ROM with support for relative and external paths"""
@@ -6199,10 +6783,15 @@ class MAMEControlConfig(ctk.CTk):
             return image  # Return original image if no logo found
         
         try:
-            # Open logo image
+            # Open logo image and ensure it has transparency support
             print(f"Opening logo file: {logo_path}")
             logo_img = Image.open(logo_path)
             print(f"Logo image opened successfully: {logo_img.size} {logo_img.mode}")
+            
+            # Convert to RGBA if it's not already for transparency support
+            if logo_img.mode != 'RGBA':
+                logo_img = logo_img.convert('RGBA')
+                print(f"Converted logo to RGBA for transparency")
             
             # Default max dimensions if not specified - use consistent class variables
             if max_width is None:
@@ -6219,11 +6808,6 @@ class MAMEControlConfig(ctk.CTk):
             new_height = max(int(logo_height * scale_factor), 1)
             print(f"Resizing logo from {logo_width}x{logo_height} to {new_width}x{new_height}")
             logo_img = logo_img.resize((new_width, new_height), Image.LANCZOS)
-            
-            # Make sure logo has alpha channel for transparency
-            if logo_img.mode != 'RGBA':
-                print(f"Converting logo from {logo_img.mode} to RGBA")
-                logo_img = logo_img.convert('RGBA')
             
             # Calculate position based on logo_position setting
             padding = 20  # Padding from edges
@@ -6248,13 +6832,14 @@ class MAMEControlConfig(ctk.CTk):
             print(f"Placing logo at position: {position} ({self.logo_position})")
             
             # Create a copy of the image to avoid modifying the original
-            result = image.copy()
+            # Ensure it's in RGBA mode for proper compositing
+            if image.mode != 'RGBA':
+                result = image.convert('RGBA')
+            else:
+                result = image.copy()
             
             # Paste logo onto image, respecting transparency
-            if logo_img.mode == 'RGBA':
-                result.paste(logo_img, position, logo_img)
-            else:
-                result.paste(logo_img, position)
+            result.paste(logo_img, position, logo_img)
             
             print(f"Logo successfully added to image for {rom_name}")
             return result
@@ -6304,6 +6889,10 @@ class MAMEControlConfig(ctk.CTk):
             "y_offset": -30                 # Y-position adjustment
         }
         
+    def should_show_rom_info(self):
+        """Helper method to determine if ROM info should be displayed"""
+        return getattr(self, 'show_rom_info', False)
+    
     # Here's the key part that needs to be fixed - how text is displayed in the preview screen
     def show_preview(self):
         
@@ -6348,7 +6937,6 @@ class MAMEControlConfig(ctk.CTk):
         if not game_data:
             messagebox.showinfo("No Control Data", f"No control data found for {self.current_game}")
             return
-
         
         # Check for screen preference in settings
         preferred_screen = getattr(self, 'preferred_preview_screen', 2)  # Default to second screen
@@ -6784,6 +7372,29 @@ class MAMEControlConfig(ctk.CTk):
                 width=button_width
             )
             text_settings_button.pack(side="left", padx=button_padx)
+
+            # Add bezel toggle button to bottom row (add this after logo controls in show_preview)
+            bezel_toggle_text = "Hide Bezel" if self.bezel_visible else "Show Bezel"
+            self.bezel_toggle_button = ctk.CTkButton(
+                bottom_row,
+                text=bezel_toggle_text,
+                command=self.toggle_bezel_visibility,
+                width=button_width
+            )
+            self.bezel_toggle_button.pack(side="left", padx=button_padx)
+
+            # Add bezel to the preview
+            if self.bezel_visible:
+                self.add_bezel_to_preview_canvas()
+            
+            # Add layer settings button to bottom row
+            layer_settings_button = ctk.CTkButton(
+                bottom_row,
+                text="Layers",
+                command=self.show_layer_settings_dialog,
+                width=button_width
+            )
+            layer_settings_button.pack(side="left", padx=button_padx)
             
             # Add the "Save Image" button
             save_button = ctk.CTkButton(
@@ -6896,7 +7507,7 @@ class MAMEControlConfig(ctk.CTk):
         print("--- LOGO POSITION CONTROL ADDED ---\n")
 
     def add_logo_to_preview_canvas(self):
-        """Add logo to the preview canvas with better error handling and size checks"""
+        """Add logo to the preview canvas with improved transparency handling"""
         print("\n=== Starting add_logo_to_preview_canvas ===")
         
         try:
@@ -6933,91 +7544,106 @@ class MAMEControlConfig(ctk.CTk):
                 
             print(f"Found logo path: {logo_path}")
             
-            # Load the logo
+            # Load the logo with explicit transparency handling
             from PIL import Image, ImageTk
             try:
+                # Load the logo image and specifically convert to RGBA to preserve transparency
                 logo_img = Image.open(logo_path)
-                print(f"Loaded logo image: {logo_img.size} {logo_img.mode}")
-            except Exception as e:
-                print(f"Error loading logo image: {e}")
-                return False
-            
-            # Calculate appropriate size - with safety checks
-            canvas_width = self.preview_canvas.winfo_width()
-            canvas_height = self.preview_canvas.winfo_height()
-            print(f"Canvas size: {canvas_width}x{canvas_height}")
-            
-            # If canvas size is too small, use the window size or reasonable defaults
-            if canvas_width <= 1 or canvas_height <= 1:
-                if hasattr(self, 'preview_window'):
-                    # Try to get window size instead
-                    canvas_width = self.preview_window.winfo_width()
-                    canvas_height = self.preview_window.winfo_height()
-                    print(f"Using window size instead: {canvas_width}x{canvas_height}")
-                    
-                    # If window size is also invalid, use reasonable defaults
-                    if canvas_width <= 1 or canvas_height <= 1:
+                
+                # Debug the image mode and information
+                print(f"Original logo image: {logo_img.size} {logo_img.mode}")
+                
+                # Always convert to RGBA to ensure transparency is properly handled
+                if logo_img.mode != 'RGBA':
+                    logo_img = logo_img.convert('RGBA')
+                    print(f"Converted logo to RGBA format")
+                
+                # Calculate appropriate size
+                canvas_width = self.preview_canvas.winfo_width()
+                canvas_height = self.preview_canvas.winfo_height()
+                print(f"Canvas size: {canvas_width}x{canvas_height}")
+                
+                # If canvas size is invalid, use reasonable defaults
+                if canvas_width <= 1 or canvas_height <= 1:
+                    if hasattr(self, 'preview_window'):
+                        canvas_width = self.preview_window.winfo_width()
+                        canvas_height = self.preview_window.winfo_height()
+                        print(f"Using window size: {canvas_width}x{canvas_height}")
+                        
+                        if canvas_width <= 1 or canvas_height <= 1:
+                            canvas_width = 1920
+                            canvas_height = 1080
+                            print(f"Using default size: {canvas_width}x{canvas_height}")
+                    else:
                         canvas_width = 1920
                         canvas_height = 1080
                         print(f"Using default size: {canvas_width}x{canvas_height}")
-                else:
-                    # Use reasonable defaults
-                    canvas_width = 1920
-                    canvas_height = 1080
-                    print(f"Using default size: {canvas_width}x{canvas_height}")
-            
-            # Use percentage-based sizing
-            max_width = int(canvas_width * (self.logo_width_percentage / 100))
-            max_height = int(canvas_height * (self.logo_height_percentage / 100))
-            
-            # Enforce minimum size for visibility
-            max_width = max(max_width, 100)
-            max_height = max(max_height, 32)
-            
-            # Calculate scale factor
-            logo_width, logo_height = logo_img.size
-            scale = min(max_width / max(logo_width, 1), max_height / max(logo_height, 1))
-            
-            # Resize the logo
-            new_width = max(int(logo_width * scale), 1)
-            new_height = max(int(logo_height * scale), 1)
-            print(f"Resizing logo from {logo_width}x{logo_height} to {new_width}x{new_height}")
-            logo_img = logo_img.resize((new_width, new_height), Image.LANCZOS)
-            
-            # Convert to PhotoImage for Tkinter
-            photo = ImageTk.PhotoImage(logo_img)
-            
-            # Position the logo based on logo_position setting
-            padding = 20
-            
-            if not hasattr(self, 'logo_position'):
-                self.logo_position = 'top-left'  # Default position
                 
-            if self.logo_position == 'top-left':
-                x, y = padding, padding
-            elif self.logo_position == 'top-right':
-                x, y = canvas_width - new_width - padding, padding
-            elif self.logo_position == 'bottom-left':
-                x, y = padding, canvas_height - new_height - padding
-            elif self.logo_position == 'bottom-center':
-                x, y = (canvas_width - new_width) // 2, canvas_height - new_height - padding
-            elif self.logo_position == 'bottom-right':
-                x, y = canvas_width - new_width - padding, canvas_height - new_height - padding
-            else:  # Default to top-center
-                x, y = (canvas_width - new_width) // 2, padding
-            
-            print(f"Placing logo at position: {x},{y} ({self.logo_position})")
-            
-            # Create the image on the canvas
-            img_item = self.preview_canvas.create_image(x, y, image=photo, anchor="nw")
-            
-            # Store references as class attributes
-            self.preview_logo_photo = photo  # Keep a reference to prevent garbage collection
-            self.preview_logo_item = img_item
-            
-            print(f"Successfully added logo to preview canvas")
-            return True
-            
+                # Use percentage-based sizing (with safety checks)
+                max_width = int(canvas_width * (self.logo_width_percentage / 100))
+                max_height = int(canvas_height * (self.logo_height_percentage / 100))
+                
+                # Enforce minimum size for visibility
+                max_width = max(max_width, 100)
+                max_height = max(max_height, 32)
+                
+                # Calculate scale factor
+                logo_width, logo_height = logo_img.size
+                scale = min(max_width / max(logo_width, 1), max_height / max(logo_height, 1))
+                
+                # Resize the logo with high quality resampling
+                new_width = max(int(logo_width * scale), 1)
+                new_height = max(int(logo_height * scale), 1)
+                print(f"Resizing logo from {logo_width}x{logo_height} to {new_width}x{new_height}")
+                logo_img = logo_img.resize((new_width, new_height), Image.LANCZOS)
+                
+                # Convert to PhotoImage for Tkinter - explicitly specify RGBA
+                photo = ImageTk.PhotoImage(logo_img)
+                
+                # Position the logo based on logo_position setting
+                padding = 20
+                
+                if not hasattr(self, 'logo_position'):
+                    self.logo_position = 'top-left'  # Default position
+                    
+                if self.logo_position == 'top-left':
+                    x, y = padding, padding
+                elif self.logo_position == 'top-right':
+                    x, y = canvas_width - new_width - padding, padding
+                elif self.logo_position == 'bottom-left':
+                    x, y = padding, canvas_height - new_height - padding
+                elif self.logo_position == 'bottom-center':
+                    x, y = (canvas_width - new_width) // 2, canvas_height - new_height - padding
+                elif self.logo_position == 'bottom-right':
+                    x, y = canvas_width - new_width - padding, canvas_height - new_height - padding
+                else:  # Default to top-center
+                    x, y = (canvas_width - new_width) // 2, padding
+                
+                print(f"Placing logo at position: {x},{y} ({self.logo_position})")
+                
+                # Create the image on the canvas
+                img_item = self.preview_canvas.create_image(x, y, image=photo, anchor="nw")
+                
+                # Store references
+                self.preview_logo_photo = photo  # Keep a reference to prevent garbage collection
+                self.preview_logo_item = img_item
+                
+                # Make sure logo is on top of other elements (or at proper layer if using layering system)
+                if hasattr(self, 'apply_layering'):
+                    self.apply_layering()
+                else:
+                    # Default behavior - raise logo above background
+                    self.preview_canvas.lift(img_item)
+                
+                print(f"Successfully added logo to preview canvas")
+                return True
+                
+            except Exception as e:
+                print(f"Error loading logo image: {e}")
+                import traceback
+                traceback.print_exc()
+                return False
+                
         except Exception as e:
             print(f"Error in add_logo_to_preview_canvas: {e}")
             import traceback
