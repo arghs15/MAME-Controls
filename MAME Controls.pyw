@@ -4566,11 +4566,13 @@ class MAMEControlConfig(ctk.CTk):
             print("Forcing exit")
             os._exit(0)
     
+    # Update save_current_preview method to respect show_rom_info flag
+    # Let's completely rewrite the save_current_preview method to ensure proper layering:
     def save_current_preview(self):
         """Save the current preview state as an image using settings"""
         import os
         from tkinter import messagebox
-        from PIL import Image, ImageDraw, ImageFont
+        from PIL import Image, ImageDraw, ImageFont, ImageChops
         import traceback
         
         if not hasattr(self, 'current_game') or not self.current_game:
@@ -4588,33 +4590,27 @@ class MAMEControlConfig(ctk.CTk):
                 return
         
         try:
-            # Get all settings in one place
+            # Get all settings
             settings = self.get_text_settings()
-            font_size = settings["font_size"]
-            title_size = settings["title_size"]
-            bold_strength = settings["bold_strength"]
-            y_offset = settings["y_offset"]
-            
-            print(f"Using text settings: size={font_size}, title={title_size}, "
-                f"bold={bold_strength}, y_offset={y_offset}, uppercase={settings['uppercase']}")
-            
-            # Get direct path to font file
             font_path = self.get_font_path()
             if not font_path:
-                messagebox.showerror("Error", f"Font file not found! Please add {settings['font_name']} to the fonts folder.")
+                messagebox.showerror("Error", f"Font file not found!")
                 return
                 
-            # Load font directly from file 
-            try:
-                font = ImageFont.truetype(font_path, font_size)
-                title_font = ImageFont.truetype(font_path, title_size)
-                print(f"Loaded font for image saving: {font_path}")
-            except Exception as e:
-                print(f"Error loading font: {e}")
-                messagebox.showerror("Font Error", f"Could not load font: {str(e)}")
-                return
-                
-            # Find the background image
+            # Load fonts
+            font = ImageFont.truetype(font_path, settings["font_size"])
+            title_font = ImageFont.truetype(font_path, settings["title_size"])
+            
+            # Create separate layer images for proper compositing
+            target_width, target_height = 1920, 1080  # Standard HD size
+            
+            # 1. Create RGBA base images for each layer (transparent)
+            background_layer = Image.new('RGBA', (target_width, target_height), (0, 0, 0, 0))
+            bezel_layer = Image.new('RGBA', (target_width, target_height), (0, 0, 0, 0))
+            text_layer = Image.new('RGBA', (target_width, target_height), (0, 0, 0, 0))
+            logo_layer = Image.new('RGBA', (target_width, target_height), (0, 0, 0, 0))
+            
+            # 2. Add background image
             background_path = None
             for ext in ['.png', '.jpg', '.jpeg']:
                 # First check for ROM-specific background
@@ -4628,61 +4624,71 @@ class MAMEControlConfig(ctk.CTk):
                 if os.path.exists(test_path):
                     background_path = test_path
                     break
-            
-            # Create the image (with size matching the preview)
-            target_width, target_height = 1920, 1080  # Standard full HD size
-            
+                    
             if background_path:
                 try:
                     bg_img = Image.open(background_path)
-                    # Resize if needed
-                    if bg_img.size != (target_width, target_height):
-                        bg_img = bg_img.resize((target_width, target_height), Image.LANCZOS)
+                    bg_img = bg_img.resize((target_width, target_height), Image.LANCZOS)
+                    if bg_img.mode != 'RGBA':
+                        bg_img = bg_img.convert('RGBA')
+                    background_layer.paste(bg_img, (0, 0))
                 except Exception as e:
-                    print(f"Error loading background: {e}")
-                    bg_img = Image.new('RGB', (target_width, target_height), 'black')
+                    print(f"Error with background: {e}")
             else:
-                # Create a blank black image
-                bg_img = Image.new('RGB', (target_width, target_height), 'black')
+                # Create a black background
+                background_layer = Image.new('RGBA', (target_width, target_height), (0, 0, 0, 255))
             
-            # Create draw object
-            draw = ImageDraw.Draw(bg_img)
+            # 3. Add bezel to bezel_layer
+            if hasattr(self, 'bezel_visible') and self.bezel_visible:
+                bezel_path = self.get_bezel_path(self.current_game)
+                if bezel_path and os.path.exists(bezel_path):
+                    try:
+                        bezel_img = Image.open(bezel_path)
+                        bezel_img = bezel_img.resize((target_width, target_height), Image.LANCZOS)
+                        if bezel_img.mode != 'RGBA':
+                            bezel_img = bezel_img.convert('RGBA')
+                        # Paste onto bezel layer
+                        bezel_layer.paste(bezel_img, (0, 0), bezel_img)
+                    except Exception as e:
+                        print(f"Error with bezel: {e}")
             
-            # Get game data
+            # 4. Draw text and controls on text_layer
+            text_draw = ImageDraw.Draw(text_layer)
+            
+            # Add game info if enabled
             game_data = self.get_game_data(self.current_game)
-            
-            if game_data:
+            if game_data and getattr(self, 'show_rom_info', False):
                 # Draw title
                 game_title = game_data['gamename']
-                draw.text((target_width//2, 60), game_title, fill="white", anchor="mt", font=title_font)
-                draw.text((target_width//2, 110), f"ROM: {self.current_game}", fill="gray", anchor="mt", font=font)
+                text_draw.text((target_width//2, 60), game_title, fill=(255, 255, 255, 255), anchor="mt", font=title_font)
                 
-                # Add any details if available
+                # Draw ROM name
+                text_draw.text((target_width//2, 110), f"ROM: {self.current_game}", fill=(150, 150, 150, 255), anchor="mt", font=font)
+                
+                # Draw details if available
                 if 'miscDetails' in game_data:
-                    draw.text((target_width//2, 150), game_data['miscDetails'], 
-                            fill="gray", anchor="mt", font=font)
+                    text_draw.text((target_width//2, 150), game_data['miscDetails'], 
+                            fill=(150, 150, 150, 255), anchor="mt", font=font)
             
-            # Draw all currently visible text items using their exact positions
+            # Draw all visible control texts
             if hasattr(self, 'text_items'):
-                print(f"Found {len(self.text_items)} text items to render")
+                y_offset = settings.get('y_offset', -40)
+                bold_strength = settings.get('bold_strength', 2)
                 
                 for control_name, data in self.text_items.items():
-                    # Skip hidden items if we're in the preview window
+                    # Skip hidden controls
                     try:
                         if (hasattr(self, 'preview_canvas') and self.preview_canvas.winfo_exists() and
                             'text' in data and
                             self.preview_canvas.itemcget(data['text'], 'state') == 'hidden'):
                             continue
-                    except Exception as e:
-                        print(f"Error checking visibility for {control_name}: {e}")
+                    except Exception:
+                        pass
                     
-                    # Get position and text (with error handling)
-                    try:
+                    # Get position and text
+                    if 'x' in data and 'y' in data and 'action' in data:
                         text_x = data['x']
                         text_y = data['y']
-                        
-                        # Adjust y-position for consistent placement with preview
-                        adjusted_y = text_y + y_offset
                         
                         # Get the original action text
                         action = data['action']
@@ -4690,12 +4696,10 @@ class MAMEControlConfig(ctk.CTk):
                         # Apply consistent formatting
                         display_text = self.get_formatted_text(action)
                         
-                        print(f"Drawing {control_name} at ({text_x}, {adjusted_y}): {display_text}")
-                        
                         # Apply bold effect based on settings
                         if bold_strength == 0:
                             # No bold effect
-                            draw.text((text_x, adjusted_y), display_text, fill="white", font=font)
+                            text_draw.text((text_x, text_y + y_offset), display_text, fill=(255, 255, 255, 255), font=font)
                         else:
                             # Draw shadows for bold effect
                             offsets = []
@@ -4708,25 +4712,86 @@ class MAMEControlConfig(ctk.CTk):
                                 
                             # Draw shadows
                             for dx, dy in offsets:
-                                draw.text((text_x+dx, adjusted_y+dy), display_text, fill="black", font=font)
+                                text_draw.text((text_x+dx, text_y+dy + y_offset), display_text, fill=(0, 0, 0, 255), font=font)
                             
                             # Draw main text
-                            draw.text((text_x, adjusted_y), display_text, fill="white", font=font)
-                            
+                            text_draw.text((text_x, text_y + y_offset), display_text, fill=(255, 255, 255, 255), font=font)
+            
+            # 5. Add logo to logo_layer
+            if hasattr(self, 'logo_visible') and self.logo_visible:
+                logo_path = self.get_logo_path(self.current_game)
+                if logo_path and os.path.exists(logo_path):
+                    try:
+                        logo_img = Image.open(logo_path)
+                        if logo_img.mode != 'RGBA':
+                            logo_img = logo_img.convert('RGBA')
+                        
+                        # Calculate size based on logo settings
+                        logo_width, logo_height = logo_img.size
+                        max_width = int(target_width * (self.logo_width_percentage / 100))
+                        max_height = int(target_height * (self.logo_height_percentage / 100))
+                        
+                        # Resize logo
+                        scale_factor = min(max_width / max(logo_width, 1), max_height / max(logo_height, 1))
+                        new_width = max(int(logo_width * scale_factor), 1)
+                        new_height = max(int(logo_height * scale_factor), 1)
+                        logo_img = logo_img.resize((new_width, new_height), Image.LANCZOS)
+                        
+                        # Calculate position
+                        padding = 20
+                        logo_position = getattr(self, 'logo_position', 'top-left')
+                        
+                        if logo_position == 'top-left':
+                            position = (padding, padding)
+                        elif logo_position == 'top-right':
+                            position = (target_width - new_width - padding, padding)
+                        elif logo_position == 'bottom-left':
+                            position = (padding, target_height - new_height - padding)
+                        elif logo_position == 'bottom-center':
+                            position = ((target_width - new_width) // 2, target_height - new_height - padding)
+                        elif logo_position == 'bottom-right':
+                            position = (target_width - new_width - padding, target_height - new_height - padding)
+                        else:  # Default to top-center
+                            position = ((target_width - new_width) // 2, padding)
+                        
+                        # Paste logo onto logo layer
+                        logo_layer.paste(logo_img, position, logo_img)
                     except Exception as e:
-                        print(f"Error drawing text for {control_name}: {e}")
-                        continue
+                        print(f"Error with logo: {e}")
             
-            # Add logo to the image
-            bg_img = self.add_logo_to_image(bg_img, self.current_game)
-
-            # Add bezel to the image (should be last to ensure it goes behind everything)
-            bg_img = self.add_bezel_to_image(bg_img, self.current_game)
+            # 6. Composite layers in the correct order
+            # Get layer ordering from settings
+            layer_order = getattr(self, 'layer_order', {
+                'bezel': 1,       # Default: bezel on bottom
+                'background': 2,  # Background above bezel
+                'logo': 3,        # Logo above background
+                'text': 4         # Text on top
+            })
             
-            # Save the image
-            bg_img.save(output_path, format="PNG")
+            # Create a dictionary of layers with their order
+            layers = {
+                'bezel': {'image': bezel_layer, 'order': layer_order.get('bezel', 1)},
+                'background': {'image': background_layer, 'order': layer_order.get('background', 2)},
+                'logo': {'image': logo_layer, 'order': layer_order.get('logo', 3)},
+                'text': {'image': text_layer, 'order': layer_order.get('text', 4)}
+            }
             
-            # Show success message
+            # Sort layers by order
+            sorted_layers = sorted(layers.items(), key=lambda x: x[1]['order'])
+            
+            # Create a new image and composite layers from bottom to top
+            composite_img = Image.new('RGBA', (target_width, target_height), (0, 0, 0, 0))
+            for layer_name, layer_data in sorted_layers:
+                print(f"Compositing layer: {layer_name} (order {layer_data['order']})")
+                composite_img = Image.alpha_composite(composite_img, layer_data['image'])
+            
+            # 7. Convert to RGB for saving
+            final_img = composite_img.convert('RGB')
+            
+            # 8. Save the image
+            final_img.save(output_path, format="PNG")
+            
+            # 9. Show success message
             messagebox.showinfo("Success", f"Image saved to:\n{output_path}")
             
         except Exception as e:
@@ -5243,9 +5308,27 @@ class MAMEControlConfig(ctk.CTk):
                                 print(f"  Warning: No position for {control_name}")
                     
                     print(f"Drew {drawn_controls} controls for {rom_name}")
-                    
+
                     # Add logo to the image
                     img = self.add_logo_to_image(img, rom_name)
+
+                    # Then save the image
+                    img.save(image_path, format="PNG")
+
+                    # Replace it with this proper layering:
+                    print(f"Drew {drawn_controls} controls for {rom_name}")
+
+                    # Apply proper layering based on settings
+                    if getattr(self, 'layer_order', {}).get('bezel', 1) < getattr(self, 'layer_order', {}).get('logo', 3):
+                        # Add bezel first (it will be behind everything)
+                        img = self.add_bezel_to_image(img, rom_name)
+                        # Then add logo on top
+                        img = self.add_logo_to_image(img, rom_name)
+                    else:
+                        # Add logo first
+                        img = self.add_logo_to_image(img, rom_name)
+                        # Then add bezel on top
+                        img = self.add_bezel_to_image(img, rom_name)
 
                     # Then save the image
                     img.save(image_path, format="PNG")
@@ -5515,14 +5598,14 @@ class MAMEControlConfig(ctk.CTk):
             # 4. Draw game title and info on text layer
             game_data = self.get_game_data(self.current_game)
             if game_data:
-                # Draw title (always show this)
-                game_title = game_data['gamename']
-                text_draw.text((target_width//2, 60), game_title, fill=(255, 255, 255, 255), anchor="mt", font=title_font)
-                
-                # Only draw ROM info if show_rom_info is True (same flag as in show_preview)
                 if getattr(self, 'show_rom_info', False):
-                    text_draw.text((target_width//2, 110), f"ROM: {self.current_game}", fill=(150, 150, 150, 255), anchor="mt", font=font)
+                    # Draw title (always show this)
+                    game_title = game_data['gamename']
+                    text_draw.text((target_width//2, 60), game_title, fill=(255, 255, 255, 255), anchor="mt", font=title_font)
                     
+                    # Only draw ROM info if show_rom_info is True
+                    text_draw.text((target_width//2, 110), f"ROM: {self.current_game}", fill=(150, 150, 150, 255), anchor="mt", font=font)
+                        
                     # Add any details if available
                     if 'miscDetails' in game_data:
                         text_draw.text((target_width//2, 150), game_data['miscDetails'], 
@@ -5636,12 +5719,28 @@ class MAMEControlConfig(ctk.CTk):
             # 7. Composite all layers in order
             # Sort layers by order
             sorted_layers = sorted(layers.items(), key=lambda x: x[1]['order'])
-            
+
             # Composite from bottom to top
             composite_img = base_img.copy()
             for layer_name, layer_data in sorted_layers:
                 print(f"Compositing layer: {layer_name} (order {layer_data['order']})")
                 composite_img = Image.alpha_composite(composite_img, layer_data['image'])
+            
+            # Add bezel layer if enabled
+            if hasattr(self, 'bezel_visible') and self.bezel_visible:
+                bezel_path = self.get_bezel_path(self.current_game)
+                if bezel_path and os.path.exists(bezel_path):
+                    try:
+                        bezel_img = Image.open(bezel_path)
+                        bezel_img = bezel_img.resize((target_width, target_height), Image.LANCZOS)
+                        if bezel_img.mode != 'RGBA':
+                            bezel_img = bezel_img.convert('RGBA')
+                        
+                        # Add bezel to layers with proper order
+                        layers['bezel'] = {'image': bezel_img, 'order': self.layer_order['bezel']}
+                        print(f"Added bezel to layers, order: {self.layer_order['bezel']}")
+                    except Exception as e:
+                        print(f"Error loading bezel: {e}")
             
             # Convert final image back to RGB for display
             final_img = composite_img.convert('RGB')
@@ -6443,15 +6542,37 @@ class MAMEControlConfig(ctk.CTk):
                 print(f"Converting bezel from {bezel_img.mode} to RGBA")
                 bezel_img = bezel_img.convert('RGBA')
             
-            # Create a new composite image
-            # Start with the bezel as bottom layer
-            result = bezel_img.copy()
-            
-            # Composite the game image on top (will respect alpha in both images)
+            # Convert the game image to RGBA if it's not already
             if image.mode != 'RGBA':
+                print(f"Converting game image from {image.mode} to RGBA")
                 image = image.convert('RGBA')
             
-            result.paste(image, (0, 0), image)
+            # IMPORTANT CHANGE: Properly layer the bezel
+            # First create a new transparent base image
+            result = Image.new('RGBA', (img_width, img_height), (0, 0, 0, 0))
+            
+            # Get layer ordering - use defaults if not defined
+            layer_order = getattr(self, 'layer_order', {
+                'bezel': 1,       # Lowest layer (furthest back)
+                'background': 2,
+                'logo': 3,
+                'text': 4         # Highest layer (closest to front)
+            })
+            
+            # Check if bezel should be the bottom layer
+            if layer_order['bezel'] < layer_order['background']:
+                # Paste bezel first (bottom layer)
+                result.paste(bezel_img, (0, 0), bezel_img)
+                # Then paste game image on top
+                result.paste(image, (0, 0), image)
+            else:
+                # Paste game image first
+                result.paste(image, (0, 0), image)
+                # Then paste bezel on top
+                result.paste(bezel_img, (0, 0), bezel_img)
+            
+            # Convert back to RGB for compatibility
+            result = result.convert('RGB')
             
             print(f"Bezel successfully composited with image for {rom_name}")
             return result
