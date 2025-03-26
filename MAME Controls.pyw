@@ -4235,8 +4235,21 @@ class MAMEControlConfig(ctk.CTk):
         
         print(f"Using MAME directory: {self.mame_dir}")
         
-        # Load settings (for screen preference and button visibility)
+        # Load settings
         self.load_settings()
+        self.load_bezel_settings()
+        self.load_layer_settings()  # Load layer settings
+        
+        # Check for bezel-on-top flag - Add this block
+        import sys
+        if '--bezel-on-top' in sys.argv:
+            self.layer_order = {
+                'background': 1,  # Background on bottom
+                'bezel': 2,       # Bezel above background
+                'logo': 3,
+                'text': 4
+            }
+            print("Forcing bezel above background")
         
         # Force logo visibility if requested
         if force_logo:
@@ -4926,7 +4939,7 @@ class MAMEControlConfig(ctk.CTk):
     def load_text_appearance_settings(self):
         """Load fixed text appearance settings"""
         return {
-            "font_family": "ScoutCond Bold",
+            "font_family": "Press Start 2P",
             "font_size": 28,
             "title_font_size": 36,
             "bold_strength": 2,
@@ -6084,23 +6097,38 @@ class MAMEControlConfig(ctk.CTk):
                 'logo': 3,
                 'text': 4      # Highest layer (closest to front)
             }
-        
+
+        print(f"Applying layering with order: {self.layer_order}")
+
         try:
             # Get all items that we need to layer
             canvas = self.preview_canvas
             
+            # Get all canvas items for reference
+            all_items = canvas.find_all()
+            print(f"Canvas has {len(all_items)} total items")
+            
             # Background image is always at the bottom by default
             background_item = canvas.find_withtag("background_image")
             if background_item and len(background_item) > 0:
+                print(f"Found background item: {background_item[0]}")
                 if self.layer_order['background'] == 1:
                     canvas.lower(background_item[0])  # Send to very back
                 
             # Handle bezel
             if hasattr(self, 'preview_bezel_item') and self.preview_bezel_item:
-                if self.layer_order['bezel'] == 1:
-                    canvas.lower(self.preview_bezel_item)  # Send to very back
-                elif self.layer_order['bezel'] > self.layer_order['background']:
-                    canvas.lift(self.preview_bezel_item, background_item[0] if background_item else None)
+                print(f"Found bezel item: {self.preview_bezel_item}")
+                # FORCE BEZEL ABOVE BACKGROUND WHEN IN STANDALONE MODE
+                if not hasattr(self, 'game_list'):  # Check if we're in standalone mode
+                    if background_item and len(background_item) > 0:
+                        print("STANDALONE MODE: Forcing bezel above background")
+                        canvas.lift(self.preview_bezel_item, background_item[0])
+                else:
+                    # Use regular layering in normal mode
+                    if self.layer_order['bezel'] == 1:
+                        canvas.lower(self.preview_bezel_item)  # Send to very back
+                    elif self.layer_order['bezel'] > self.layer_order['background'] and background_item:
+                        canvas.lift(self.preview_bezel_item, background_item[0])
             
             # Handle logo
             if hasattr(self, 'preview_logo_item') and self.preview_logo_item:
@@ -7782,6 +7810,7 @@ if __name__ == "__main__":
     parser.add_argument('--auto-close', action='store_true', help='Automatically close preview when MAME exits')
     # Add to the argparse section in your __main__ block
     parser.add_argument('--force-logo', action='store_true', help='Force logo visibility in preview mode')
+    parser.add_argument('--bezel-on-top', action='store_true', help='Force bezel to display on top of background')
     args = parser.parse_args()
     
     if args.preview_only and args.game:
