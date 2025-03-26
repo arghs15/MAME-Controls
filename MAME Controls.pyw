@@ -6312,12 +6312,15 @@ class MAMEControlConfig(ctk.CTk):
             print(f"Error loading layer settings: {e}")
     
     def get_bezel_path(self, rom_name):
-        """Find bezel path for a given ROM"""
+        """Find bezel path for a given ROM with custom path priority"""
         import os
         
-        # Define potential bezel locations with priority order
+        # Define potential bezel locations with new priority order
         bezel_paths = [
-            # Direct paths in artwork directory
+            # Primary path in autochanger/BezelNight directory
+            os.path.join(self.mame_dir, "..", "..", "autochanger", "BezelNight", rom_name, "Bezel.png"),
+            
+            # Fallbacks in artwork directory
             os.path.join(self.mame_dir, "artwork", rom_name, "Bezel.png"),
             os.path.join(self.mame_dir, "artwork", rom_name, "bezel.png"),
             
