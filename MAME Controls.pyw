@@ -41,7 +41,7 @@ class PositionManager:
         """Convert a display position to a normalized position (without y-offset)"""
         if y_offset is None:
             # Get from settings if not provided
-            settings = self.parent.load_text_appearance_settings()  # Use direct method call
+            settings = self.parent.get_text_settings()  # Use direct method call
             y_offset = settings.get("y_offset", -40)
         
         # Remove y-offset
@@ -52,7 +52,7 @@ class PositionManager:
         """Apply y-offset to a normalized position for display"""
         if y_offset is None:
             # Get from settings if not provided
-            settings = self.parent.load_text_appearance_settings()  # Use direct method call
+            settings = self.parent.get_text_settings()  # Use direct method call
             y_offset = settings.get("y_offset", -40)
         
         # Add y-offset
@@ -1955,7 +1955,7 @@ class MAMEControlConfig(ctk.CTk):
         import tkinter.font as tkfont
         
         if settings is None:
-            settings = self.load_text_appearance_settings()
+            settings = self.get_text_settings()
         
         font_family = settings.get("font_family", "Arial")
         font_size = settings.get("font_size", 28)
@@ -4253,7 +4253,7 @@ class MAMEControlConfig(ctk.CTk):
         
         # Force logo visibility if requested
         if force_logo:
-            self.logo_visible = True
+            self.logo_visible = True  
             self.save_logo_settings()
             print("Forced logo visibility enabled")
         
@@ -4934,18 +4934,6 @@ class MAMEControlConfig(ctk.CTk):
             command=dialog.destroy
         )
         cancel_button.grid(row=0, column=1, padx=5, pady=5)
-    
-    # 2. Replace the load_text_appearance_settings method
-    def load_text_appearance_settings(self):
-        """Load fixed text appearance settings"""
-        return {
-            "font_family": "Press Start 2P",
-            "font_size": 28,
-            "title_font_size": 36,
-            "bold_strength": 2,
-            "y_offset": -40,
-            "use_uppercase": False
-        }
 
     def save_text_appearance_settings(self, settings):
         """Save text appearance settings to file"""
@@ -5127,7 +5115,7 @@ class MAMEControlConfig(ctk.CTk):
         preview_dir = self.ensure_preview_folder()
         
         # Load text appearance settings explicitly
-        settings = self.load_text_appearance_settings()
+        settings = self.get_text_settings()
         use_uppercase = settings.get("use_uppercase", False)
         print(f"Batch generation - Uppercase setting: {use_uppercase}")
         
@@ -5430,7 +5418,7 @@ class MAMEControlConfig(ctk.CTk):
         
         # Default to our fixed settings if none provided
         if settings is None:
-            settings = self.load_text_appearance_settings()
+            settings = self.get_text_settings()
         
         font_size = settings.get("font_size", 28)
         title_font_size = settings.get("title_font_size", 36)
@@ -5995,7 +5983,7 @@ class MAMEControlConfig(ctk.CTk):
             font = ImageFont.truetype(destination, 24)
             
             # Store the path in our settings
-            settings = self.load_text_appearance_settings()
+            settings = self.get_text_settings()
             
             if "custom_fonts" not in settings:
                 settings["custom_fonts"] = []
@@ -7027,7 +7015,7 @@ class MAMEControlConfig(ctk.CTk):
             
         print("--- LOGO TEST COMPLETE ---\n")
 
-    def get_text_settings(self):
+    '''def get_text_settings(self):
         """Central place for all text appearance settings"""
         return {
             "font_name": "ScoutCond-Bold",  # Base filename without extension
@@ -7038,6 +7026,35 @@ class MAMEControlConfig(ctk.CTk):
             "y_offset": -30                 # Y-position adjustment
         }
         
+        # 2. Replace the load_text_appearance_settings method
+        def load_text_appearance_settings(self):
+            """Load fixed text appearance settings"""
+            return {
+                "font_family": "Press Start 2P",
+                "font_size": 28,
+                "title_font_size": 36,
+                "bold_strength": 2,
+                "y_offset": -40,
+                "use_uppercase": True
+            }'''
+    
+    def get_text_settings(self, refresh=False):
+        """Central source of truth for all text appearance settings"""
+        # You can keep cached settings if refresh=False for performance
+        if not hasattr(self, '_text_settings_cache') or refresh:
+            self._text_settings_cache = {
+                "font_name": "Press Start 2P",  # For file loading
+                "font_family": "Press Start 2P", # For UI rendering
+                "font_size": 28,
+                "title_size": 36,
+                "title_font_size": 36,  # Duplicate for compatibility
+                "uppercase": True,
+                "use_uppercase": True,  # Duplicate for compatibility
+                "bold_strength": 2,
+                "y_offset": -40
+            }
+        return self._text_settings_cache    
+    
     def should_show_rom_info(self):
         """Helper method to determine if ROM info should be displayed"""
         return getattr(self, 'show_rom_info', False)
@@ -7279,7 +7296,7 @@ class MAMEControlConfig(ctk.CTk):
             print(f"Loaded {len(positions)} positions from global file")
             
             # Load text appearance settings BEFORE creating text items
-            text_settings = self.load_text_appearance_settings()
+            text_settings = self.get_text_settings()
             use_uppercase = text_settings.get("use_uppercase", False)
             font_family = text_settings.get("font_family", "Arial")
             font_size = text_settings.get("font_size", 28)
