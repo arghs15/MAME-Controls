@@ -6779,10 +6779,10 @@ class MAMEControlConfig(ctk.CTk):
         print("=== Toggle logo complete ===\n")
 
     def show_logo_position_dialog(self):
-        """Show dialog to configure logo position"""
+        """Show dialog to configure logo position and Y offset"""
         dialog = ctk.CTkToplevel(self)
-        dialog.title("Logo Position")
-        dialog.geometry("300x200")
+        dialog.title("Logo Position Settings")
+        dialog.geometry("400x360")  # Make it taller for the new control
         dialog.transient(self)
         dialog.grab_set()
         
@@ -6805,23 +6805,63 @@ class MAMEControlConfig(ctk.CTk):
             ("Bottom Right", "bottom-right")
         ]
         
-        for text, value in positions:
+        # Frame for radio buttons
+        radio_frame = ctk.CTkFrame(dialog)
+        radio_frame.pack(fill="x", padx=20, pady=5)
+        
+        # Create two columns of radio buttons for better layout
+        for i, (text, value) in enumerate(positions):
+            row = i % 3
+            col = i // 3
             radio = ctk.CTkRadioButton(
-                dialog,
+                radio_frame,
                 text=text,
                 variable=position_var,
                 value=value
             )
-            radio.pack(anchor="w", padx=30, pady=5)
+            radio.grid(row=row, column=col, sticky="w", padx=10, pady=5)
+        
+        # Add Y offset slider
+        offset_frame = ctk.CTkFrame(dialog)
+        offset_frame.pack(fill="x", padx=20, pady=20)
+        
+        ctk.CTkLabel(offset_frame, text="Y Position Offset:", font=("Arial", 12, "bold")).pack(anchor="w", pady=(0, 5))
+        
+        offset_var = ctk.IntVar(value=getattr(self, 'logo_y_offset', 0))
+        
+        # Display current value
+        value_label = ctk.CTkLabel(offset_frame, text=f"Current: {offset_var.get()} pixels")
+        value_label.pack(anchor="w", pady=(0, 5))
+        
+        # Add slider
+        def update_offset_label(value):
+            offset_var.set(int(value))
+            value_label.configure(text=f"Current: {offset_var.get()} pixels")
+        
+        slider = ctk.CTkSlider(
+            offset_frame,
+            from_=-100,  # Allow negative values to move up
+            to=100,
+            number_of_steps=200,
+            command=update_offset_label
+        )
+        slider.set(offset_var.get())  # Set initial value
+        slider.pack(fill="x", pady=5)
         
         # Buttons frame
         button_frame = ctk.CTkFrame(dialog)
         button_frame.pack(pady=20, fill="x")
         
-        def apply_position():
+        def apply_settings():
+            # Store old values for comparison
             old_position = self.logo_position
+            old_offset = getattr(self, 'logo_y_offset', 0)
+            
+            # Update with new values
             self.logo_position = position_var.get()
+            self.logo_y_offset = offset_var.get()
             print(f"Changed logo position from {old_position} to {self.logo_position}")
+            print(f"Changed logo Y offset from {old_offset} to {self.logo_y_offset}")
             
             # Update logo on canvas immediately
             if hasattr(self, 'preview_canvas') and self.preview_canvas.winfo_exists():
@@ -6833,7 +6873,7 @@ class MAMEControlConfig(ctk.CTk):
         apply_button = ctk.CTkButton(
             button_frame,
             text="Apply",
-            command=apply_position
+            command=apply_settings
         )
         apply_button.pack(side="left", padx=20)
         
@@ -6859,6 +6899,8 @@ class MAMEControlConfig(ctk.CTk):
             settings['logo_visible'] = self.logo_visible
             if hasattr(self, 'logo_position'):
                 settings['logo_position'] = self.logo_position
+            if hasattr(self, 'logo_y_offset'):
+                settings['logo_y_offset'] = self.logo_y_offset
             
             # Save back to file
             with open(settings_path, 'w') as f:
@@ -6875,6 +6917,7 @@ class MAMEControlConfig(ctk.CTk):
         # Default settings - explicitly set logo_visible to True by default
         self.logo_visible = True  # Set it directly first
         self.logo_position = 'top-left'  # Default position
+        self.logo_y_offset = 100  # Default Y offset (no adjustment)
         
         try:
             if os.path.exists(settings_path):
@@ -6885,11 +6928,14 @@ class MAMEControlConfig(ctk.CTk):
                         self.logo_visible = bool(saved_settings['logo_visible'])
                     if 'logo_position' in saved_settings:
                         self.logo_position = saved_settings['logo_position']
+                    if 'logo_y_offset' in saved_settings:
+                        self.logo_y_offset = int(saved_settings['logo_y_offset'])
             else:
                 # If no settings file exists, create one with defaults
                 settings = {
                     'logo_visible': True,
-                    'logo_position': 'top-left'
+                    'logo_position': 'top-left',
+                    'logo_y_offset': 0
                 }
                 with open(settings_path, 'w') as f:
                     json.dump(settings, f)
@@ -6898,9 +6944,10 @@ class MAMEControlConfig(ctk.CTk):
             # Ensure defaults are set even on error
             self.logo_visible = True
             self.logo_position = 'top-left'
+            self.logo_y_offset = 0
         
-        print(f"Loaded logo settings: visible={self.logo_visible}, position={self.logo_position}")
-        return {'logo_visible': self.logo_visible, 'logo_position': self.logo_position}
+        print(f"Loaded logo settings: visible={self.logo_visible}, position={self.logo_position}, y_offset={self.logo_y_offset}")
+        return {'logo_visible': self.logo_visible, 'logo_position': self.logo_position, 'logo_y_offset': self.logo_y_offset}
 
     def add_logo_to_image(self, image, rom_name, max_width=None, max_height=None):
         """Add logo to the image if available and visible according to settings"""
@@ -6955,21 +7002,26 @@ class MAMEControlConfig(ctk.CTk):
             # Get the image dimensions
             img_width, img_height = image.size
             
+            # Get Y offset (default to 0 if not set)
+            y_offset = getattr(self, 'logo_y_offset', 0)
+            
             # Calculate position based on setting
             if self.logo_position == 'top-left':
-                position = (padding, padding)
+                position = (padding, padding + y_offset)
+            elif self.logo_position == 'top-center':
+                position = ((img_width - new_width) // 2, padding + y_offset)
             elif self.logo_position == 'top-right':
-                position = (img_width - new_width - padding, padding)
+                position = (img_width - new_width - padding, padding + y_offset)
             elif self.logo_position == 'bottom-left':
-                position = (padding, img_height - new_height - padding)
+                position = (padding, img_height - new_height - padding + y_offset)
             elif self.logo_position == 'bottom-center':
-                position = ((img_width - new_width) // 2, img_height - new_height - padding)
+                position = ((img_width - new_width) // 2, img_height - new_height - padding + y_offset)
             elif self.logo_position == 'bottom-right':
-                position = (img_width - new_width - padding, img_height - new_height - padding)
+                position = (img_width - new_width - padding, img_height - new_height - padding + y_offset)
             else:  # Default to top-center
-                position = ((img_width - new_width) // 2, padding)
+                position = ((img_width - new_width) // 2, padding + y_offset)
             
-            print(f"Placing logo at position: {position} ({self.logo_position})")
+            print(f"Placing logo at position: {position} ({self.logo_position} with Y offset: {y_offset})")
             
             # Create a copy of the image to avoid modifying the original
             # Ensure it's in RGBA mode for proper compositing
@@ -7676,7 +7728,7 @@ class MAMEControlConfig(ctk.CTk):
         print("--- LOGO POSITION CONTROL ADDED ---\n")
 
     def add_logo_to_preview_canvas(self):
-        """Add logo to the preview canvas with improved transparency handling"""
+        """Add logo to the preview canvas with Y offset support"""
         print("\n=== Starting add_logo_to_preview_canvas ===")
         
         try:
@@ -7775,20 +7827,25 @@ class MAMEControlConfig(ctk.CTk):
                 if not hasattr(self, 'logo_position'):
                     self.logo_position = 'top-left'  # Default position
                     
-                if self.logo_position == 'top-left':
-                    x, y = padding, padding
-                elif self.logo_position == 'top-right':
-                    x, y = canvas_width - new_width - padding, padding
-                elif self.logo_position == 'bottom-left':
-                    x, y = padding, canvas_height - new_height - padding
-                elif self.logo_position == 'bottom-center':
-                    x, y = (canvas_width - new_width) // 2, canvas_height - new_height - padding
-                elif self.logo_position == 'bottom-right':
-                    x, y = canvas_width - new_width - padding, canvas_height - new_height - padding
-                else:  # Default to top-center
-                    x, y = (canvas_width - new_width) // 2, padding
+                # Get Y offset (default to 0 if not set)
+                y_offset = getattr(self, 'logo_y_offset', 0)
                 
-                print(f"Placing logo at position: {x},{y} ({self.logo_position})")
+                if self.logo_position == 'top-left':
+                    x, y = padding, padding + y_offset
+                elif self.logo_position == 'top-center':
+                    x, y = (canvas_width - new_width) // 2, padding + y_offset
+                elif self.logo_position == 'top-right':
+                    x, y = canvas_width - new_width - padding, padding + y_offset
+                elif self.logo_position == 'bottom-left':
+                    x, y = padding, canvas_height - new_height - padding + y_offset
+                elif self.logo_position == 'bottom-center':
+                    x, y = (canvas_width - new_width) // 2, canvas_height - new_height - padding + y_offset
+                elif self.logo_position == 'bottom-right':
+                    x, y = canvas_width - new_width - padding, canvas_height - new_height - padding + y_offset
+                else:  # Default to top-center
+                    x, y = (canvas_width - new_width) // 2, padding + y_offset
+                
+                print(f"Placing logo at position: {x},{y} ({self.logo_position} with Y offset: {y_offset})")
                 
                 # Create the image on the canvas
                 img_item = self.preview_canvas.create_image(x, y, image=photo, anchor="nw")
