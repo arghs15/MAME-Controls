@@ -1,108 +1,81 @@
 -- license:MIT
 -- copyright-holders:Custom
--- MAME Controls Menu Plugin for MAME 0.196
+-- MAME Controls Menu Plugin for MAME 0.196 - Pause Only Version
 local exports = {}
 exports.name = "controls"
 exports.version = "0.1.196"
 exports.description = "MAME Controls Display Menu"
 exports.license = "MIT"
 exports.author = { name = "Custom" }
+
 function exports.startplugin()
-    local controls_shown = false
-    local rom_detected = false
-    local show_delay = 1  -- Reduced to ~1/6 second for quicker display
-    local delay_counter = 0
-
+    -- Flag to indicate when a pause was caused by the user
+    local user_paused = false
+    
     local function show_controls()
-        if controls_shown then return end
-
         local game_name = emu.romname()
         print("Game: " .. (game_name or "nil"))
-
+        
         if game_name and game_name ~= "" then
-            -- Pause MAME
-            emu.pause()
-            print("Paused MAME")
-
             -- Show controls
             local command = string.format('pythonw "MAME Controls.pyw" --preview-only --game %s --screen 1', game_name)
             print("Running: " .. command)
             os.execute(command)
-            controls_shown = true
-
-            -- Unpause MAME
-            emu.unpause()
-            print("Unpaused MAME")
-
-            -- Show a quick message (removed for compatibility)
+            
+            -- Unpause MAME if it was paused by the user
+            if user_paused then
+                print("Unpausing MAME after controls")
+                emu.unpause()
+                user_paused = false
+            end
         end
     end
-
+    
     -- Menu population function
     local function menu_populate()
         local menu = {}
         menu[1] = {"Show Controls", "", 0}
         return menu
     end
-
+    
     -- Menu callback
     local function menu_callback(index, event)
         if event == "select" then
-            -- Reset to allow showing again
-            controls_shown = false
             show_controls()
             return true
         end
         return false
     end
-
+    
     -- Register menu
     emu.register_menu(menu_callback, menu_populate, "Controls")
-
-    -- Frame handler for ROM detection
-    emu.register_frame(function()
-        local game_name = emu.romname()
-
-        -- Check if we have a valid ROM
-        if game_name and game_name ~= "" and game_name ~= "___empty" then
-            -- ROM is now detected
-            if not rom_detected then
-                rom_detected = true
-                delay_counter = 0
-                print("ROM detected: " .. game_name)
+    
+    -- Register pause handler
+    if emu.register_pause then
+        print("Registering pause handler")
+        emu.register_pause(function()
+            -- When the user pauses, set our flag and show controls
+            if not user_paused then
+                user_paused = true
+                print("User paused MAME")
+                show_controls()
+            else
+                -- Reset our flag when MAME is unpaused
+                user_paused = false
+                print("MAME unpaused")
             end
-
-            -- If ROM is detected but controls not shown yet, start the delay counter
-            if rom_detected and not controls_shown then
-                delay_counter = delay_counter + 1
-
-                -- Show controls after minimal delay
-                if delay_counter >= show_delay then
-                    show_controls()
-                end
-            end
-        else
-            -- No ROM detected, reset flags
-            rom_detected = false
-            delay_counter = 0
-        end
-    end)
-
-    -- Register start callback
-    emu.register_start(function()
-        print("ROM start detected")
-        rom_detected = true
-        delay_counter = 0
-    end)
-
+        end)
+    else
+        print("emu.register_pause not available in this MAME version")
+    end
+    
     -- Reset when game stops
     emu.register_stop(function()
-        controls_shown = false
-        rom_detected = false
-        delay_counter = 0
+        user_paused = false
         print("Controls plugin reset for next game")
     end)
-
-    print("Controls plugin loaded (menu + immediate ROM detection)")
+    
+    print("Controls plugin loaded (pause detection + menu only)")
 end
+
 return exports
