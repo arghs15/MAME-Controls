@@ -90,9 +90,19 @@ class PositionManager:
     
     def update_from_dragging(self, control_name, new_x, new_y):
         """Update a position from dragging (storing normalized values)"""
-        x, normalized_y = self.normalize(new_x, new_y)
-        self.positions[control_name] = (x, normalized_y)
-        return x, normalized_y
+        # Get settings for y-offset calculation
+        settings = self.get_text_settings()
+        y_offset = settings.get('y_offset', -40)
+        
+        # Calculate normalized y-coordinate (the true position without offset)
+        normalized_y = new_y - y_offset
+        
+        # Store the position with coordinates properly normalized
+        self.positions[control_name] = (new_x, normalized_y)
+        
+        print(f"Position updated from drag - {control_name}: display=({new_x}, {new_y}), normalized=({new_x}, {normalized_y})")
+        
+        return new_x, normalized_y
     
     def load_from_file(self, game_name):
         """Load positions from file for a specific game"""
@@ -421,7 +431,7 @@ class MAMEControlConfig(ctk.CTk):
             print(f"Error saving settings: {e}")
 
     def load_settings(self):
-        """Load settings from JSON file if it exists"""
+        """Load settings from JSON file if it exists with improved defaults"""
         settings_path = os.path.join(self.mame_dir, "control_config_settings.json")
         if os.path.exists(settings_path):
             try:
@@ -437,6 +447,21 @@ class MAMEControlConfig(ctk.CTk):
                 if 'visible_control_types' in settings:
                     self.visible_control_types = settings['visible_control_types']
                     print(f"Loaded visible control types: {self.visible_control_types}")
+                    
+                    # Make sure both BUTTON and JOYSTICK are included for proper display
+                    if 'BUTTON' in self.visible_control_types and 'JOYSTICK' not in self.visible_control_types:
+                        print("Adding JOYSTICK to visible control types for complete display")
+                        self.visible_control_types.append('JOYSTICK')
+                        # Save the updated settings
+                        settings['visible_control_types'] = self.visible_control_types
+                        with open(settings_path, 'w') as f:
+                            json.dump(settings, f)
+                else:
+                    # Default to showing both buttons and joystick
+                    self.visible_control_types = ["BUTTON", "JOYSTICK"]
+                    settings['visible_control_types'] = self.visible_control_types
+                    with open(settings_path, 'w') as f:
+                        json.dump(settings, f)
 
                 # Load hide preview buttons setting
                 if 'hide_preview_buttons' in settings:
@@ -453,11 +478,26 @@ class MAMEControlConfig(ctk.CTk):
             except Exception as e:
                 print(f"Error loading settings: {e}")
                 self.hide_preview_buttons = False
+                self.visible_control_types = ["BUTTON", "JOYSTICK"]  # Default to both
         else:
-            # Default setting
+            # Default settings
             self.hide_preview_buttons = False
+            self.visible_control_types = ["BUTTON", "JOYSTICK"]  # Default to both
+            
+            # Create settings file with defaults
+            settings = {
+                'preferred_preview_screen': getattr(self, 'preferred_preview_screen', 2),
+                'visible_control_types': self.visible_control_types,
+                'hide_preview_buttons': self.hide_preview_buttons
+            }
+            try:
+                with open(settings_path, 'w') as f:
+                    json.dump(settings, f)
+                print("Created default settings file")
+            except Exception as e:
+                print(f"Error creating settings file: {e}")
         
-        # Ensure the visible_control_types is initialized even if no settings file exists
+        # Ensure the visible_control_types is initialized even if loading failed
         if not hasattr(self, 'visible_control_types') or self.visible_control_types is None:
             self.visible_control_types = ["BUTTON", "JOYSTICK"]
     
@@ -2064,6 +2104,20 @@ class MAMEControlConfig(ctk.CTk):
         # Check if joystick is currently visible
         joystick_visible = "JOYSTICK" in self.visible_control_types
         
+        # Store joystick positions before hiding them
+        if joystick_visible:
+            # We're about to hide joysticks, store their positions
+            self.temp_joystick_positions = {}
+            joystick_buttons = ["UP", "DOWN", "LEFT", "RIGHT"]
+            
+            for button_name in joystick_buttons:
+                if button_name in self.text_items:
+                    data = self.text_items[button_name]
+                    if 'x' in data and 'base_y' in data:
+                        # Store normalized position
+                        self.temp_joystick_positions[button_name] = (data['x'], data['base_y'])
+                        print(f"Stored joystick position before hiding: {button_name} = ({data['x']}, {data['base_y']})")
+        
         if joystick_visible:
             # Remove JOYSTICK from visible types
             self.visible_control_types.remove("JOYSTICK")
@@ -2075,54 +2129,83 @@ class MAMEControlConfig(ctk.CTk):
         joystick_visible = not joystick_visible  # New state
         state = "" if joystick_visible else "hidden"
         
-        # Update visibility of current controls
-        for control_name, data in self.text_items.items():
-            if "JOYSTICK" in control_name:
-                self.preview_canvas.itemconfigure(data['text'], state=state)
-                self.preview_canvas.itemconfigure(data['shadow'], state=state)
+        # List of XInput button names that correspond to joystick directions
+        joystick_buttons = ["UP", "DOWN", "LEFT", "RIGHT"]
+        
+        # Update visibility of current controls based on XInput button names
+        for button_name, data in self.text_items.items():
+            # Check if this is a joystick direction button
+            if button_name in joystick_buttons:
+                if 'text' in data:
+                    self.preview_canvas.itemconfigure(data['text'], state=state)
+                if 'shadow' in data and data['shadow']:
+                    self.preview_canvas.itemconfigure(data['shadow'], state=state)
         
         # Save the visibility setting
         self.save_visibility_settings()
+        print(f"Toggled joystick visibility to: {joystick_visible}")
     
     
     def save_global_positions(self):
-        """Save all positions to global file using the position manager"""
-        if hasattr(self, 'showing_all_controls') and self.showing_all_controls:
-            print("In 'Show All' mode, using save_all_controls_positions")
-            return self.save_all_controls_positions()
-        
+        """Save all positions to global file, including hidden controls"""
         try:
-            # Make sure we have a position manager
-            if not hasattr(self, 'position_manager'):
-                self.position_manager = PositionManager(self)
+            # Reset the positions storage to start fresh
+            self.position_manager = PositionManager(self)
             
-            # Update the position manager with current text item positions
-            # This is critical - we need to update the position manager first
-            for name, data in self.text_items.items():
+            # Log current text positions before processing
+            print("\n=== SAVING GLOBAL POSITIONS ===")
+            print(f"Found {len(self.text_items)} text items to save")
+            
+            # Track the hidden status of joystick controls
+            joystick_hidden = "JOYSTICK" not in self.visible_control_types
+            joystick_controls = ["UP", "DOWN", "LEFT", "RIGHT"]
+            
+            # Process each text item and store its position properly
+            for button_name, data in self.text_items.items():
                 if 'x' not in data or 'y' not in data:
-                    print(f"  Warning: Missing x/y for {name}")
+                    print(f"  Warning: Missing x/y for {button_name}")
                     continue
                     
-                x = data['x']
-                # Use base_y (normalized y) if available, otherwise calculate it
-                if 'base_y' in data:
-                    normalized_y = data['base_y']
-                else:
-                    # Need to subtract y_offset to get normalized position
-                    settings = self.get_text_settings()
-                    y_offset = settings.get('y_offset', -40)
-                    normalized_y = data['y'] - y_offset
-                    
-                # Store in position manager with normalized coordinates
-                self.position_manager.store(name, x, normalized_y, is_normalized=True)
-                print(f"Stored position for {name}: ({x}, {normalized_y})")
+                # Get raw display coordinates from the text item
+                display_x = data['x']
+                display_y = data['y']
+                
+                # Get text settings for proper y-offset handling
+                settings = self.get_text_settings()
+                y_offset = settings.get('y_offset', -40)
+                
+                # Calculate normalized y-coordinate (remove the y-offset effect)
+                normalized_y = display_y - y_offset
+                
+                # Store normalized coordinates in position manager using XInput button as key
+                self.position_manager.store(button_name, display_x, normalized_y, is_normalized=True)
+                
+                is_joystick = button_name in joystick_controls
+                print(f"  Stored position for {button_name}: display=({display_x}, {display_y}), normalized=({display_x}, {normalized_y}), joystick={is_joystick}")
             
-            # Save positions globally
+            # Get positions from any hidden joystick controls from the "Show All" view
+            if joystick_hidden and self.showing_all_controls:
+                # We're in "Show All" mode with joystick hidden
+                # Need to retrieve joystick positions from temp storage
+                # This ensures we don't lose joystick positions when they're hidden
+                for button_name in joystick_controls:
+                    if button_name not in self.text_items and hasattr(self, 'temp_joystick_positions'):
+                        if button_name in self.temp_joystick_positions:
+                            x, normalized_y = self.temp_joystick_positions[button_name]
+                            self.position_manager.store(button_name, x, normalized_y, is_normalized=True)
+                            print(f"  Recovered hidden joystick position for {button_name}: ({x}, {normalized_y})")
+            
+            # Save the positions to file
             result = self.position_manager.save_to_file(is_global=True)
+            
+            # Print positions that were actually saved
+            print("\nPositions saved to global file:")
+            for name, (x, y) in self.position_manager.positions.items():
+                print(f"  {name}: [{x}, {y}]")
             
             if result:
                 count = len(self.position_manager.positions)
-                print(f"Saved {count} global positions")
+                print(f"\nSaved {count} global positions")
                 messagebox.showinfo("Success", f"Global positions saved ({count} items)")
                 return True
             else:
@@ -2131,6 +2214,8 @@ class MAMEControlConfig(ctk.CTk):
                 
         except Exception as e:
             print(f"Error saving global positions: {e}")
+            import traceback
+            traceback.print_exc()
             messagebox.showerror("Error", f"Could not save positions: {e}")
             return False
 
@@ -2288,14 +2373,13 @@ class MAMEControlConfig(ctk.CTk):
             messagebox.showinfo("Success", "Positions saved globally for all games")
     
     def load_text_positions(self, rom_name):
-        """Load text positions, with more reliable file path handling"""
+        """Load text positions, with default positions as fallback"""
         positions = {}
         
         # Create preview directory if it doesn't exist
         preview_dir = os.path.join(self.mame_dir, "preview")
         if not os.path.exists(preview_dir):
             os.makedirs(preview_dir)
-            return positions  # Return empty positions if directory was just created
         
         # First try ROM-specific positions - with explicit path
         rom_positions_file = os.path.join(preview_dir, f"{rom_name}_positions.json")
@@ -2317,6 +2401,37 @@ class MAMEControlConfig(ctk.CTk):
                 print(f"Loaded {len(positions)} positions from global file: {global_positions_file}")
             except Exception as e:
                 print(f"Error loading global positions: {e}")
+        
+        # If no positions found or file doesn't exist, use default positions
+        if not positions:
+            # Default XInput button positions
+            default_positions = {
+                "A": [667.3333333333334, 500.0], 
+                "B": [667.3333333333334, 548.0], 
+                "X": [667.3333333333334, 594.0], 
+                "Y": [667.3333333333334, 640.0], 
+                "LB": [667.3333333333334, 690.0], 
+                "RB": [667.3333333333334, 735.0], 
+                "LT": [667.3333333333334, 787.0], 
+                "RT": [667.3333333333334, 833.0], 
+                "LS": [667.3333333333334, 885.0], 
+                "RS": [667.3333333333334, 935.0], 
+                "UP": [669.3333333333334, 367.0], 
+                "DOWN": [668.3333333333334, 322.0], 
+                "LEFT": [667.3333333333334, 456.0], 
+                "RIGHT": [667.3333333333334, 412.0]
+            }
+            
+            positions = default_positions
+            print(f"No saved positions found, using {len(positions)} default positions")
+            
+            # Create the global positions file with defaults
+            try:
+                with open(global_positions_file, 'w') as f:
+                    json.dump(default_positions, f)
+                print(f"Created global positions file with defaults: {global_positions_file}")
+            except Exception as e:
+                print(f"Error creating default global positions file: {e}")
         
         return positions
     
@@ -3839,38 +3954,39 @@ class MAMEControlConfig(ctk.CTk):
     
     # 1. Fix for show_all_possible_controls()
     def show_all_possible_controls(self):
-        """Show all possible controls for positioning"""
+        """Show all possible XInput controls for positioning"""
         # Store current controls to restore later
         self.original_text_items = self.text_items.copy()
         
         # Clear existing controls
-        for data in self.text_items.values():
+        for button_name, data in self.text_items.items():
             self.preview_canvas.delete(data['text'])
-            self.preview_canvas.delete(data['shadow'])
+            if data['shadow'] is not None:
+                self.preview_canvas.delete(data['shadow'])
         
-        # Define all standard controls
+        # Define all standard XInput controls with placeholder actions
         standard_controls = {
-            # Directional controls
-            "P1_JOYSTICK_UP": "Up",
-            "P1_JOYSTICK_DOWN": "Down",
-            "P1_JOYSTICK_LEFT": "Left",
-            "P1_JOYSTICK_RIGHT": "Right",
+            # Main buttons
+            "A": "A Button Action",
+            "B": "B Button Action",
+            "X": "X Button Action",
+            "Y": "Y Button Action",
             
-            # Buttons 1-10
-            "P1_BUTTON1": "A Button",
-            "P1_BUTTON2": "B Button",
-            "P1_BUTTON3": "X Button",
-            "P1_BUTTON4": "Y Button",
-            "P1_BUTTON5": "L Button",
-            "P1_BUTTON6": "R Button",
-            "P1_BUTTON7": "L2 Button",
-            "P1_BUTTON8": "R2 Button",
-            "P1_BUTTON9": "Select",
-            "P1_BUTTON10": "Start",
+            # Bumpers and triggers
+            "LB": "Left Bumper Action",
+            "RB": "Right Bumper Action",
+            "LT": "Left Trigger Action",
+            "RT": "Right Trigger Action",
             
-            # Additional controls for completeness
-            "P1_COIN": "Insert Coin",
-            "P1_START": "1P Start",
+            # Stick buttons
+            "LS": "Left Stick Button Action",
+            "RS": "Right Stick Button Action",
+            
+            # D-pad directions
+            "UP": "D-Pad Up Action",
+            "DOWN": "D-Pad Down Action",
+            "LEFT": "D-Pad Left Action",
+            "RIGHT": "D-Pad Right Action"
         }
         
         # Create new text items dictionary
@@ -3880,314 +3996,453 @@ class MAMEControlConfig(ctk.CTk):
         image_x = self.image_x
         image_y = self.image_y
         
-        # Calculate image size safely
-        canvas_bbox = self.preview_canvas.bbox(self.preview_canvas.find_withtag("all"))
-        if canvas_bbox:
-            image_width = canvas_bbox[2] - image_x
-            image_height = canvas_bbox[3] - image_y
-        else:
-            # Use canvas size as fallback
-            image_width = self.preview_canvas.winfo_width()
-            image_height = self.preview_canvas.winfo_height()
-        
-        # IMPORTANT CHANGE: Create a new position manager and explicitly load global positions
-        self.position_manager = PositionManager(self)
-        global_loaded = self.position_manager.load_from_file("global")
-        print(f"Loaded {len(self.position_manager.positions)} positions from global file")
-        
-        # Load text appearance settings
-        settings = self.get_text_settings(refresh=True)
-        use_uppercase = settings.get("use_uppercase", False)
-        font_family = settings.get("font_family", "Arial")
-        font_size = settings.get("font_size", 28)
-        bold_strength = settings.get("bold_strength", 2)
-        y_offset = settings.get('y_offset', -40)
-        
-        print(f"Using text settings for 'Show All': font={font_family}, size={font_size}, bold={bold_strength}, uppercase={use_uppercase}, y_offset={y_offset}")
-        
-        # Apply scaling factor for fonts
-        scaling_factors = {
-            "Times New Roman": 1.5,
-            "Times": 1.5,
-            "Georgia": 1.4,
-            "Garamond": 1.7,
-            "Baskerville": 1.6,
-            "Palatino": 1.5,
-            "Courier New": 1.3,
-            "Courier": 1.3,
-            "Consolas": 1.2,
-            "Cambria": 1.4
-        }
-        scale = scaling_factors.get(font_family, 1.0)
-        adjusted_font_size = int(font_size * scale)
-        
-        # Create font with correct size and family
-        try:
-            import tkinter.font as tkfont
-            text_font = tkfont.Font(family=font_family, size=adjusted_font_size, weight="bold")
-        except Exception as e:
-            print(f"Error creating font: {e}")
-            text_font = (font_family, adjusted_font_size, "bold")
-        
-        # Add all controls as text
-        control_count = 0
-        for control_name, action in standard_controls.items():
-            # Get display text (apply uppercase if needed)
-            display_text = self.get_display_text(action, settings)
-            
-            # Position text (use position manager if available, otherwise use a grid layout)
-            normalized_x, normalized_y = self.position_manager.get_normalized(control_name)
-            
-            if normalized_x == 0 and normalized_y == 0:
-                # No saved position found, use default grid layout
-                column = control_count % 4
-                row = control_count // 4
-                
-                # Calculate position
-                normalized_x = image_x + 100 + (column * 150)
-                normalized_y = image_y + 50 + (row * 50)
-                
-                # Store in position manager
-                self.position_manager.store(control_name, normalized_x, normalized_y, is_normalized=True)
-                print(f"Using default position for {control_name}: ({normalized_x}, {normalized_y})")
-            else:
-                print(f"Using saved position for {control_name}: ({normalized_x}, {normalized_y})")
-            
-            # Apply the y-offset from settings - for display only
-            text_y = normalized_y + y_offset
-            
-            # Always visible in "show all" mode
-            is_visible = True
-            
-            # Create text based on bold strength setting
-            shadow = None
-            if bold_strength == 0:
-                # No shadow/bold effect
-                text_item = self.preview_canvas.create_text(
-                    normalized_x, text_y, 
-                    text=display_text, 
-                    font=text_font, 
-                    fill="white",
-                    anchor="sw", 
-                    state="" if is_visible else "hidden"
-                )
-            else:
-                # Apply bold effect based on strength setting
-                shadow_offset = max(1, min(bold_strength, 3))  # Shadow offset between 1-3 pixels
-                shadow = self.preview_canvas.create_text(
-                    normalized_x+shadow_offset, text_y+shadow_offset, 
-                    text=display_text, 
-                    font=text_font, 
-                    fill="black",
-                    anchor="sw", 
-                    state="" if is_visible else "hidden"
-                )
-                text_item = self.preview_canvas.create_text(
-                    normalized_x, text_y, 
-                    text=display_text, 
-                    font=text_font, 
-                    fill="white",
-                    anchor="sw", 
-                    state="" if is_visible else "hidden"
-                )
-            
-            # Store the text items
-            self.text_items[control_name] = {
-                'text': text_item,
-                'shadow': shadow,
-                'action': action,         # Store original action for reuse
-                'display_text': display_text,  # Store display text that may be uppercase
-                'x': normalized_x, 
-                'y': text_y,           # Store the display y (with offset)
-                'base_y': normalized_y  # Store the normalized base_y
-            }
-            
-            # Make the text draggable
-            self.make_draggable(self.preview_canvas, text_item, shadow, control_name)
-            control_count += 1
-        
-        # Update snap points for alignment
-        self.snap_points = {}
-        for control_name, data in self.text_items.items():
-            self.snap_points[control_name] = (data['x'], data['y'])
-        
-        # Re-apply the alignment drag handlers
-        self.update_draggable_for_alignment()
-        
-        # Set showing_all_controls flag
-        self.showing_all_controls = True
-        
-        print(f"Showing all {len(self.text_items)} standard controls with current text settings")
-
-    # 2. Fix for restore_game_controls()
-    def restore_game_controls(self):
-        """Restore the game-specific controls"""
-        if not self.original_text_items:
-            print("No original controls to restore")
-            return
-        
-        # Remove all current controls
-        for data in self.text_items.values():
-            self.preview_canvas.delete(data['text'])
-            self.preview_canvas.delete(data['shadow'])
-        
-        # Important: Load global positions FIRST to ensure we're using latest saved positions
+        # Load saved positions from global positions file
         self.position_manager = PositionManager(self)
         self.position_manager.load_from_file("global")
         print(f"Loaded {len(self.position_manager.positions)} positions from global file")
         
-        # Restore original controls dictionary
-        self.text_items = self.original_text_items
+        # Also load any stored joystick positions
+        if hasattr(self, 'temp_joystick_positions'):
+            for button_name, (x, y) in self.temp_joystick_positions.items():
+                if button_name not in self.position_manager.positions:
+                    self.position_manager.store(button_name, x, y, is_normalized=True)
+                    print(f"Loaded stored joystick position: {button_name} = ({x}, {y})")
         
         # Load text appearance settings
         settings = self.get_text_settings(refresh=True)
-        use_uppercase = settings.get("use_uppercase", False)
         font_family = settings.get("font_family", "Arial")
         font_size = settings.get("font_size", 28)
         bold_strength = settings.get("bold_strength", 2)
         y_offset = settings.get('y_offset', -40)
         
-        print(f"Restoring game controls with text settings: font={font_family}, size={font_size}, bold={bold_strength}, uppercase={use_uppercase}, y_offset={y_offset}")
-        
-        # Apply scaling factor for fonts
-        scaling_factors = {
-            "Times New Roman": 1.5,
-            "Times": 1.5,
-            "Georgia": 1.4,
-            "Garamond": 1.7,
-            "Baskerville": 1.6,
-            "Palatino": 1.5,
-            "Courier New": 1.3,
-            "Courier": 1.3,
-            "Consolas": 1.2,
-            "Cambria": 1.4
-        }
-        scale = scaling_factors.get(font_family, 1.0)
-        adjusted_font_size = int(font_size * scale)
+        print(f"Using text settings for 'Show All': font={font_family}, size={font_size}, bold={bold_strength}, y_offset={y_offset}")
         
         # Create font with correct size and family
         try:
             import tkinter.font as tkfont
-            text_font = tkfont.Font(family=font_family, size=adjusted_font_size, weight="bold")
+            text_font = tkfont.Font(family=font_family, size=self.apply_font_scaling(font_family, font_size), weight="bold")
         except Exception as e:
             print(f"Error creating font: {e}")
-            text_font = (font_family, adjusted_font_size, "bold")
+            text_font = (font_family, self.apply_font_scaling(font_family, font_size), "bold")
         
-        # Important: We need to recreate the text items on the canvas since they were deleted
-        for control_name, data in self.text_items.items():
-            # Get the original action text
-            action = data['action']
-            
+        # Add all XInput controls as text
+        control_count = 0
+        joystick_visible = "JOYSTICK" in self.visible_control_types
+        
+        for button_name, action in standard_controls.items():
+            # Skip joystick controls if they're hidden
+            is_joystick = button_name in ["UP", "DOWN", "LEFT", "RIGHT"]
+            if is_joystick and not joystick_visible:
+                # Still create and position them but make them hidden
+                print(f"Joystick control {button_name} will be created but hidden")
+                
             # Apply uppercase if enabled
-            display_text = self.get_display_text(action, settings)
-            data['display_text'] = display_text
+            use_uppercase = settings.get("use_uppercase", False)
+            display_text = f"{button_name}: {action.upper() if use_uppercase else action}"
             
-            # Get position from position manager FIRST (this is the key change)
-            normalized_x, normalized_y = self.position_manager.get_normalized(control_name)
-            
-            # Only if not found in position manager, use the data or original positions
-            if normalized_x == 0 and normalized_y == 0:
-                if 'base_y' in data:
-                    # Original data already has normalized coordinates
-                    normalized_x, normalized_y = data['x'], data['base_y']
-                else:
-                    # Extract coordinates from original data
-                    normalized_x, normalized_y = data['x'], data['y'] - y_offset
-                    data['base_y'] = normalized_y
-            
-            # Apply the y-offset to get display coordinates
-            text_x, text_y = normalized_x, normalized_y + y_offset
-            
-            # Update the stored positions
-            data['x'] = text_x
-            data['y'] = text_y
-            data['base_y'] = normalized_y
-            
-            # Check visibility based on control type
-            is_visible = False
-            for control_type in self.visible_control_types:
-                if control_type in control_name:
-                    is_visible = True
-                    break
-            
-            # Create text based on bold strength setting
-            shadow = None
-            if bold_strength == 0:
-                # No shadow/bold effect
-                text_item = self.preview_canvas.create_text(
-                    text_x, text_y, 
-                    text=display_text, 
-                    font=text_font, 
-                    fill="white",
-                    anchor="sw", 
-                    state="" if is_visible else "hidden"
-                )
+            # Position text - use position manager if available, otherwise use a grid layout
+            if button_name in self.position_manager.positions:
+                # Get normalized position
+                normalized_x, normalized_y = self.position_manager.get_normalized(button_name)
+                
+                # Apply offset for display
+                text_x, text_y = self.position_manager.apply_offset(normalized_x, normalized_y, y_offset)
+                
+                print(f"Using saved position for {button_name}: normalized=({normalized_x}, {normalized_y}), display=({text_x}, {text_y})")
             else:
-                # Apply bold effect based on strength setting
-                shadow_offset = max(1, min(bold_strength, 3))  # Shadow offset between 1-3 pixels
-                shadow = self.preview_canvas.create_text(
-                    text_x+shadow_offset, text_y+shadow_offset, 
-                    text=display_text, 
-                    font=text_font, 
-                    fill="black",
-                    anchor="sw", 
-                    state="" if is_visible else "hidden"
-                )
-                text_item = self.preview_canvas.create_text(
-                    text_x, text_y, 
-                    text=display_text, 
-                    font=text_font, 
-                    fill="white",
-                    anchor="sw", 
-                    state="" if is_visible else "hidden"
-                )
+                # Default grid layout - arrange buttons in rows and columns
+                grid_cols = 4  # Number of columns in the grid
+                grid_row = control_count // grid_cols
+                grid_col = control_count % grid_cols
+                
+                # Calculate position - spread evenly across the screen
+                margin_x = 100
+                margin_y = 100
+                spacing_x = (self.preview_canvas.winfo_width() - 2 * margin_x) / (grid_cols - 1)
+                spacing_y = 80  # Vertical spacing between rows
+                
+                normalized_x = image_x + margin_x + (grid_col * spacing_x)
+                normalized_y = image_y + margin_y + (grid_row * spacing_y)
+                
+                # Apply offset for display
+                text_x, text_y = normalized_x, normalized_y + y_offset
+                
+                # Store in position manager
+                self.position_manager.store(button_name, normalized_x, normalized_y, is_normalized=True)
+                print(f"Using default position for {button_name}: ({text_x}, {text_y})")
             
-            # Update the data with new canvas items
-            data['text'] = text_item
-            data['shadow'] = shadow
+            # Create text with proper shadow effect
+            text_item, shadow_item = self.create_text_with_shadow(
+                self.preview_canvas, 
+                text_x, 
+                text_y, 
+                display_text, 
+                text_font
+            )
+            
+            # Set joystick controls visibility
+            if is_joystick and not joystick_visible:
+                self.preview_canvas.itemconfigure(text_item, state="hidden")
+                if shadow_item is not None:
+                    self.preview_canvas.itemconfigure(shadow_item, state="hidden")
+            
+            # Store the text items
+            self.text_items[button_name] = {
+                'text': text_item,
+                'shadow': shadow_item,
+                'action': action,
+                'display_text': display_text,
+                'x': text_x, 
+                'y': text_y,
+                'base_y': normalized_y,
+                'is_joystick': is_joystick
+            }
             
             # Make the text draggable
-            self.make_draggable(self.preview_canvas, text_item, shadow, control_name)
-        
-        # Clear the original reference
-        self.original_text_items = None
+            self.make_draggable(self.preview_canvas, text_item, shadow_item, button_name)
+            control_count += 1
         
         # Update snap points for alignment
         if hasattr(self, 'snap_points'):
             self.snap_points = {}
-            for control_name, data in self.text_items.items():
-                self.snap_points[control_name] = (data['x'], data['y'])
+            for button_name, data in self.text_items.items():
+                self.snap_points[button_name] = (data['x'], data['y'])
+        
+        # Apply alignment if available
+        if hasattr(self, 'update_draggable_for_alignment'):
+            self.update_draggable_for_alignment()
+        
+        print(f"Showing all {len(self.text_items)} XInput controls with current text settings")
+
+    # 2. Fix for restore_game_controls()
+    def restore_game_controls(self):
+        """Restore the game-specific controls after showing all possible controls"""
+        if not self.original_text_items:
+            print("No original controls to restore")
+            return
+            
+        # Remove all current controls
+        for button_name, data in self.text_items.items():
+            self.preview_canvas.delete(data['text'])
+            if data['shadow'] is not None:
+                self.preview_canvas.delete(data['shadow'])
+        
+        # Get game data again
+        game_data = self.get_game_data(self.current_game)
+        if not game_data:
+            print(f"No game data available for {self.current_game}")
+            return
+        
+        # Get custom controls if they exist
+        cfg_controls = {}
+        if self.current_game in self.custom_configs:
+            cfg_controls = self.parse_cfg_controls(self.custom_configs[self.current_game])
+            # Convert mappings if XInput is enabled
+            if self.use_xinput:
+                cfg_controls = {
+                    control: self.convert_mapping(mapping, True)
+                    for control, mapping in cfg_controls.items()
+                }
+        
+        # Load text appearance settings
+        settings = self.get_text_settings()
+        font_family = settings.get("font_family", "Arial")
+        font_size = settings.get("font_size", 28)
+        bold_strength = settings.get("bold_strength", 2)
+        y_offset = settings.get('y_offset', -40)
+        
+        # Create font with correct size and family
+        try:
+            import tkinter.font as tkfont
+            text_font = tkfont.Font(family=font_family, size=self.apply_font_scaling(font_family, font_size), weight="bold")
+        except Exception as e:
+            print(f"Error creating font: {e}")
+            text_font = (font_family, self.apply_font_scaling(font_family, font_size), "bold")
+        
+        # Reset text items dictionary
+        self.text_items = {}
+        
+        # Process all player controls
+        control_count = 0
+        for player in game_data.get('players', []):
+            if player['number'] != 1:
+                continue
+                
+            for label in player.get('labels', []):
+                control_name = label['name']
+                action = label['value']
+                
+                # Only include P1 controls
+                if not control_name.startswith('P1_'):
+                    continue
+                
+                # Get custom mapping if available
+                custom_mapping = None
+                if control_name in cfg_controls:
+                    custom_mapping = cfg_controls[control_name]
+                
+                # Get XInput button for this control
+                xinput_button = self.get_xinput_button_from_control(control_name, custom_mapping)
+                
+                # Skip controls that don't map to XInput
+                if not xinput_button:
+                    continue
+                
+                # Get display text for this control
+                display_text = self.get_display_text(action, settings, control_name, custom_mapping)
+                
+                # Skip if no display text
+                if not display_text:
+                    continue
+                
+                # Get position from position manager
+                normalized_x, normalized_y = self.position_manager.get_normalized(xinput_button)
+                text_x, text_y = self.position_manager.apply_offset(normalized_x, normalized_y, y_offset)
+                
+                # Create text with shadow
+                text_item, shadow_item = self.create_text_with_shadow(
+                    self.preview_canvas, 
+                    text_x, 
+                    text_y, 
+                    display_text, 
+                    text_font
+                )
+                
+                # Check visibility based on control type
+                is_visible = self.is_control_visible(control_name)
+                
+                # Set visibility state
+                if not is_visible:
+                    self.preview_canvas.itemconfigure(text_item, state="hidden")
+                    if shadow_item is not None:
+                        self.preview_canvas.itemconfigure(shadow_item, state="hidden")
+                
+                # Store the text items
+                self.text_items[xinput_button] = {
+                    'text': text_item,
+                    'shadow': shadow_item,
+                    'action': action,
+                    'display_text': display_text,
+                    'control_name': control_name,
+                    'x': text_x, 
+                    'y': text_y,
+                    'base_y': normalized_y,
+                    'custom_mapping': custom_mapping
+                }
+                
+                # Make the text draggable
+                self.make_draggable(self.preview_canvas, text_item, shadow_item, xinput_button)
+                control_count += 1
+        
+        # Update snap points for alignment
+        if hasattr(self, 'snap_points'):
+            self.snap_points = {}
+            for button_name, data in self.text_items.items():
+                self.snap_points[button_name] = (data['x'], data['y'])
         
         # Re-apply the alignment drag handlers
         if hasattr(self, 'update_draggable_for_alignment'):
             self.update_draggable_for_alignment()
         
+        # Clear the original reference
+        self.original_text_items = None
+        
         print(f"Restored {len(self.text_items)} game-specific controls using current text settings")
-    # 3. Add a helper method for consistent text formatting
 
-    def get_display_text(self, action, settings=None):
-        """Get the display text with proper formatting based on settings"""
+    def get_display_text(self, action, settings=None, control_name=None, custom_mapping=None):
+        """
+        Display only XInput buttons and joystick directions
+        Ignores all other types of controls
+        """
         if settings is None:
             settings = self.get_text_settings()
             
         # Apply uppercase if enabled
         use_uppercase = settings.get("use_uppercase", False)
-        if use_uppercase:
-            return action.upper()
+        action_text = action.upper() if use_uppercase else action
+        
+        # Initialize button text
+        button_text = ""
+        
+        # Check for custom mapping first
+        if custom_mapping and custom_mapping != "Default" and custom_mapping != "Not mapped":
+            # Only process XInput and joystick mappings
+            if "XINPUT" in custom_mapping:
+                # XInput buttons
+                if "_A" in custom_mapping:
+                    button_text = "A"
+                elif "_B" in custom_mapping:
+                    button_text = "B"
+                elif "_X" in custom_mapping:
+                    button_text = "X"
+                elif "_Y" in custom_mapping:
+                    button_text = "Y"
+                # Bumpers and triggers
+                elif "SHOULDER_L" in custom_mapping:
+                    button_text = "LB"
+                elif "SHOULDER_R" in custom_mapping:
+                    button_text = "RB"
+                elif "TRIGGER_L" in custom_mapping:
+                    button_text = "LT"
+                elif "TRIGGER_R" in custom_mapping:
+                    button_text = "RT"
+                # Stick buttons
+                elif "THUMB_L" in custom_mapping:
+                    button_text = "LS"
+                elif "THUMB_R" in custom_mapping:
+                    button_text = "RS"
+                # D-pad directions
+                elif "DPAD_UP" in custom_mapping:
+                    button_text = "UP"
+                elif "DPAD_DOWN" in custom_mapping:
+                    button_text = "DOWN"
+                elif "DPAD_LEFT" in custom_mapping:
+                    button_text = "LEFT"
+                elif "DPAD_RIGHT" in custom_mapping:
+                    button_text = "RIGHT"
+            # Handle joystick directions specifically
+            elif "JOYCODE" in custom_mapping and ("HAT" in custom_mapping or "AXIS" in custom_mapping):
+                if "UP" in custom_mapping or "YAXIS_UP" in custom_mapping:
+                    button_text = "UP"
+                elif "DOWN" in custom_mapping or "YAXIS_DOWN" in custom_mapping:
+                    button_text = "DOWN"
+                elif "LEFT" in custom_mapping or "XAXIS_LEFT" in custom_mapping:
+                    button_text = "LEFT"
+                elif "RIGHT" in custom_mapping or "XAXIS_RIGHT" in custom_mapping:
+                    button_text = "RIGHT"
         else:
-            return action
+            # For default mappings, only show XInput buttons and joystick directions
+            if control_name:
+                if "JOYSTICK_UP" in control_name:
+                    button_text = "UP"
+                elif "JOYSTICK_DOWN" in control_name:
+                    button_text = "DOWN"
+                elif "JOYSTICK_LEFT" in control_name:
+                    button_text = "LEFT"
+                elif "JOYSTICK_RIGHT" in control_name:
+                    button_text = "RIGHT"
+                elif "BUTTON" in control_name:
+                    # Extract button number and map to XInput
+                    button_match = re.search(r'BUTTON(\d+)', control_name)
+                    if button_match:
+                        button_num = button_match.group(1)
+                        # Map to XInput buttons
+                        xinput_buttons = {
+                            "1": "A",
+                            "2": "B",
+                            "3": "X",
+                            "4": "Y",
+                            "5": "LB",
+                            "6": "RB",
+                            "7": "LT",
+                            "8": "RT",
+                            "9": "LS",
+                            "10": "RS"
+                        }
+                        button_text = xinput_buttons.get(button_num, "")
+        
+        # Only create display text if we have a recognized button
+        if button_text:
+            display_text = f"{button_text}: {action_text}"
+        else:
+            # Skip this control entirely by returning empty string
+            # This will effectively hide controls that aren't XInput or joystick
+            display_text = ""
+        
+        return display_text
+    
+    def get_xinput_button_from_control(self, control_name, custom_mapping=None):
+        """
+        Get the XInput button name that corresponds to this control
+        Used for mapping controls to positions based on XInput buttons
+        """
+        # If there's a custom mapping, use that to determine the XInput button
+        if custom_mapping and custom_mapping != "Default" and custom_mapping != "Not mapped":
+            if "XINPUT" in custom_mapping:
+                if "_A" in custom_mapping:
+                    return "A"
+                elif "_B" in custom_mapping:
+                    return "B"
+                elif "_X" in custom_mapping:
+                    return "X"
+                elif "_Y" in custom_mapping:
+                    return "Y"
+                elif "SHOULDER_L" in custom_mapping:
+                    return "LB"
+                elif "SHOULDER_R" in custom_mapping:
+                    return "RB"
+                elif "TRIGGER_L" in custom_mapping:
+                    return "LT"
+                elif "TRIGGER_R" in custom_mapping:
+                    return "RT"
+                elif "THUMB_L" in custom_mapping:
+                    return "LS"
+                elif "THUMB_R" in custom_mapping:
+                    return "RS"
+                elif "DPAD_UP" in custom_mapping:
+                    return "UP"
+                elif "DPAD_DOWN" in custom_mapping:
+                    return "DOWN"
+                elif "DPAD_LEFT" in custom_mapping:
+                    return "LEFT"
+                elif "DPAD_RIGHT" in custom_mapping:
+                    return "RIGHT"
+            # Handle joystick directions
+            elif "JOYCODE" in custom_mapping:
+                if "HATUP" in custom_mapping or "YAXIS_UP" in custom_mapping:
+                    return "UP"
+                elif "HATDOWN" in custom_mapping or "YAXIS_DOWN" in custom_mapping:
+                    return "DOWN"
+                elif "HATLEFT" in custom_mapping or "XAXIS_LEFT" in custom_mapping:
+                    return "LEFT"
+                elif "HATRIGHT" in custom_mapping or "XAXIS_RIGHT" in custom_mapping:
+                    return "RIGHT"
+                
+        # If no custom mapping, map based on the control name
+        if control_name:
+            if "JOYSTICK_UP" in control_name:
+                return "UP"
+            elif "JOYSTICK_DOWN" in control_name:
+                return "DOWN"
+            elif "JOYSTICK_LEFT" in control_name:
+                return "LEFT"
+            elif "JOYSTICK_RIGHT" in control_name:
+                return "RIGHT"
+            elif "BUTTON" in control_name:
+                # Extract button number and map to XInput
+                import re
+                button_match = re.search(r'BUTTON(\d+)', control_name)
+                if button_match:
+                    button_num = button_match.group(1)
+                    # Map to XInput buttons
+                    xinput_buttons = {
+                        "1": "A",
+                        "2": "B",
+                        "3": "X",
+                        "4": "Y",
+                        "5": "LB",
+                        "6": "RB",
+                        "7": "LT",
+                        "8": "RT",
+                        "9": "LS",
+                        "10": "RS"
+                    }
+                    return xinput_buttons.get(button_num, "")
+        
+        # If nothing matches
+        return ""
     
     def save_all_controls_positions(self):
-        """Save positions for all standard controls to the global positions file"""
+        """Save positions for all XInput controls to the global positions file"""
         try:
             # Use the position manager to store all current positions properly
             if not hasattr(self, 'position_manager'):
                 self.position_manager = PositionManager(self)
             
             # Update position manager from current text items
-            for name, data in self.text_items.items():
+            for button_name, data in self.text_items.items():
                 if 'x' not in data or 'y' not in data:
-                    print(f"  Warning: Missing x/y for {name}")
+                    print(f"  Warning: Missing x/y for {button_name}")
                     continue
                     
                 x = data['x']
@@ -4201,8 +4456,8 @@ class MAMEControlConfig(ctk.CTk):
                     normalized_y = data['y'] - y_offset
                     
                 # Store in position manager with normalized coordinates
-                self.position_manager.store(name, x, normalized_y, is_normalized=True)
-                print(f"Stored position for {name}: ({x}, {normalized_y})")
+                self.position_manager.store(button_name, x, normalized_y, is_normalized=True)
+                print(f"Stored position for {button_name}: ({x}, {normalized_y})")
                 
             # Now save all positions to global file
             result = self.position_manager.save_to_file(is_global=True)
@@ -4220,9 +4475,10 @@ class MAMEControlConfig(ctk.CTk):
         except Exception as e:
             print(f"Error saving all controls positions: {e}")
             messagebox.showerror("Error", f"Could not save positions: {e}")
+            return False
 
     
-    def show_preview_standalone(self, rom_name, auto_close=False, force_logo=False):
+    def show_preview_standalone(self, rom_name, auto_close=False, force_logo=False, hide_joystick=False):
         """Show the preview for a specific ROM without running the main app"""
         print(f"Starting standalone preview for ROM: {rom_name}")
         
@@ -4238,9 +4494,9 @@ class MAMEControlConfig(ctk.CTk):
         # Load settings
         self.load_settings()
         self.load_bezel_settings()
-        self.load_layer_settings()  # Load layer settings
+        self.load_layer_settings()
         
-        # Check for bezel-on-top flag - Add this block
+        # Check for bezel-on-top flag
         import sys
         if '--bezel-on-top' in sys.argv:
             self.layer_order = {
@@ -4251,19 +4507,17 @@ class MAMEControlConfig(ctk.CTk):
             }
             print("Forcing bezel above background")
         
+        # Handle hide-joystick flag
+        if hide_joystick or '--hide-joystick' in sys.argv:
+            if 'JOYSTICK' in self.visible_control_types:
+                self.visible_control_types.remove('JOYSTICK')
+                print("Hiding joystick controls")
+        
         # Force logo visibility if requested
         if force_logo:
             self.logo_visible = True  
             self.save_logo_settings()
             print("Forced logo visibility enabled")
-        
-        # Ensure preview folder exists
-        if hasattr(self, 'ensure_preview_folder'):
-            preview_dir = self.ensure_preview_folder()
-        else:
-            preview_dir = os.path.join(self.mame_dir, "preview")
-            if not os.path.exists(preview_dir):
-                os.makedirs(preview_dir)
         
         # Ensure preview folder exists
         if hasattr(self, 'ensure_preview_folder'):
@@ -4683,6 +4937,17 @@ class MAMEControlConfig(ctk.CTk):
                     text_draw.text((target_width//2, 150), game_data['miscDetails'], 
                             fill=(150, 150, 150, 255), anchor="mt", font=font)
             
+            # Get custom controls if they exist
+            cfg_controls = {}
+            if self.current_game in self.custom_configs:
+                cfg_controls = self.parse_cfg_controls(self.custom_configs[self.current_game])
+                # Convert mappings if XInput is enabled
+                if self.use_xinput:
+                    cfg_controls = {
+                        control: self.convert_mapping(mapping, True)
+                        for control, mapping in cfg_controls.items()
+                    }
+            
             # Draw all visible control texts
             if hasattr(self, 'text_items'):
                 y_offset = settings.get('y_offset', -40)
@@ -4706,8 +4971,15 @@ class MAMEControlConfig(ctk.CTk):
                         # Get the original action text
                         action = data['action']
                         
-                        # Apply consistent formatting
-                        display_text = self.get_formatted_text(action)
+                        # Check if there's a custom mapping for this control
+                        custom_mapping = None
+                        if control_name in cfg_controls:
+                            custom_mapping = cfg_controls[control_name]
+                        elif 'custom_mapping' in data:
+                            custom_mapping = data['custom_mapping']
+                        
+                        # Apply consistent formatting with custom mapping if available
+                        display_text = self.get_display_text(action, settings, control_name, custom_mapping)
                         
                         # Apply bold effect based on settings
                         if bold_strength == 0:
@@ -7114,11 +7386,68 @@ class MAMEControlConfig(ctk.CTk):
         """Helper method to determine if ROM info should be displayed"""
         return getattr(self, 'show_rom_info', False)
     
-    # Here's the key part that needs to be fixed - how text is displayed in the preview screen
-    def show_preview(self):
+    def is_control_visible(self, control_name):
+        """Check if a control should be visible based on visible_control_types setting"""
+        # Always show joystick controls that are custom mapped
+        if "JOYSTICK" in control_name and hasattr(self, 'current_game'):
+            # Check if this game has a custom mapping for this control
+            if self.current_game in self.custom_configs:
+                cfg_controls = self.parse_cfg_controls(self.custom_configs[self.current_game])
+                if control_name in cfg_controls:
+                    return True  # Always show custom-mapped joystick controls
         
+        # Normal visibility check based on control types
+        for control_type in self.visible_control_types:
+            if control_type in control_name:
+                return True
+        
+        return False
+    
+    def create_text_with_shadow(self, canvas, x, y, text, font=None, shadow_offset=2):
+        """Create text with shadow effect for better visibility"""
+        # Get shadow offset from bold strength if available
+        if hasattr(self, 'get_text_settings'):
+            settings = self.get_text_settings()
+            bold_strength = settings.get('bold_strength', 2)
+            shadow_offset = max(1, min(bold_strength, 3))
+        
+        # If bold_strength is 0, don't create a shadow
+        if shadow_offset == 0:
+            text_item = canvas.create_text(
+                x, y, 
+                text=text, 
+                font=font, 
+                fill="white",
+                anchor="sw"
+            )
+            return text_item, None
+        
+        # Create shadow text
+        shadow = canvas.create_text(
+            x + shadow_offset, 
+            y + shadow_offset, 
+            text=text, 
+            font=font, 
+            fill="black",
+            anchor="sw"
+        )
+        
+        # Create main text
+        text_item = canvas.create_text(
+            x, y, 
+            text=text, 
+            font=font, 
+            fill="white",
+            anchor="sw"
+        )
+        
+        return text_item, shadow
+    
+    def show_preview(self):
+        """Show a preview of the control layout for the current game on the second screen"""
+        # First close any existing preview windows to prevent accumulation
         self.close_all_previews()
-
+        
         if not self.current_game:
             messagebox.showinfo("No Game Selected", "Please select a game first")
             return
@@ -7174,12 +7503,7 @@ class MAMEControlConfig(ctk.CTk):
         self.preview_window.withdraw()
         
         # Configure the window to properly exit when closed
-        self.preview_window.protocol("WM_DELETE_WINDOW", self.quit_application)
-        
-        # Define a proper ESC key handler that will fully terminate the application
-        def force_quit(event):
-            print("ESC pressed, forcing exit")
-            self.quit_application()
+        self.preview_window.protocol("WM_DELETE_WINDOW", self.close_preview)
         
         # Bind ESC to the force_quit function
         self.preview_window.bind("<Escape>", lambda event: self.close_preview())
@@ -7335,49 +7659,77 @@ class MAMEControlConfig(ctk.CTk):
             # Center the image
             x = max((win_width - new_width) // 2, 0)
             y = max((win_height - new_height) // 2, 0)
-            canvas.create_image(x, y, image=photo, anchor="nw")
+            # After creating the background image
+            canvas.create_image(x, y, image=photo, anchor="nw", tags="background_image")
             canvas.image = photo  # Keep a reference to prevent garbage collection
+
+            # Apply proper layering
+            self.apply_layering()
+            
+            # Initialize logo display
+            self.preview_logo_item = None
+            self.preview_logo_photo = None
+
+            # Load logo settings
+            if not hasattr(self, 'logo_visible') or not hasattr(self, 'logo_position'):
+                self.load_logo_settings()
+                print(f"Loaded logo settings: visible={self.logo_visible}, position={self.logo_position}")
+
+            # Add logo immediately if it should be visible
+            if self.logo_visible:
+                try:
+                    self.add_logo_to_preview_canvas()
+                    print("Added logo during preview initialization")
+                except Exception as e:
+                    print(f"Error adding logo during initialization: {e}")
+                    import traceback
+                    traceback.print_exc()
             
             # Store canvas and image info for text placement
             self.preview_canvas = canvas
             self.image_x = x
             self.image_y = y
             
-            # Add control text overlays - track them for movement
+            # Reset text items dictionary
             self.text_items = {}
             
-            # Try to load saved positions, checking ROM-specific first then global
-            positions = self.load_text_positions(self.current_game)
-            print(f"Loaded {len(positions)} positions from global file")
+            # Load the position manager with saved positions
+            self.position_manager.load_from_file(self.current_game)
+            print(f"Loaded {len(self.position_manager.positions)} positions from position manager")
             
-            # Load text appearance settings BEFORE creating text items
-            text_settings = self.get_text_settings()
-            use_uppercase = text_settings.get("use_uppercase", False)
-            font_family = text_settings.get("font_family", "Arial")
-            font_size = text_settings.get("font_size", 28)
-            bold_strength = text_settings.get("bold_strength", 2)
-            y_offset = text_settings.get("y_offset", -40)
+            # Load text appearance settings
+            settings = self.get_text_settings()
+            use_uppercase = settings.get("use_uppercase", False)
+            font_family = settings.get("font_family", "Arial")
+            font_size = settings.get("font_size", 28)
+            bold_strength = settings.get("bold_strength", 2)
+            y_offset = settings.get('y_offset', -40)
             
-            print(f"Loaded text settings: uppercase={use_uppercase}, font={font_family}, size={font_size}")
+            print(f"Loaded text settings: uppercase={use_uppercase}, font={font_family}, size={font_size}, y_offset={y_offset}")
             
-            # Apply scaling factor for certain fonts
-            scaling_factors = {
-                "Times New Roman": 1.5,
-                "Times": 1.5,
-                "Georgia": 1.4,
-                "Garamond": 1.7,
-                "Baskerville": 1.6,
-                "Palatino": 1.5,
-                "Courier New": 1.3,
-                "Courier": 1.3,
-                "Consolas": 1.2,
-                "Cambria": 1.4
-            }
-            scale = scaling_factors.get(font_family, 1.0)
-            adjusted_font_size = int(font_size * scale)
+            # Apply scaling factor for fonts
+            adjusted_font_size = self.apply_font_scaling(font_family, font_size)
+            
+            # Create font with correct size and family
+            try:
+                import tkinter.font as tkfont
+                text_font = tkfont.Font(family=font_family, size=adjusted_font_size, weight="bold")
+            except Exception as e:
+                print(f"Error creating font: {e}")
+                text_font = (font_family, adjusted_font_size, "bold")
+            
+            # Get custom controls if they exist
+            cfg_controls = {}
+            if self.current_game in self.custom_configs:
+                cfg_controls = self.parse_cfg_controls(self.custom_configs[self.current_game])
+                # Convert mappings if XInput is enabled
+                if self.use_xinput:
+                    cfg_controls = {
+                        control: self.convert_mapping(mapping, True)
+                        for control, mapping in cfg_controls.items()
+                    }
             
             # Add player controls as text overlays
-            text_y = y + 50  # Start 50px from top of image
             control_count = 0
             
             # Process only Player 1 controls
@@ -7393,76 +7745,85 @@ class MAMEControlConfig(ctk.CTk):
                     if not control_name.startswith('P1_'):
                         continue
                     
-                    display_text = self.get_formatted_text(action)
-                    print(f"Adding control: {control_name} = {display_text}")
-
-                    # Apply uppercase if enabled
-                    if use_uppercase:
-                        display_text = action.upper()
-                    else:
-                        display_text = action
+                    # Check if there's a custom mapping for this control
+                    custom_mapping = None
+                    if control_name in cfg_controls:
+                        custom_mapping = cfg_controls[control_name]
                     
-                    print(f"Adding control: {control_name} = {display_text}")
+                    # Get XInput button name for positioning
+                    xinput_button = self.get_xinput_button_from_control(control_name, custom_mapping)
                     
-                    # Position text (use saved positions if available, otherwise spread across the top)
-                    if control_name in positions:
-                        text_x, text_y = positions[control_name]
-                        # Apply y-offset from settings - adjust text_y
-                        text_y += y_offset
-                        print(f"Using saved position for {control_name}: {text_x}, {text_y} (with offset)")
+                    # Skip controls that don't map to XInput buttons
+                    if not xinput_button:
+                        continue
+                    
+                    # Apply uppercase if enabled and add mapping info if custom mapping exists
+                    display_text = self.get_display_text(action, settings, control_name, custom_mapping)
+                    
+                    # Skip if no display text
+                    if not display_text:
+                        continue
+                        
+                    print(f"Adding control: {control_name} = {display_text} (XInput: {xinput_button})")
+                    
+                    # Get position from position manager using the XInput button name as the key
+                    if xinput_button in self.position_manager.positions:
+                        # Get normalized position from position manager
+                        normalized_x, normalized_y = self.position_manager.get_normalized(xinput_button)
+                        
+                        # Apply current offset for display
+                        text_x, text_y = self.position_manager.apply_offset(normalized_x, normalized_y, y_offset)
+                        
+                        print(f"Using saved position for {xinput_button}: normalized=({normalized_x}, {normalized_y}), display=({text_x}, {text_y})")
                     else:
-                        text_x = x + 100 + (control_count * 150) % (new_width - 200)
-                        if text_x + 100 > x + new_width:
-                            text_x = x + 100
-                            text_y += 40
-                        # Apply y-offset from settings for default positions too
-                        text_y += y_offset
-                        print(f"Using default position for {control_name}: {text_x}, {text_y} (with offset)")
+                        # Default position calculation
+                        grid_x = x + 100 + (control_count % 5) * 150
+                        grid_y = y + 50 + (control_count // 5) * 40
+                        
+                        # Apply offset to default position
+                        text_x, text_y = grid_x, grid_y + y_offset
+                        
+                        # Store normalized position (without y-offset)
+                        normalized_x, normalized_y = grid_x, grid_y
+                        
+                        # Store this position in the position manager using the XInput button name
+                        self.position_manager.store(xinput_button, normalized_x, normalized_y, is_normalized=True)
+                        
+                        print(f"Using default position for {xinput_button}: ({text_x}, {text_y})")
                     
                     # Check visibility based on control type
-                    is_visible = False
-                    for control_type in self.visible_control_types:
-                        if control_type in control_name:
-                            is_visible = True
-                            break
+                    is_visible = self.is_control_visible(control_name)
                     
-                    # Create font with correct size and family
-                    try:
-                        import tkinter.font as tkfont
-                        text_font = tkfont.Font(family=font_family, size=adjusted_font_size, weight="bold")
-                    except Exception as e:
-                        print(f"Error creating font: {e}")
-                        text_font = (font_family, adjusted_font_size, "bold")
+                    # Create text with appropriate shadow effect
+                    text_item, shadow_item = self.create_text_with_shadow(
+                        canvas, 
+                        text_x, 
+                        text_y, 
+                        display_text, 
+                        text_font
+                    )
                     
-                    # Apply bold effect based on strength setting
-                    if bold_strength == 0:
-                        # No shadow/bold effect
-                        text_item = canvas.create_text(text_x, text_y, text=display_text, 
-                                            font=text_font, fill="white",
-                                            anchor="sw", state="" if is_visible else "hidden")
-                        shadow = None
-                    else:
-                        # Create text with shadow for better visibility based on bold strength
-                        shadow_offset = max(1, min(bold_strength, 3))  # Shadow offset between 1-3 pixels
-                        shadow = canvas.create_text(text_x+shadow_offset, text_y+shadow_offset, text=display_text, 
-                                            font=text_font, fill="black",
-                                            anchor="sw", state="" if is_visible else "hidden")
-                        text_item = canvas.create_text(text_x, text_y, text=display_text, 
-                                            font=text_font, fill="white",
-                                            anchor="sw", state="" if is_visible else "hidden")
+                    # Set visibility state
+                    if not is_visible:
+                        canvas.itemconfigure(text_item, state="hidden")
+                        if shadow_item is not None:
+                            canvas.itemconfigure(shadow_item, state="hidden")
                     
-                    # Store the text items
-                    self.text_items[control_name] = {
+                    # Store the text items - now using XInput button name as the key
+                    self.text_items[xinput_button] = {
                         'text': text_item,
-                        'shadow': shadow,
-                        'action': action,  # Store original action for reuse
-                        'display_text': display_text,  # Store display text that may be uppercase
+                        'shadow': shadow_item,
+                        'action': action,
+                        'display_text': display_text,
+                        'control_name': control_name,  # Store original control name for reference
                         'x': text_x, 
-                        'y': text_y
+                        'y': text_y,
+                        'base_y': normalized_y,
+                        'custom_mapping': custom_mapping
                     }
                     
-                    # Make the text draggable
-                    self.make_draggable(canvas, text_item, shadow, control_name)
+                    # Make the text draggable - pass xinput_button as the identifier
+                    self.make_draggable(canvas, text_item, shadow_item, xinput_button)
                     control_count += 1
             
             # Add right-click menu for text removal
@@ -7557,8 +7918,15 @@ class MAMEControlConfig(ctk.CTk):
             )
             texts_button.pack(side="left", padx=button_padx)
 
+            # Initialize logo settings
             if not hasattr(self, 'logo_visible') or not hasattr(self, 'logo_position'):
                 self.load_logo_settings()
+                print(f"Loaded logo settings: visible={self.logo_visible}, position={self.logo_position}")
+            
+            # Schedule the logo to be added after the window has fully rendered (300ms delay)
+            if self.logo_visible:
+                self.preview_window.after(300, self.add_logo_to_preview_canvas)
+                print("Scheduled logo to be added after window initialization")
             
             # Add logo visibility toggle button to bottom row
             logo_toggle_text = "Hide Logo" if self.logo_visible else "Show Logo"
@@ -7585,6 +7953,11 @@ class MAMEControlConfig(ctk.CTk):
             if self.logo_visible:
                 self.add_logo_to_preview_canvas()
             
+            # Add this line after the "Now add the logo to the preview canvas" section
+            # in the show_preview method:
+            if hasattr(self, 'bezel_visible') and self.bezel_visible:
+                self.add_bezel_to_preview_canvas()
+            
             # Add text settings button to the top row
             text_settings_button = ctk.CTkButton(
                 top_row,
@@ -7593,29 +7966,6 @@ class MAMEControlConfig(ctk.CTk):
                 width=button_width
             )
             text_settings_button.pack(side="left", padx=button_padx)
-
-            # Add bezel toggle button to bottom row (add this after logo controls in show_preview)
-            bezel_toggle_text = "Hide Bezel" if self.bezel_visible else "Show Bezel"
-            self.bezel_toggle_button = ctk.CTkButton(
-                bottom_row,
-                text=bezel_toggle_text,
-                command=self.toggle_bezel_visibility,
-                width=button_width
-            )
-            self.bezel_toggle_button.pack(side="left", padx=button_padx)
-
-            # Add bezel to the preview
-            if self.bezel_visible:
-                self.add_bezel_to_preview_canvas()
-            
-            # Add layer settings button to bottom row
-            layer_settings_button = ctk.CTkButton(
-                bottom_row,
-                text="Layers",
-                command=self.show_layer_settings_dialog,
-                width=button_width
-            )
-            layer_settings_button.pack(side="left", padx=button_padx)
             
             # Add the "Save Image" button
             save_button = ctk.CTkButton(
@@ -7635,6 +7985,29 @@ class MAMEControlConfig(ctk.CTk):
             )
             exact_preview_button.pack(side="left", padx=button_padx)
 
+            # Add a repeated check to ensure logo appears
+            def ping_logo_visibility(attempt=1, max_attempts=5):
+                """Try multiple times to ensure logo is visible"""
+                if not hasattr(self, 'preview_window') or not self.preview_window.winfo_exists():
+                    return  # Window closed, stop trying
+                    
+                if self.logo_visible and (not hasattr(self, 'preview_logo_item') or not self.preview_logo_item):
+                    print(f"Logo visibility check attempt {attempt} - adding logo now")
+                    success = self.add_logo_to_preview_canvas()
+                    
+                    # If unsuccessful and we haven't reached max attempts, try again
+                    if not success and attempt < max_attempts:
+                        self.preview_window.after(250, lambda: ping_logo_visibility(attempt + 1, max_attempts))
+                    elif success:
+                        print(f"Logo successfully added on attempt {attempt}")
+                    else:
+                        print(f"Failed to add logo after {attempt} attempts")
+                elif hasattr(self, 'preview_logo_item') and self.preview_logo_item:
+                    print(f"Logo already visible on attempt {attempt}")
+            
+            # Schedule the first check after 200ms
+            self.preview_window.after(200, ping_logo_visibility)
+            
             # Add toggle screen button to bottom row
             def toggle_screen():
                 # Cycle to the next available monitor
@@ -7885,9 +8258,9 @@ if __name__ == "__main__":
     parser.add_argument('--game', type=str, help='Specify the ROM name to preview')
     parser.add_argument('--screen', type=int, default=2, help='Screen number to display preview on (default: 2)')
     parser.add_argument('--auto-close', action='store_true', help='Automatically close preview when MAME exits')
-    # Add to the argparse section in your __main__ block
     parser.add_argument('--force-logo', action='store_true', help='Force logo visibility in preview mode')
     parser.add_argument('--bezel-on-top', action='store_true', help='Force bezel to display on top of background')
+    parser.add_argument('--hide-joystick', action='store_true', help='Hide joystick direction controls in preview')
     args = parser.parse_args()
     
     if args.preview_only and args.game:
@@ -7901,11 +8274,13 @@ if __name__ == "__main__":
         # Hide buttons in preview-only mode
         app.hide_preview_buttons = True
         
-        # Force logo if specified
-        force_logo = getattr(args, 'force_logo', False)
-        
-        # Show the standalone preview
-        app.show_preview_standalone(args.game, auto_close=args.auto_close, force_logo=force_logo)
+        # Show the standalone preview with command line options
+        app.show_preview_standalone(
+            args.game, 
+            auto_close=args.auto_close, 
+            force_logo=args.force_logo,
+            hide_joystick=args.hide_joystick
+        )
     else:
         # Normal mode: start the full application
         app = MAMEControlConfig()
