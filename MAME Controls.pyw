@@ -129,24 +129,28 @@ class PositionManager:
         if not self.positions:
             print("No positions to save")
             return False
-            
+                
         try:
             # Convert to format expected by file saving function
             positions_to_save = {}
             for name, (x, normalized_y) in self.positions.items():
                 positions_to_save[name] = [x, normalized_y]
             
+            # Check if we should use the no-names variant of positions file
+            show_button_names = getattr(self.parent, 'show_button_names', True)
+            suffix = "" if show_button_names else "_no_names"
+            
             # Determine the file path using centralized function
             if is_global:
-                filepath = self.parent.get_settings_path("positions")
+                filepath = self.parent.get_settings_path(f"positions{suffix}")
             else:
-                filepath = self.parent.get_settings_path("positions", game_name)
+                filepath = self.parent.get_settings_path(f"positions{suffix}", game_name)
             
             # Save to file
             with open(filepath, 'w') as f:
                 json.dump(positions_to_save, f)
                 
-            print(f"Saved {len(positions_to_save)} positions to: {filepath}")
+            print(f"Saved {len(positions_to_save)} positions to: {filepath} (button names: {show_button_names})")
             return True
                 
         except Exception as e:
@@ -428,7 +432,8 @@ class MAMEControlConfig(ctk.CTk):
         settings = {
             "preferred_preview_screen": getattr(self, 'preferred_preview_screen', 2),
             "visible_control_types": self.visible_control_types,
-            "hide_preview_buttons": getattr(self, 'hide_preview_buttons', False)
+            "hide_preview_buttons": getattr(self, 'hide_preview_buttons', False),
+            "show_button_names": getattr(self, 'show_button_names', True)
         }
         
         settings_path = self.get_settings_path("general")
@@ -484,20 +489,33 @@ class MAMEControlConfig(ctk.CTk):
                 else:
                     self.hide_preview_buttons = False
                     
+                # Load show button names setting (NEW)
+                if 'show_button_names' in settings:
+                    self.show_button_names = settings['show_button_names']
+                else:
+                    # Default to showing button names for backward compatibility
+                    self.show_button_names = True
+                    settings['show_button_names'] = True
+                    with open(settings_path, 'w') as f:
+                        json.dump(settings, f)
+                        
             except Exception as e:
                 print(f"Error loading settings: {e}")
                 self.hide_preview_buttons = False
                 self.visible_control_types = ["BUTTON", "JOYSTICK"]  # Default to both
+                self.show_button_names = True  # Default to showing button names
         else:
             # Default settings
             self.hide_preview_buttons = False
             self.visible_control_types = ["BUTTON", "JOYSTICK"]  # Default to both
+            self.show_button_names = True  # Default to showing button names
             
             # Create settings file with defaults
             settings = {
                 'preferred_preview_screen': getattr(self, 'preferred_preview_screen', 2),
                 'visible_control_types': self.visible_control_types,
-                'hide_preview_buttons': self.hide_preview_buttons
+                'hide_preview_buttons': self.hide_preview_buttons,
+                'show_button_names': self.show_button_names
             }
             try:
                 with open(settings_path, 'w') as f:
@@ -2385,8 +2403,12 @@ class MAMEControlConfig(ctk.CTk):
         """Load text positions, with default positions as fallback using centralized paths"""
         positions = {}
         
+        # Check if we should use the no-names variant of positions file
+        show_button_names = getattr(self, 'show_button_names', True)
+        suffix = "" if show_button_names else "_no_names"
+        
         # First try ROM-specific positions
-        rom_positions_file = self.get_settings_path("positions", rom_name)
+        rom_positions_file = self.get_settings_path(f"positions{suffix}", rom_name)
         if os.path.exists(rom_positions_file):
             try:
                 with open(rom_positions_file, 'r') as f:
@@ -2397,7 +2419,7 @@ class MAMEControlConfig(ctk.CTk):
                 print(f"Error loading ROM-specific positions: {e}")
         
         # Fall back to global positions
-        global_positions_file = self.get_settings_path("positions")
+        global_positions_file = self.get_settings_path(f"positions{suffix}")
         if os.path.exists(global_positions_file):
             try:
                 with open(global_positions_file, 'r') as f:
@@ -2405,6 +2427,18 @@ class MAMEControlConfig(ctk.CTk):
                 print(f"Loaded {len(positions)} positions from global file: {global_positions_file}")
             except Exception as e:
                 print(f"Error loading global positions: {e}")
+        
+        # If no positions found with current suffix, try the other variant as fallback
+        if not positions:
+            alt_suffix = "_no_names" if show_button_names else ""
+            alt_global_file = self.get_settings_path(f"positions{alt_suffix}")
+            if os.path.exists(alt_global_file):
+                try:
+                    with open(alt_global_file, 'r') as f:
+                        positions = json.load(f)
+                    print(f"Loaded {len(positions)} positions from alternate global file: {alt_global_file}")
+                except Exception as e:
+                    print(f"Error loading alternate global positions: {e}")
         
         # If no positions found or file doesn't exist, use default positions
         if not positions:
@@ -4255,15 +4289,21 @@ class MAMEControlConfig(ctk.CTk):
 
     def get_display_text(self, action, settings=None, control_name=None, custom_mapping=None):
         """
-        Display only XInput buttons and joystick directions
-        Ignores all other types of controls
+        Generate display text for controls based on settings
         """
         if settings is None:
             settings = self.get_text_settings()
-            
+                
         # Apply uppercase if enabled
         use_uppercase = settings.get("use_uppercase", False)
         action_text = action.upper() if use_uppercase else action
+        
+        # Check if we should show button names
+        show_button_names = getattr(self, 'show_button_names', True)
+        
+        # If we're not showing button names, just return the action text
+        if not show_button_names:
+            return action_text
         
         # Initialize button text
         button_text = ""
@@ -4345,13 +4385,12 @@ class MAMEControlConfig(ctk.CTk):
                         }
                         button_text = xinput_buttons.get(button_num, "")
         
-        # Only create display text if we have a recognized button
+        # Only create compound display text if we have a recognized button and we're showing button names
         if button_text:
             display_text = f"{button_text}: {action_text}"
         else:
-            # Skip this control entirely by returning empty string
-            # This will effectively hide controls that aren't XInput or joystick
-            display_text = ""
+            # If no button mapping available, just show action text
+            display_text = action_text
         
         return display_text
     
@@ -4495,13 +4534,28 @@ class MAMEControlConfig(ctk.CTk):
         
         print(f"Using MAME directory: {self.mame_dir}")
         
+        # Save the requested screen number before loading settings
+        import sys
+        requested_screen = None
+        for i, arg in enumerate(sys.argv):
+            if arg == '--screen' and i+1 < len(sys.argv):
+                try:
+                    requested_screen = int(sys.argv[i+1])
+                    print(f"Found screen argument: {requested_screen}")
+                except ValueError:
+                    pass
+        
         # Load settings
         self.load_settings()
         self.load_bezel_settings()
         self.load_layer_settings()
         
+        # Override with the requested screen if specified on command-line
+        if requested_screen is not None:
+            self.preferred_preview_screen = requested_screen
+            print(f"Using screen {requested_screen} from command line")
+        
         # Check for bezel-on-top flag
-        import sys
         if '--bezel-on-top' in sys.argv:
             self.layer_order = {
                 'background': 1,  # Background on bottom
@@ -4517,7 +4571,7 @@ class MAMEControlConfig(ctk.CTk):
                 self.visible_control_types.remove('JOYSTICK')
                 print("Hiding joystick controls")
         
-        # Handle hide-buttons flag (make sure the value from the command-line is checked)
+        # Handle hide-buttons flag
         if '--hide-buttons' in sys.argv:
             self.hide_preview_buttons = True
             print("Hiding control buttons in preview")
@@ -4560,6 +4614,7 @@ class MAMEControlConfig(ctk.CTk):
             return
         
         print(f"Successfully loaded game data for {rom_name}")
+        print(f"Using screen {self.preferred_preview_screen} for preview")
         
         # Start MAME process monitoring only if auto_close is enabled
         if auto_close:
@@ -7609,7 +7664,10 @@ class MAMEControlConfig(ctk.CTk):
             # Text appearance settings
             return os.path.join(settings_base, "text_appearance_settings.json")
         
-        elif file_type == "positions":
+        elif file_type.startswith("positions"):
+            # Extract suffix if present (e.g., "positions_no_names")
+            suffix = file_type.replace("positions", "")
+            
             # Positions files directory
             positions_dir = os.path.join(settings_base, "positions")
             if create_dirs and not os.path.exists(positions_dir):
@@ -7617,10 +7675,10 @@ class MAMEControlConfig(ctk.CTk):
                 
             if rom_name:
                 # Game-specific positions
-                return os.path.join(positions_dir, f"{rom_name}_positions.json")
+                return os.path.join(positions_dir, f"{rom_name}_positions{suffix}.json")
             else:
                 # Global positions
-                return os.path.join(positions_dir, "global_positions.json")
+                return os.path.join(positions_dir, f"global_positions{suffix}.json")
         
         elif file_type == "logo":
             # Logo settings
@@ -7654,11 +7712,12 @@ class MAMEControlConfig(ctk.CTk):
                 return os.path.join(self.mame_dir, "control_config_settings.json")
             elif file_type == "text":
                 return os.path.join(self.mame_dir, "text_appearance_settings.json")
-            elif file_type == "positions":
+            elif file_type.startswith("positions"):
+                suffix = file_type.replace("positions", "")
                 if rom_name:
-                    return os.path.join(self.mame_dir, "preview", f"{rom_name}_positions.json")
+                    return os.path.join(self.mame_dir, "preview", f"{rom_name}_positions{suffix}.json")
                 else:
-                    return os.path.join(self.mame_dir, "preview", "global_positions.json")
+                    return os.path.join(self.mame_dir, "preview", f"global_positions{suffix}.json")
             elif file_type == "logo":
                 return os.path.join(self.mame_dir, "logo_settings.json")
             elif file_type == "bezel":
@@ -7749,6 +7808,79 @@ class MAMEControlConfig(ctk.CTk):
         
         print("=== Settings migration check complete ===\n")
         return migrated_count
+    
+    def toggle_button_names(self):
+        """Toggle between showing and hiding button names in the preview"""
+        print("\n=== Toggling button names visibility ===")
+        
+        # Toggle the state
+        old_value = getattr(self, 'show_button_names', True)
+        self.show_button_names = not old_value
+        print(f"Button names visibility changed from {old_value} to {self.show_button_names}")
+        
+        # Update the button text if it exists
+        if hasattr(self, 'button_names_toggle_button') and self.button_names_toggle_button.winfo_exists():
+            toggle_text = "Hide Names" if self.show_button_names else "Show Names"
+            self.button_names_toggle_button.configure(text=toggle_text)
+            print(f"Updated button text to: {toggle_text}")
+        
+        # Reload positions based on new button names visibility setting
+        current_game = getattr(self, 'current_game', None)
+        if hasattr(self, 'position_manager') and current_game:
+            self.position_manager.positions = {}  # Clear current positions
+            self.position_manager.load_from_file(current_game)  # Reload with proper variant
+            print(f"Reloaded positions with button names: {self.show_button_names}")
+        
+        # Update all text items with new format and positions
+        if hasattr(self, 'preview_canvas') and self.preview_canvas.winfo_exists() and hasattr(self, 'text_items'):
+            settings = self.get_text_settings()
+            
+            for control_name, data in self.text_items.items():
+                if 'action' in data:
+                    # Generate the new display text based on current setting
+                    action = data['action']
+                    control_name_for_display = data.get('control_name')  # Get original control name if stored
+                    custom_mapping = data.get('custom_mapping')
+                    
+                    display_text = self.get_display_text(action, settings, control_name_for_display, custom_mapping)
+                    
+                    # Get position from the position manager
+                    if hasattr(self, 'position_manager'):
+                        x, normalized_y = self.position_manager.get_normalized(control_name, data['x'], data.get('base_y', data['y']))
+                        text_x, text_y = self.position_manager.apply_offset(x, normalized_y)
+                        
+                        # Update stored position in text_items
+                        data['x'] = text_x
+                        data['y'] = text_y
+                        data['base_y'] = normalized_y
+                    else:
+                        text_x, text_y = data['x'], data['y']
+                    
+                    # Update the text item on canvas
+                    if 'text' in data and self.preview_canvas.winfo_exists():
+                        try:
+                            self.preview_canvas.itemconfigure(data['text'], text=display_text)
+                            self.preview_canvas.coords(data['text'], text_x, text_y)
+                        except Exception as e:
+                            print(f"Error updating text for {control_name}: {e}")
+                    
+                    # Update shadow text
+                    if 'shadow' in data and data['shadow'] and self.preview_canvas.winfo_exists():
+                        try:
+                            self.preview_canvas.itemconfigure(data['shadow'], text=display_text)
+                            # Apply shadow offset
+                            shadow_offset = settings.get('bold_strength', 2)
+                            shadow_offset = max(1, min(shadow_offset, 3))  # Clamp between 1-3 pixels
+                            self.preview_canvas.coords(data['shadow'], text_x + shadow_offset, text_y + shadow_offset)
+                        except Exception as e:
+                            print(f"Error updating shadow for {control_name}: {e}")
+                    
+                    # Store the updated display text
+                    data['display_text'] = display_text
+        
+        # Save the setting
+        self.save_settings()
+        print("=== Toggle button names complete ===\n")
     
     def show_preview(self):
         """Show a preview of the control layout for the current game on the second screen"""
@@ -8276,6 +8408,17 @@ class MAMEControlConfig(ctk.CTk):
             bezel_toggle_button.pack(side="left", padx=button_padx)
             self.bezel_toggle_button = bezel_toggle_button  # Save reference
             
+            # Add button names toggle button to bottom row
+            button_names_toggle_text = "Hide Names" if self.show_button_names else "Show Names"
+            button_names_toggle_button = ctk.CTkButton(
+                bottom_row,
+                text=button_names_toggle_text,
+                command=self.toggle_button_names,
+                width=button_width
+            )
+            button_names_toggle_button.pack(side="left", padx=button_padx)
+            self.button_names_toggle_button = button_names_toggle_button  # Save reference
+                  
             # Add text settings button to the top row
             text_settings_button = ctk.CTkButton(
                 top_row,
@@ -8583,7 +8726,7 @@ if __name__ == "__main__":
     parser = argparse.ArgumentParser(description='MAME Control Configuration')
     parser.add_argument('--preview-only', action='store_true', help='Show only the preview window')
     parser.add_argument('--game', type=str, help='Specify the ROM name to preview')
-    parser.add_argument('--screen', type=int, default=2, help='Screen number to display preview on (default: 2)')
+    parser.add_argument('--screen', type=int, default=1, help='Screen number to display preview on (default: 2)')
     parser.add_argument('--auto-close', action='store_true', help='Automatically close preview when MAME exits')
     parser.add_argument('--force-logo', action='store_true', help='Force logo visibility in preview mode')
     parser.add_argument('--bezel-on-top', action='store_true', help='Force bezel to display on top of background')
@@ -8595,9 +8738,12 @@ if __name__ == "__main__":
         # Preview-only mode: just show the preview for the specified game
         app = MAMEControlConfig(preview_only=True)
         
-        # Set screen preference from command line
+        # Load settings first (which might overwrite preferred_preview_screen)
+        app.load_settings()
+        
+        # Override with command-line screen setting 
         app.preferred_preview_screen = args.screen
-        print(f"Using screen {args.screen} from command line")
+        print(f"Using screen {args.screen} from command line (main block)")
         
         # Set button visibility based on command line argument
         app.hide_preview_buttons = args.hide_buttons
