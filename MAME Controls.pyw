@@ -125,7 +125,7 @@ class PositionManager:
             return False
     
     def save_to_file(self, game_name=None, is_global=False):
-        """Save positions to file (globally or for a specific game)"""
+        """Save positions to file (globally or for a specific game) using centralized paths"""
         if not self.positions:
             print("No positions to save")
             return False
@@ -136,15 +136,11 @@ class PositionManager:
             for name, (x, normalized_y) in self.positions.items():
                 positions_to_save[name] = [x, normalized_y]
             
-            # Create preview directory if it doesn't exist
-            preview_dir = os.path.join(self.parent.mame_dir, "preview")
-            os.makedirs(preview_dir, exist_ok=True)
-            
-            # Determine the file path
+            # Determine the file path using centralized function
             if is_global:
-                filepath = os.path.join(preview_dir, "global_positions.json")
+                filepath = self.parent.get_settings_path("positions")
             else:
-                filepath = os.path.join(preview_dir, f"{game_name}_positions.json")
+                filepath = self.parent.get_settings_path("positions", game_name)
             
             # Save to file
             with open(filepath, 'w') as f:
@@ -202,8 +198,20 @@ class MAMEControlConfig(ctk.CTk):
         self.logo_width_percentage = 15
         self.logo_height_percentage = 15
         
+        # Find necessary directories
+        self.mame_dir = self.find_mame_directory()
+        if not self.mame_dir:
+            messagebox.showerror("Error", "Please place this script in the MAME directory!")
+            self.quit()
+            return
+            
         # Initialize the position manager
         self.position_manager = PositionManager(self)
+
+        self.debug_font_system()
+
+        # Migrate settings files to new structure if needed
+        self.migrate_settings_files()
 
         # Skip main window setup if in preview-only mode
         if not preview_only:
@@ -416,23 +424,24 @@ class MAMEControlConfig(ctk.CTk):
             return None
     
     def save_settings(self):
-        """Save current settings to a JSON file"""
+        """Save current settings to a JSON file using the centralized file path"""
         settings = {
             "preferred_preview_screen": getattr(self, 'preferred_preview_screen', 2),
             "visible_control_types": self.visible_control_types,
             "hide_preview_buttons": getattr(self, 'hide_preview_buttons', False)
         }
         
-        settings_path = os.path.join(self.mame_dir, "control_config_settings.json")
+        settings_path = self.get_settings_path("general")
         try:
             with open(settings_path, 'w') as f:
                 json.dump(settings, f)
+            print(f"Saved general settings to: {settings_path}")
         except Exception as e:
             print(f"Error saving settings: {e}")
 
     def load_settings(self):
-        """Load settings from JSON file if it exists with improved defaults"""
-        settings_path = os.path.join(self.mame_dir, "control_config_settings.json")
+        """Load settings from JSON file with improved defaults using the centralized file path"""
+        settings_path = self.get_settings_path("general")
         if os.path.exists(settings_path):
             try:
                 with open(settings_path, 'r') as f:
@@ -2373,16 +2382,11 @@ class MAMEControlConfig(ctk.CTk):
             messagebox.showinfo("Success", "Positions saved globally for all games")
     
     def load_text_positions(self, rom_name):
-        """Load text positions, with default positions as fallback"""
+        """Load text positions, with default positions as fallback using centralized paths"""
         positions = {}
         
-        # Create preview directory if it doesn't exist
-        preview_dir = os.path.join(self.mame_dir, "preview")
-        if not os.path.exists(preview_dir):
-            os.makedirs(preview_dir)
-        
-        # First try ROM-specific positions - with explicit path
-        rom_positions_file = os.path.join(preview_dir, f"{rom_name}_positions.json")
+        # First try ROM-specific positions
+        rom_positions_file = self.get_settings_path("positions", rom_name)
         if os.path.exists(rom_positions_file):
             try:
                 with open(rom_positions_file, 'r') as f:
@@ -2392,8 +2396,8 @@ class MAMEControlConfig(ctk.CTk):
             except Exception as e:
                 print(f"Error loading ROM-specific positions: {e}")
         
-        # Fall back to global positions - with explicit path
-        global_positions_file = os.path.join(preview_dir, "global_positions.json")
+        # Fall back to global positions
+        global_positions_file = self.get_settings_path("positions")
         if os.path.exists(global_positions_file):
             try:
                 with open(global_positions_file, 'r') as f:
@@ -4845,7 +4849,7 @@ class MAMEControlConfig(ctk.CTk):
         if not hasattr(self, 'current_game') or not self.current_game:
             messagebox.showerror("Error", "No game is currently selected")
             return
-            
+                
         # Ensure preview directory exists
         preview_dir = self.ensure_preview_folder()
         output_path = os.path.join(preview_dir, f"{self.current_game}.png")
@@ -4859,14 +4863,10 @@ class MAMEControlConfig(ctk.CTk):
         try:
             # Get all settings
             settings = self.get_text_settings()
-            font_path = self.get_font_path()
-            if not font_path:
-                messagebox.showerror("Error", f"Font file not found!")
-                return
-                
-            # Load fonts
-            font = ImageFont.truetype(font_path, settings["font_size"])
-            title_font = ImageFont.truetype(font_path, settings["title_size"])
+            print(f"Using text settings for saved image: {settings}")
+            
+            # Get fonts - with better error handling
+            font, title_font = self.get_fonts_from_settings(settings)
             
             # Create separate layer images for proper compositing
             target_width, target_height = 1920, 1080  # Standard HD size
@@ -4876,6 +4876,9 @@ class MAMEControlConfig(ctk.CTk):
             bezel_layer = Image.new('RGBA', (target_width, target_height), (0, 0, 0, 0))
             text_layer = Image.new('RGBA', (target_width, target_height), (0, 0, 0, 0))
             logo_layer = Image.new('RGBA', (target_width, target_height), (0, 0, 0, 0))
+            
+            # Create a draw object for the text layer
+            text_draw = ImageDraw.Draw(text_layer)
             
             # 2. Add background image
             background_path = None
@@ -4948,38 +4951,61 @@ class MAMEControlConfig(ctk.CTk):
                         for control, mapping in cfg_controls.items()
                     }
             
-            # Draw all visible control texts
+           # Draw all currently visible control texts
             if hasattr(self, 'text_items'):
-                y_offset = settings.get('y_offset', -40)
+                print(f"Found {len(self.text_items)} text items to render")
+                y_offset = settings.get('y_offset', -35)
                 bold_strength = settings.get('bold_strength', 2)
                 
+                # Debug what's in text_items
+                print("Text items content sample:")
+                sample_count = 0
                 for control_name, data in self.text_items.items():
-                    # Skip hidden controls
+                    if sample_count < 3:  # Print first 3 items as sample
+                        print(f"  {control_name}: {data.keys()}")
+                        if 'action' in data:
+                            print(f"    Action: {data['action']}")
+                        if 'display_text' in data:
+                            print(f"    Display text: {data['display_text']}")
+                        sample_count += 1
+                
+                # Render each text item
+                for control_name, data in self.text_items.items():
+                    # Skip hidden items
                     try:
                         if (hasattr(self, 'preview_canvas') and self.preview_canvas.winfo_exists() and
                             'text' in data and
                             self.preview_canvas.itemcget(data['text'], 'state') == 'hidden'):
+                            print(f"Skipping hidden item: {control_name}")
                             continue
                     except Exception:
                         pass
                     
                     # Get position and text
-                    if 'x' in data and 'y' in data and 'action' in data:
+                    if 'x' in data and 'y' in data:
                         text_x = data['x']
                         text_y = data['y']
                         
-                        # Get the original action text
-                        action = data['action']
+                        # Get the text to display
+                        display_text = None
                         
-                        # Check if there's a custom mapping for this control
-                        custom_mapping = None
-                        if control_name in cfg_controls:
-                            custom_mapping = cfg_controls[control_name]
-                        elif 'custom_mapping' in data:
-                            custom_mapping = data['custom_mapping']
+                        # Try to get display_text directly
+                        if 'display_text' in data:
+                            display_text = data['display_text']
+                        # Try to get action and format it
+                        elif 'action' in data:
+                            action = data['action']
+                            # Apply uppercase if needed
+                            if settings.get('use_uppercase', True):
+                                display_text = f"{control_name}: {action.upper()}"
+                            else:
+                                display_text = f"{control_name}: {action}"
                         
-                        # Apply consistent formatting with custom mapping if available
-                        display_text = self.get_display_text(action, settings, control_name, custom_mapping)
+                        if not display_text:
+                            print(f"No display text for {control_name}, skipping")
+                            continue
+                            
+                        print(f"Drawing text: '{display_text}' at ({text_x}, {text_y + y_offset})")
                         
                         # Apply bold effect based on settings
                         if bold_strength == 0:
@@ -5208,12 +5234,12 @@ class MAMEControlConfig(ctk.CTk):
         cancel_button.grid(row=0, column=1, padx=5, pady=5)
 
     def save_text_appearance_settings(self, settings):
-        """Save text appearance settings to file"""
+        """Save text appearance settings to file using the centralized path"""
         try:
-            settings_file = os.path.join(self.mame_dir, "text_appearance_settings.json")
-            with open(settings_file, 'w') as f:
+            settings_path = self.get_settings_path("text")
+            with open(settings_path, 'w') as f:
                 json.dump(settings, f)
-            print(f"Saved text appearance settings: {settings}")
+            print(f"Saved text appearance settings to: {settings_path}")
         except Exception as e:
             print(f"Error saving text appearance settings: {e}")
 
@@ -5645,18 +5671,18 @@ class MAMEControlConfig(ctk.CTk):
         
         # Get font name from settings
         settings = self.get_text_settings()
-        font_name = settings["font_name"]
+        font_family = settings.get("font_family", "Segoe Print")  # Use font_family instead of font_name
         
         # Define all possible font paths
         font_paths = [
-            os.path.join(self.mame_dir, "fonts", f"{font_name}.otf"),
-            os.path.join(self.mame_dir, "fonts", f"{font_name}.ttf"),
-            os.path.join(self.mame_dir, "preview", f"{font_name}.otf"),
-            os.path.join(self.mame_dir, "preview", f"{font_name}.ttf"),
-            os.path.join(os.path.dirname(os.path.abspath(__file__)), "fonts", f"{font_name}.otf"),
-            os.path.join(os.path.dirname(os.path.abspath(__file__)), "fonts", f"{font_name}.ttf"),
-            os.path.join(os.path.dirname(os.path.abspath(__file__)), f"{font_name}.otf"),
-            os.path.join(os.path.dirname(os.path.abspath(__file__)), f"{font_name}.ttf")
+            os.path.join(self.mame_dir, "fonts", f"{font_family}.otf"),
+            os.path.join(self.mame_dir, "fonts", f"{font_family}.ttf"),
+            os.path.join(self.mame_dir, "preview", f"{font_family}.otf"),
+            os.path.join(self.mame_dir, "preview", f"{font_family}.ttf"),
+            os.path.join(os.path.dirname(os.path.abspath(__file__)), "fonts", f"{font_family}.otf"),
+            os.path.join(os.path.dirname(os.path.abspath(__file__)), "fonts", f"{font_family}.ttf"),
+            os.path.join(os.path.dirname(os.path.abspath(__file__)), f"{font_family}.otf"),
+            os.path.join(os.path.dirname(os.path.abspath(__file__)), f"{font_family}.ttf")
         ]
         
         # Check which font file exists
@@ -5665,22 +5691,24 @@ class MAMEControlConfig(ctk.CTk):
                 print(f"Using font file: {path}")
                 return path
         
-        # If we get here, we couldn't find the font - print more detailed diagnostic info
-        print(f"\n=== FONT FILE '{font_name}' NOT FOUND ===")
-        print("Searched in these locations:")
-        for path in font_paths:
-            print(f"  - {path} {'(EXISTS)' if os.path.exists(path) else '(NOT FOUND)'}")
+        # If no exact match, check for partial matches
+        font_dir = os.path.join(self.mame_dir, "fonts")
+        if os.path.exists(font_dir):
+            for filename in os.listdir(font_dir):
+                if filename.lower().startswith(font_family.lower().replace(' ', '')) and (filename.endswith('.ttf') or filename.endswith('.otf')):
+                    font_path = os.path.join(font_dir, filename)
+                    print(f"Using font file (partial match): {font_path}")
+                    return font_path
         
-        # Fallback to Arial if font not found
-        import sys
-        if sys.platform == 'win32':
-            windows_font_dir = os.path.join(os.environ.get('WINDIR', 'C:\\Windows'), 'Fonts')
-            arial_bold_path = os.path.join(windows_font_dir, 'arialbd.ttf')
-            if os.path.exists(arial_bold_path):
-                print(f"Falling back to Arial Bold: {arial_bold_path}")
-                return arial_bold_path
+        # Add fallback to system fonts using direct rendering
+        if self.is_system_font(font_family):
+            # For system fonts, we can create a temporary file path
+            # This won't actually be used for file operations
+            print(f"Using system font: {font_family}")
+            return "system:/" + font_family
         
-        print("No suitable font found!")
+        # Last resort - use default PIL font
+        print(f"No suitable font found for '{font_family}'")
         return None
     
     def get_fonts_from_settings(self, settings=None):
@@ -5692,13 +5720,27 @@ class MAMEControlConfig(ctk.CTk):
         if settings is None:
             settings = self.get_text_settings()
         
+        font_family = settings.get("font_family", "Segoe Print")
         font_size = settings.get("font_size", 28)
-        title_font_size = settings.get("title_font_size", 36)
+        title_font_size = settings.get("title_size", 36)
         
         # Get the direct path to the font file
         font_path = self.get_font_path()
         
-        if font_path and os.path.exists(font_path):
+        # Check if it's a system font path
+        if font_path and font_path.startswith("system:/"):
+            # For system fonts, use a default font as fallback
+            # Or we can try to find a similar font on the system
+            try:
+                # First try with a default font
+                font = ImageFont.truetype(font_family, font_size)
+                title_font = ImageFont.truetype(font_family, title_font_size)
+                print(f"Using system font: {font_family}")
+                return font, title_font
+            except Exception as e:
+                print(f"Error using system font: {e}")
+                # Fall through to default handling
+        elif font_path and os.path.exists(font_path):
             try:
                 # Load using direct file path
                 font = ImageFont.truetype(font_path, font_size)
@@ -6289,59 +6331,68 @@ class MAMEControlConfig(ctk.CTk):
         if update_preview and hasattr(self, 'preview_canvas') and self.preview_canvas.winfo_exists():
             self.update_preview_text_appearance()
 
-    def ensure_font_available(self):
-        """Ensure ScoutCond Bold font is available in the application directory"""
+    def debug_font_system(self):
+        """Debug the font system and print detailed information"""
         import os
-        import shutil
         
-        # Define the font directory
+        print("\n=== FONT DEBUG ===")
+        
+        # Check settings
+        settings = self.get_text_settings(refresh=True)
+        print(f"Font Family: {settings.get('font_family', 'Not set')}")
+        print(f"Font Name: {settings.get('font_name', 'Not set')}")
+        
+        # Check fonts directory
         font_dir = os.path.join(self.mame_dir, "fonts")
-        os.makedirs(font_dir, exist_ok=True)
+        print(f"\nFonts Directory: {font_dir}")
+        if os.path.exists(font_dir):
+            print("Directory exists")
+            files = os.listdir(font_dir)
+            print(f"Files found: {len(files)}")
+            for file in files:
+                print(f"  - {file}")
+        else:
+            print("Directory does not exist")
         
-        # Check if font already exists (either otf or ttf)
-        font_path_otf = os.path.join(font_dir, "ScoutCond-Bold.otf")
-        font_path_ttf = os.path.join(font_dir, "ScoutCond-Bold.ttf")
+        # Check system fonts
+        try:
+            import tkinter.font as tkfont
+            import tkinter as tk
+            
+            # Need a root window to check fonts
+            temp_root = tk.Tk()
+            temp_root.withdraw()
+            
+            # Get all system fonts
+            all_fonts = sorted(list(tkfont.families()))
+            print(f"\nSystem fonts: {len(all_fonts)} total")
+            
+            # Look for our target font
+            target = settings.get('font_family', 'Press Start 2P')
+            matches = [f for f in all_fonts if target.lower() in f.lower()]
+            
+            print(f"Searching for: {target}")
+            if matches:
+                print("Matches found:")
+                for match in matches:
+                    print(f"  - {match}")
+            else:
+                print("No matches found in system fonts")
+                
+                # Show similar fonts
+                similar = [f for f in all_fonts if "press" in f.lower() or "start" in f.lower() or "2p" in f.lower()]
+                if similar:
+                    print("Similar fonts:")
+                    for font in similar:
+                        print(f"  - {font}")
+            
+            # Clean up
+            temp_root.destroy()
+        except Exception as e:
+            print(f"Error checking system fonts: {e}")
         
-        if os.path.exists(font_path_otf):
-            print(f"ScoutCond Bold font already exists at: {font_path_otf}")
-            return True
-        elif os.path.exists(font_path_ttf):
-            print(f"ScoutCond Bold font already exists at: {font_path_ttf}")
-            return True
-        
-        # If not, try to find it in common locations
-        common_locations = [
-            # OTF versions
-            os.path.join(os.path.dirname(os.path.abspath(__file__)), "ScoutCond-Bold.otf"),
-            os.path.join(os.path.dirname(os.path.abspath(__file__)), "fonts", "ScoutCond-Bold.otf"),
-            os.path.join(self.mame_dir, "preview", "ScoutCond-Bold.otf"),
-            "C:\\Windows\\Fonts\\ScoutCond-Bold.otf",
-            # TTF versions as fallback
-            os.path.join(os.path.dirname(os.path.abspath(__file__)), "ScoutCond-Bold.ttf"),
-            os.path.join(os.path.dirname(os.path.abspath(__file__)), "fonts", "ScoutCond-Bold.ttf"),
-            os.path.join(self.mame_dir, "preview", "ScoutCond-Bold.ttf"),
-            "C:\\Windows\\Fonts\\ScoutCond-Bold.ttf",
-        ]
-        
-        for location in common_locations:
-            if os.path.exists(location):
-                # Copy the font to our font directory
-                try:
-                    # Determine the destination path based on the source file extension
-                    if location.endswith('.otf'):
-                        destination = font_path_otf
-                    else:
-                        destination = font_path_ttf
-                    
-                    shutil.copy2(location, destination)
-                    print(f"Copied ScoutCond Bold font from {location} to {destination}")
-                    return True
-                except Exception as e:
-                    print(f"Failed to copy font: {e}")
-        
-        print("ScoutCond Bold font not found in common locations.")
-        print("Please place ScoutCond-Bold.otf or ScoutCond-Bold.ttf in the 'fonts' directory.")
-        return False
+        print("=== END FONT DEBUG ===\n")
+        return True
     
     def apply_layering(self):
         """Apply proper z-order layering to all canvas elements based on settings"""
@@ -6517,12 +6568,12 @@ class MAMEControlConfig(ctk.CTk):
         cancel_button.pack(side="right", padx=20)
     
     def save_layer_settings(self):
-        """Save layer order settings to file"""
+        """Save layer order settings to file using the centralized path"""
         if not hasattr(self, 'mame_dir') or not self.mame_dir:
             print("Error: Cannot save layer settings - mame_dir not set")
             return
-            
-        settings_path = os.path.join(self.mame_dir, "layer_settings.json")
+                
+        settings_path = self.get_settings_path("layer")
         
         try:
             # Make sure we have a layer_order to save
@@ -6533,7 +6584,7 @@ class MAMEControlConfig(ctk.CTk):
                     'logo': 3,
                     'text': 4      # Highest layer (closest to front)
                 }
-                
+                    
             with open(settings_path, 'w') as f:
                 json.dump(self.layer_order, f)
             print(f"Saved layer settings: {self.layer_order}")
@@ -6543,24 +6594,24 @@ class MAMEControlConfig(ctk.CTk):
             return False
 
     def load_layer_settings(self):
-        """Load layer order settings from file"""
+        """Load layer order settings from file using the centralized path"""
         if not hasattr(self, 'mame_dir') or not self.mame_dir:
             print("Cannot load layer settings - mame_dir not set")
             # Set default layer order
             self.layer_order = {
-                'bezel': 1,    # Lowest layer (furthest back)
-                'background': 2,
+                'bezel': 2,    # Lowest layer (furthest back)
+                'background': 1,
                 'logo': 3,
                 'text': 4      # Highest layer (closest to front)
             }
             return
         
-        settings_path = os.path.join(self.mame_dir, "layer_settings.json")
+        settings_path = self.get_settings_path("layer")
         
         # Default settings
-        self.layer_order = {
-            'bezel': 1,    # Lowest layer (furthest back)
-            'background': 2,
+        default_order = {
+            'bezel': 2,    # Lowest layer (furthest back)
+            'background': 1,
             'logo': 3,
             'text': 4      # Highest layer (closest to front)
         }
@@ -6575,13 +6626,16 @@ class MAMEControlConfig(ctk.CTk):
                         self.layer_order = saved_settings
                         print(f"Loaded layer settings: {self.layer_order}")
                     else:
-                        print(f"Invalid layer settings format, using defaults")
+                        print("Invalid layer settings format, using defaults")
+                        self.layer_order = default_order
             else:
-                print(f"Layer settings file not found, using defaults")
+                print("Layer settings file not found, using defaults")
+                self.layer_order = default_order
                 # Create the file with defaults
                 self.save_layer_settings()
         except Exception as e:
             print(f"Error loading layer settings: {e}")
+            self.layer_order = default_order
     
     def get_bezel_path(self, rom_name):
         """Find bezel path for a given ROM with custom path priority"""
@@ -6618,8 +6672,8 @@ class MAMEControlConfig(ctk.CTk):
         return None
 
     def load_bezel_settings(self):
-        """Load bezel visibility settings"""
-        settings_path = os.path.join(self.mame_dir, "bezel_settings.json")
+        """Load bezel visibility settings using the centralized path"""
+        settings_path = self.get_settings_path("bezel")
         
         # Default settings
         self.bezel_visible = True  # Visible by default
@@ -6640,13 +6694,13 @@ class MAMEControlConfig(ctk.CTk):
         except Exception as e:
             print(f"Error loading bezel settings: {e}")
             self.bezel_visible = True
-            
+                
         print(f"Loaded bezel settings: visible={self.bezel_visible}")
         return {'bezel_visible': self.bezel_visible}
 
     def save_bezel_settings(self):
-        """Save bezel visibility settings"""
-        settings_path = os.path.join(self.mame_dir, "bezel_settings.json")
+        """Save bezel visibility settings using the centralized path"""
+        settings_path = self.get_settings_path("bezel")
         
         try:
             # Load existing settings or create new
@@ -7157,8 +7211,8 @@ class MAMEControlConfig(ctk.CTk):
         cancel_button.pack(side="right", padx=20)
 
     def save_logo_settings(self):
-        """Save logo settings to config file"""
-        settings_path = os.path.join(self.mame_dir, "logo_settings.json")
+        """Save logo settings to config file using the centralized path"""
+        settings_path = self.get_settings_path("logo")
         
         try:
             # Load existing settings if available
@@ -7183,13 +7237,13 @@ class MAMEControlConfig(ctk.CTk):
             print(f"Error saving logo settings: {e}")
 
     def load_logo_settings(self):
-        """Load logo settings from config file"""
-        settings_path = os.path.join(self.mame_dir, "logo_settings.json")
+        """Load logo settings from config file using the centralized path"""
+        settings_path = self.get_settings_path("logo")
         
         # Default settings - explicitly set logo_visible to True by default
         self.logo_visible = True  # Set it directly first
         self.logo_position = 'top-left'  # Default position
-        self.logo_y_offset = 100  # Default Y offset (no adjustment)
+        self.logo_y_offset = 0  # Default Y offset (no adjustment)
         
         try:
             if os.path.exists(settings_path):
@@ -7365,22 +7419,99 @@ class MAMEControlConfig(ctk.CTk):
                 "use_uppercase": True
             }'''
     
+    def get_default_font_settings(self):
+        """
+        Returns default font settings - single source of truth for font defaults
+        """
+        return {
+            "font_family": "Press Start 2P",  # The font family name for display
+            "font_size": 28,              # Regular font size
+            "title_size": 36,             # Title text size
+            "title_font_size": 36,  # Duplicate for compatibility
+            "uppercase": True,            # Whether to use uppercase text
+            "use_uppercase": True,        # Duplicate for compatibility
+            "bold_strength": 2,           # Shadow effect (0-3)
+            "y_offset": -40               # Y-position adjustment
+        }
+
     def get_text_settings(self, refresh=False):
-        """Central source of truth for all text appearance settings"""
+        """Central source of truth for all text appearance settings with file loading"""
         # You can keep cached settings if refresh=False for performance
         if not hasattr(self, '_text_settings_cache') or refresh:
-            self._text_settings_cache = {
-                "font_name": "Press Start 2P",  # For file loading
-                "font_family": "Press Start 2P", # For UI rendering
-                "font_size": 28,
-                "title_size": 36,
-                "title_font_size": 36,  # Duplicate for compatibility
-                "uppercase": True,
-                "use_uppercase": True,  # Duplicate for compatibility
-                "bold_strength": 2,
-                "y_offset": -40
-            }
-        return self._text_settings_cache    
+            # Start with defaults
+            self._text_settings_cache = self.get_default_font_settings()
+            
+            # Try to load from file
+            settings_path = self.get_settings_path("text")
+            if os.path.exists(settings_path):
+                try:
+                    with open(settings_path, 'r') as f:
+                        loaded_settings = json.load(f)
+                        # Update with loaded values but keep defaults for missing keys
+                        self._text_settings_cache.update(loaded_settings)
+                    print(f"Loaded text appearance settings from: {settings_path}")
+                except Exception as e:
+                    print(f"Error loading text settings: {e}")
+                    
+        return self._text_settings_cache
+
+    def ensure_font_available(self):
+        """Ensure font is available in the application directory or system"""
+        import os
+        
+        # Get font settings
+        settings = self.get_text_settings()
+        font_family = settings.get("font_family")
+        
+        # Check if it's a system font first
+        if self.is_system_font(font_family):
+            print(f"Using system font: {font_family}")
+            return True
+            
+        # If not a system font, check for the font file
+        font_dir = os.path.join(self.mame_dir, "fonts")
+        os.makedirs(font_dir, exist_ok=True)
+        
+        # Look for the font file with the exact name
+        for ext in ['.ttf', '.otf']:
+            font_path = os.path.join(font_dir, f"{font_family}{ext}")
+            if os.path.exists(font_path):
+                print(f"Font file found: {font_path}")
+                return True
+        
+        # Look for font files that start with the font name (ignoring case)
+        for filename in os.listdir(font_dir):
+            if filename.lower().startswith(font_family.lower().replace(' ', '')):
+                print(f"Found font file with partial match: {filename}")
+                return True
+        
+        print(f"Font '{font_family}' not found in system or as a file")
+        print(f"Please place a font file named '{font_family}.ttf' or similar in the fonts directory")
+        return False
+    
+    def is_system_font(self, font_name):
+        """Check if a font exists in the system"""
+        try:
+            import tkinter as tk
+            import tkinter.font as tkfont
+            
+            # Need a root window to check fonts
+            temp_root = tk.Tk()
+            temp_root.withdraw()
+            
+            # Get system fonts
+            system_fonts = list(tkfont.families())
+            
+            # Check if our font is in the list (exact match)
+            result = font_name in system_fonts
+            
+            # Clean up
+            temp_root.destroy()
+            
+            return result
+        except Exception as e:
+            print(f"Error checking system fonts: {e}")
+            return False
     
     def should_show_rom_info(self):
         """Helper method to determine if ROM info should be displayed"""
@@ -7442,6 +7573,177 @@ class MAMEControlConfig(ctk.CTk):
         )
         
         return text_item, shadow
+    
+    def get_settings_path(self, file_type, rom_name=None, create_dirs=True):
+        """
+        Centralized function to handle all settings file paths
+        
+        Args:
+            file_type: Type of settings file ("general", "text", "positions", "logo", "bezel", "layer", etc.)
+            rom_name: ROM name for game-specific files (optional)
+            create_dirs: Whether to create directories if they don't exist
+            
+        Returns:
+            Full path to the settings file
+        """
+        import os
+        
+        # Base directory for all settings
+        settings_base = os.path.join(self.mame_dir, "preview", "settings")
+        
+        # Create base settings directory if it doesn't exist
+        if create_dirs and not os.path.exists(settings_base):
+            os.makedirs(settings_base)
+        
+        # Define paths for each type of settings file
+        if file_type == "general":
+            # General application settings
+            return os.path.join(settings_base, "control_config_settings.json")
+        
+        elif file_type == "text":
+            # Text appearance settings
+            return os.path.join(settings_base, "text_appearance_settings.json")
+        
+        elif file_type == "positions":
+            # Positions files directory
+            positions_dir = os.path.join(settings_base, "positions")
+            if create_dirs and not os.path.exists(positions_dir):
+                os.makedirs(positions_dir)
+                
+            if rom_name:
+                # Game-specific positions
+                return os.path.join(positions_dir, f"{rom_name}_positions.json")
+            else:
+                # Global positions
+                return os.path.join(positions_dir, "global_positions.json")
+        
+        elif file_type == "logo":
+            # Logo settings
+            return os.path.join(settings_base, "logo_settings.json")
+        
+        elif file_type == "bezel":
+            # Bezel settings
+            return os.path.join(settings_base, "bezel_settings.json")
+        
+        elif file_type == "layer":
+            # Layer order settings
+            return os.path.join(settings_base, "layer_settings.json")
+        
+        elif file_type == "custom_controls":
+            # Custom controls directory
+            custom_dir = os.path.join(settings_base, "custom_controls")
+            if create_dirs and not os.path.exists(custom_dir):
+                os.makedirs(custom_dir)
+                
+            if rom_name:
+                return os.path.join(custom_dir, f"{rom_name}.json")
+            else:
+                return custom_dir
+        
+        # You can add more types as needed
+        
+        # Legacy path fallback (for compatibility with existing installations)
+        # This allows a smooth transition by checking old locations if file doesn't exist in new location
+        def get_legacy_path():
+            if file_type == "general":
+                return os.path.join(self.mame_dir, "control_config_settings.json")
+            elif file_type == "text":
+                return os.path.join(self.mame_dir, "text_appearance_settings.json")
+            elif file_type == "positions":
+                if rom_name:
+                    return os.path.join(self.mame_dir, "preview", f"{rom_name}_positions.json")
+                else:
+                    return os.path.join(self.mame_dir, "preview", "global_positions.json")
+            elif file_type == "logo":
+                return os.path.join(self.mame_dir, "logo_settings.json")
+            elif file_type == "bezel":
+                return os.path.join(self.mame_dir, "bezel_settings.json")
+            elif file_type == "layer":
+                return os.path.join(self.mame_dir, "layer_settings.json")
+            elif file_type == "custom_controls" and rom_name:
+                return os.path.join(self.mame_dir, "custom_controls", f"{rom_name}.json")
+            return None
+        
+        return get_legacy_path() if not os.path.exists(settings_base) else None
+    
+    def migrate_settings_files(self):
+        """
+        Migrate existing settings files to the new centralized location
+        
+        This function should be called early in the application startup process
+        to ensure all settings are properly migrated to the new structure.
+        """
+        import os
+        import json
+        import shutil
+        
+        print("\n=== Starting settings migration check ===")
+        
+        # Define migration mapping: (file_type, old_path, rom_name)
+        migration_list = [
+            ("general", os.path.join(self.mame_dir, "control_config_settings.json"), None),
+            ("text", os.path.join(self.mame_dir, "text_appearance_settings.json"), None),
+            ("logo", os.path.join(self.mame_dir, "logo_settings.json"), None),
+            ("bezel", os.path.join(self.mame_dir, "bezel_settings.json"), None),
+            ("layer", os.path.join(self.mame_dir, "layer_settings.json"), None)
+        ]
+        
+        # Check for global positions file
+        old_global_positions = os.path.join(self.mame_dir, "preview", "global_positions.json")
+        if os.path.exists(old_global_positions):
+            migration_list.append(("positions", old_global_positions, None))
+        
+        # Check for ROM-specific position files
+        preview_dir = os.path.join(self.mame_dir, "preview")
+        if os.path.exists(preview_dir):
+            for filename in os.listdir(preview_dir):
+                if filename.endswith("_positions.json") and filename != "global_positions.json":
+                    rom_name = filename.replace("_positions.json", "")
+                    migration_list.append(("positions", os.path.join(preview_dir, filename), rom_name))
+        
+        # Check for custom controls files
+        custom_dir = os.path.join(self.mame_dir, "custom_controls")
+        if os.path.exists(custom_dir):
+            for filename in os.listdir(custom_dir):
+                if filename.endswith(".json"):
+                    rom_name = filename.replace(".json", "")
+                    migration_list.append(("custom_controls", os.path.join(custom_dir, filename), rom_name))
+        
+        # Perform the migration
+        migrated_count = 0
+        for file_type, old_path, rom_name in migration_list:
+            if os.path.exists(old_path):
+                # Get new path using settings manager
+                new_path = self.get_settings_path(file_type, rom_name)
+                
+                # Create directory if needed
+                new_dir = os.path.dirname(new_path)
+                if not os.path.exists(new_dir):
+                    os.makedirs(new_dir)
+                
+                # Only migrate if the file doesn't already exist in the new location
+                if not os.path.exists(new_path):
+                    try:
+                        # Copy file
+                        shutil.copy2(old_path, new_path)
+                        print(f"Migrated: {old_path} -> {new_path}")
+                        migrated_count += 1
+                        
+                        # Optional: Remove old file after successful migration
+                        # os.remove(old_path)
+                        # print(f"Removed old file: {old_path}")
+                    except Exception as e:
+                        print(f"Error migrating {old_path}: {e}")
+                else:
+                    print(f"Skipped (already exists): {old_path}")
+        
+        if migrated_count > 0:
+            print(f"Migration complete: {migrated_count} files migrated")
+        else:
+            print("No files needed migration")
+        
+        print("=== Settings migration check complete ===\n")
+        return migrated_count
     
     def show_preview(self):
         """Show a preview of the control layout for the current game on the second screen"""
@@ -7984,6 +8286,15 @@ class MAMEControlConfig(ctk.CTk):
                 width=button_width
             )
             exact_preview_button.pack(side="left", padx=button_padx)
+
+            # Add layer settings button to bottom row
+            layer_settings_button = ctk.CTkButton(
+                bottom_row,
+                text="Layers",
+                command=self.show_layer_settings_dialog,
+                width=button_width  # Use the same width as other buttons
+            )
+            layer_settings_button.pack(side="left", padx=button_padx)
 
             # Add a repeated check to ensure logo appears
             def ping_logo_visibility(attempt=1, max_attempts=5):
