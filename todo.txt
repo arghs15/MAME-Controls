@@ -1,2 +1,8 @@
+LUA
+
 -update latest mame pua to use newly created params
 -test new mame lua works as it should
+
+FONTS
+
+-fonts are loaded from mame\fonts. may make it easier to have an in app menu to select a font from this location. possibly even adjust size etc from the app
