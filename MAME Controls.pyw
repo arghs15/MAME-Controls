@@ -4517,6 +4517,11 @@ class MAMEControlConfig(ctk.CTk):
                 self.visible_control_types.remove('JOYSTICK')
                 print("Hiding joystick controls")
         
+        # Handle hide-buttons flag (make sure the value from the command-line is checked)
+        if '--hide-buttons' in sys.argv:
+            self.hide_preview_buttons = True
+            print("Hiding control buttons in preview")
+        
         # Force logo visibility if requested
         if force_logo:
             self.logo_visible = True  
@@ -8259,6 +8264,17 @@ class MAMEControlConfig(ctk.CTk):
             # in the show_preview method:
             if hasattr(self, 'bezel_visible') and self.bezel_visible:
                 self.add_bezel_to_preview_canvas()
+                     
+            # Add bezel visibility toggle button to bottom row
+            bezel_toggle_text = "Hide Bezel" if self.bezel_visible else "Show Bezel"
+            bezel_toggle_button = ctk.CTkButton(
+                bottom_row,
+                text=bezel_toggle_text,
+                command=self.toggle_bezel_visibility,
+                width=button_width
+            )
+            bezel_toggle_button.pack(side="left", padx=button_padx)
+            self.bezel_toggle_button = bezel_toggle_button  # Save reference
             
             # Add text settings button to the top row
             text_settings_button = ctk.CTkButton(
@@ -8572,6 +8588,7 @@ if __name__ == "__main__":
     parser.add_argument('--force-logo', action='store_true', help='Force logo visibility in preview mode')
     parser.add_argument('--bezel-on-top', action='store_true', help='Force bezel to display on top of background')
     parser.add_argument('--hide-joystick', action='store_true', help='Hide joystick direction controls in preview')
+    parser.add_argument('--hide-buttons', action='store_true', help='Hide control buttons in preview mode')
     args = parser.parse_args()
     
     if args.preview_only and args.game:
@@ -8582,8 +8599,8 @@ if __name__ == "__main__":
         app.preferred_preview_screen = args.screen
         print(f"Using screen {args.screen} from command line")
         
-        # Hide buttons in preview-only mode
-        app.hide_preview_buttons = True
+        # Set button visibility based on command line argument
+        app.hide_preview_buttons = args.hide_buttons
         
         # Show the standalone preview with command line options
         app.show_preview_standalone(
