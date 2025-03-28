@@ -1,0 +1,2 @@
+-update latest mame pua to use newly created params
+-test new mame lua works as it should
