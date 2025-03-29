@@ -2753,7 +2753,16 @@ class MAMEControlConfig(ctk.CTk):
             return {}
     
     def get_game_data(self, romname):
-        """Get control data for a ROM from gamedata.json with custom controls support"""
+        """Get control data for a ROM from gamedata.json with caching for improved performance"""
+        # Initialize cache if it doesn't exist
+        if not hasattr(self, 'rom_data_cache'):
+            self.rom_data_cache = {}
+            
+        # Return cached data if available
+        if romname in self.rom_data_cache:
+            print(f"Using cached data for {romname}")
+            return self.rom_data_cache[romname]
+        
         # First check for custom edits
         custom_path = os.path.join(self.mame_dir, "custom_controls", f"{romname}.json")
         if os.path.exists(custom_path):
@@ -2764,6 +2773,8 @@ class MAMEControlConfig(ctk.CTk):
                     custom_data['romname'] = romname
                     custom_data['source'] = 'custom'
                     print(f"Using custom controls for {romname}")
+                    # Cache the result before returning
+                    self.rom_data_cache[romname] = custom_data
                     return custom_data
             except Exception as e:
                 print(f"Error loading custom controls for {romname}: {e}")
@@ -2860,7 +2871,7 @@ class MAMEControlConfig(ctk.CTk):
                                     'value': friendly_name
                                 })
                     
-                    # Add P2 controls - prioritize matching P1 button names
+                    # Add P2 controls
                     elif control_name.startswith('P2_'):
                         if 'JOYSTICK' in control_name or 'BUTTON' in control_name:
                             friendly_name = None
@@ -2886,7 +2897,7 @@ class MAMEControlConfig(ctk.CTk):
                                     'value': friendly_name
                                 })
                 
-                # Also check for special direction mappings (P1_UP, etc.)
+                # Also check for special direction mappings
                 for control_name, control_data in controls.items():
                     if control_name == 'P1_UP' and 'name' in control_data:
                         # Update the joystick control if it exists
@@ -2923,7 +2934,7 @@ class MAMEControlConfig(ctk.CTk):
                             if control['name'] == 'P2_JOYSTICK_RIGHT':
                                 control['value'] = control_data['name']
                 
-                # Sort controls by name to ensure consistent order (Button 1 before Button 2)
+                # Sort controls by name for consistent order (Button 1 before Button 2)
                 p1_controls.sort(key=lambda x: x['name'])
                 p2_controls.sort(key=lambda x: x['name'])
                             
@@ -2945,6 +2956,9 @@ class MAMEControlConfig(ctk.CTk):
                 
             # Mark as gamedata source
             converted_data['source'] = 'gamedata.json'
+            
+            # Cache the result before returning
+            self.rom_data_cache[romname] = converted_data
             return converted_data
             
         # Try parent lookup if direct lookup failed
@@ -2957,11 +2971,13 @@ class MAMEControlConfig(ctk.CTk):
                     # Update with this ROM's info
                     parent_data['romname'] = romname
                     parent_data['gamename'] = self.gamedata_json[romname].get('description', f"{romname} (Clone)")
+                    # Cache the result before returning
+                    self.rom_data_cache[romname] = parent_data
                     return parent_data
         
         # Not found
         return None
-        
+
     def scan_roms_directory(self):
         """Scan the roms directory for available games"""
         roms_dir = os.path.join(self.mame_dir, "roms")
@@ -4520,9 +4536,8 @@ class MAMEControlConfig(ctk.CTk):
             messagebox.showerror("Error", f"Could not save positions: {e}")
             return False
 
-    
     def show_preview_standalone(self, rom_name, auto_close=False, force_logo=False, hide_joystick=False):
-        """Show the preview for a specific ROM without running the main app"""
+        """Show the preview for a specific ROM without running the main app - with performance optimizations"""
         print(f"Starting standalone preview for ROM: {rom_name}")
         
         # Find the MAME directory (already in __init__)
