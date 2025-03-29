@@ -5365,6 +5365,8 @@ class MAMEControlConfig(ctk.CTk):
 
     def update_preview_text_appearance(self):
         """Update existing preview window text items to use current text appearance settings"""
+        import tkinter.font as tkfont
+        
         if not hasattr(self, 'preview_canvas') or not self.preview_canvas.winfo_exists():
             print("No preview window is currently open")
             return
@@ -5390,14 +5392,55 @@ class MAMEControlConfig(ctk.CTk):
         
         print(f"Updating preview text: Font={font_family}, Size={adjusted_font_size}, Uppercase={use_uppercase}")
         
-        # Create canvas font with proper get_tkfont method
+        # Try to create the font for preview with a couple of fallback methods
+        preview_font = None
+        error_message = None
+        
+        # Method 1: Try with font filename from settings (most reliable)
         try:
-            preview_font = self.get_tkfont(settings)
-            print(f"Created font: {preview_font}")
+            if "font_filename" in settings:
+                import os
+                font_path = os.path.join(self.mame_dir, "fonts", settings["font_filename"])
+                if os.path.exists(font_path):
+                    # We can't use the font file directly with tkinter, but we'll note it's available
+                    print(f"Found font file at: {font_path}")
+                    try:
+                        # Try to register the font with tkinter if possible
+                        preview_font = tkfont.Font(family=font_family, size=adjusted_font_size, weight="bold")
+                        print(f"Created font using font family name: {font_family}")
+                    except Exception as e:
+                        error_message = f"Error with family name, will use fallback: {e}"
+                else:
+                    error_message = f"Font file not found: {font_path}"
+            else:
+                error_message = "No font_filename in settings"
         except Exception as e:
-            print(f"Error creating font: {e}")
-            import tkinter.font as tkfont
-            preview_font = tkfont.Font(family=font_family, size=adjusted_font_size, weight="bold")
+            error_message = f"Error trying to use font file: {e}"
+            
+        # Method 2: Try with font family name directly
+        if preview_font is None:
+            try:
+                preview_font = tkfont.Font(family=font_family, size=adjusted_font_size, weight="bold")
+                print(f"Created font using font family directly: {font_family}")
+            except Exception as e:
+                print(f"Error creating font with family name: {e}")
+                # Method 3: Fall back to Arial
+                try:
+                    preview_font = tkfont.Font(family="Arial", size=adjusted_font_size, weight="bold")
+                    print("Falling back to Arial font")
+                except Exception as e2:
+                    print(f"Error creating Arial fallback font: {e2}")
+                    # Method 4: Last resort - use system default
+                    preview_font = tkfont.nametofont("TkDefaultFont")
+                    preview_font.configure(size=adjusted_font_size, weight="bold")
+                    print("Using system default font as final fallback")
+        
+        if error_message:
+            print(f"Note on font loading: {error_message}")
+            
+        if preview_font is None:
+            print("ERROR: Could not create any font!")
+            return
         
         # Store original positions if not already stored
         if not hasattr(self, 'original_positions'):
@@ -5409,6 +5452,13 @@ class MAMEControlConfig(ctk.CTk):
         # Update positions using the position manager
         # First, update the manager with the current positions
         self.position_manager.update_from_text_items(self.text_items)
+        
+        # Get the font's actual family name
+        actual_font_family = preview_font.actual("family")
+        print(f"Actual font being used: {actual_font_family}")
+        
+        success_count = 0
+        error_count = 0
         
         # Update each text item in the preview
         for control_name, data in self.text_items.items():
@@ -5450,15 +5500,38 @@ class MAMEControlConfig(ctk.CTk):
                 data['x'] = display_x
                 data['y'] = display_y
                 data['base_y'] = normalized_y
+                
+                success_count += 1
                     
             except Exception as e:
                 print(f"Error updating text for {control_name}: {e}")
                 import traceback
                 traceback.print_exc()
+                error_count += 1
+        
+        # Show a message about restarting if we had errors
+        if error_count > 0:
+            print(f"⚠️ There were {error_count} errors updating text. App restart may be needed for font changes to fully apply.")
+            try:
+                import tkinter.messagebox as messagebox
+                messagebox.showwarning(
+                    "Font Update",
+                    f"Updated {success_count} text items with some issues.\n\n"
+                    f"For font changes to fully apply, you may need to restart the app."
+                )
+            except Exception:
+                pass
+        else:
+            print(f"Successfully updated {success_count} text items")
         
         # Force canvas update
-        self.preview_canvas.update()
-        print("Preview text appearance updated")
+        try:
+            self.preview_canvas.update()
+            print("Preview text appearance updated")
+        except Exception as e:
+            print(f"Error updating canvas: {e}")
+            import traceback
+            traceback.print_exc()
 
     # 3. Ensure the generate_preview_images method uses the text settings
     def generate_preview_images(self, limit=None):
@@ -6287,22 +6360,167 @@ class MAMEControlConfig(ctk.CTk):
         print("Replaced show_preview with custom version that applies logo settings only")
         print("=== Preview hooks applied ===\n")
 
+    def scan_fonts_directory(self):
+        """
+        Scan the fonts directory and return a list of available fonts with their display names
+        """
+        import os
+        from PIL import ImageFont, Image
+        import re
+        
+        # Define the fonts directory
+        fonts_dir = os.path.join(self.mame_dir, "fonts")
+        if not os.path.exists(fonts_dir):
+            os.makedirs(fonts_dir, exist_ok=True)
+            print(f"Created fonts directory: {fonts_dir}")
+            return []
+        
+        # List to store font information: (filename, display_name)
+        available_fonts = []
+        
+        # Add Press Start 2P as first option (even if not in directory)
+        default_added = False
+        
+        # First pass - scan for Press Start 2P font specifically
+        for filename in os.listdir(fonts_dir):
+            if filename.lower().endswith(('.ttf', '.otf')):
+                # Check if this is one of our default Press Start 2P fonts
+                name_lower = filename.lower()
+                if "press" in name_lower and ("start" in name_lower or "2p" in name_lower):
+                    # Full path to the font file
+                    font_path = os.path.join(fonts_dir, filename)
+                    # Use display name "Press Start 2P" for our default
+                    display_name = "Press Start 2P" 
+                    available_fonts.append((filename, display_name))
+                    default_added = True
+                    print(f"Found default font: {display_name} ({filename})")
+                    break
+        
+        # If we didn't find Press Start 2P, add it as an option anyway
+        if not default_added:
+            available_fonts.append(("PressStart2P.ttf", "Press Start 2P"))
+        
+        # Second pass - scan all other fonts
+        for filename in os.listdir(fonts_dir):
+            if filename.lower().endswith(('.ttf', '.otf')):
+                # Skip if this is the Press Start 2P we already added
+                name_lower = filename.lower()
+                if "press" in name_lower and ("start" in name_lower or "2p" in name_lower) and default_added:
+                    continue
+                    
+                # Full path to the font file
+                font_path = os.path.join(fonts_dir, filename)
+                
+                try:
+                    # Get display name using multiple methods
+                    display_name = self.get_font_display_name(font_path, filename)
+                    
+                    # Skip if it produced the same name as our default
+                    if display_name == "Press Start 2P":
+                        continue
+                    
+                    # Add to available fonts
+                    available_fonts.append((filename, display_name))
+                    print(f"Found font: {display_name} ({filename})")
+                except Exception as e:
+                    print(f"Error processing font {filename}: {e}")
+        
+        # Sort alphabetically by display name, but keep Press Start 2P at the top
+        # Extract Press Start 2P entry
+        press_start = None
+        other_fonts = []
+        
+        for font in available_fonts:
+            if font[1] == "Press Start 2P":
+                press_start = font
+            else:
+                other_fonts.append(font)
+        
+        # Sort the other fonts
+        other_fonts.sort(key=lambda x: x[1].lower())
+        
+        # Combine with Press Start 2P at the beginning
+        result = []
+        if press_start:
+            result.append(press_start)
+        result.extend(other_fonts)
+        
+        return result
+    
+    
+    def get_font_display_name(self, font_path, filename):
+        """
+        Attempt to extract the proper display name from a font file
+        Falls back to a cleaned-up version of the filename if extraction fails
+        """
+        import os
+        from PIL import ImageFont
+        import re
+        
+        # First try to get the actual font name from the file if possible
+        try:
+            # Try to load the font to see if we can extract its name
+            font = ImageFont.truetype(font_path, 12)
+            
+            # Some fonts have metadata that can be accessed
+            if hasattr(font, 'getname'):
+                return font.getname()[0]
+        except Exception as e:
+            print(f"Could not extract font name from {filename}: {e}")
+        
+        # Fall back to cleaning up the filename
+        display_name = filename
+        
+        # Remove file extension
+        display_name = os.path.splitext(display_name)[0]
+        
+        # Replace hyphens and underscores with spaces
+        display_name = display_name.replace('-', ' ').replace('_', ' ')
+        
+        # Clean up common naming patterns
+        # Convert camelCase to spaces (e.g., PressStart2P -> Press Start 2P)
+        display_name = re.sub(r'([a-z])([A-Z0-9])', r'\1 \2', display_name)
+        
+        # Insert space before numbers
+        display_name = re.sub(r'([a-zA-Z])(\d)', r'\1 \2', display_name)
+        
+        # Clean up multiple spaces
+        display_name = ' '.join(display_name.split())
+        
+        return display_name
+
     # Modification to show_text_appearance_settings to improve font selection
     def get_system_fonts(self):
-        """Get all available system fonts for the application"""
-        available_fonts = ["Arial", "Verdana", "Tahoma", "Calibri", "Times New Roman", "Courier New", "System"]
+        """Get all available system fonts for the application with reliable detection"""
+        # Start with fallback fonts that are commonly available
+        fallback_fonts = ["Arial", "Verdana", "Tahoma", "Calibri", "Times New Roman", "Courier New", "System"]
         
         try:
-            # Try to get all system fonts
-            from tkinter import font
-            system_fonts = sorted(list(font.families()))
-            if system_fonts:
-                # Return all fonts, not just a filtered list
-                return system_fonts
+            # Need a temporary root window to get accurate font list
+            import tkinter as tk
+            import tkinter.font as tkfont
+            
+            # Create root window
+            temp_root = tk.Tk()
+            temp_root.withdraw()  # Hide the window
+            
+            # Get all system fonts
+            system_fonts = sorted(list(tkfont.families()))
+            
+            # Filter out fonts that start with @ (vertical fonts in Windows)
+            filtered_fonts = [f for f in system_fonts if not f.startswith('@')]
+            
+            # Clean up
+            temp_root.destroy()
+            
+            # Return the filtered fonts if we have any
+            if filtered_fonts:
+                return filtered_fonts
+                
         except Exception as e:
             print(f"Error loading system fonts: {e}")
         
-        return available_fonts
+        return fallback_fonts
 
     # Modified part of the show_text_appearance_settings method
     # Replace the font selection code with this:
@@ -6335,61 +6553,458 @@ class MAMEControlConfig(ctk.CTk):
 
     # Function to load and register a custom font
     def register_custom_font(self, font_path):
-        """Register a custom font file for use in the application"""
+        """
+        Copy a font file to the fonts directory and return its display name
+        """
+        import os
+        import shutil
+        
         try:
-            from PIL import ImageFont
-            import os
+            # Create fonts directory if it doesn't exist
+            fonts_dir = os.path.join(self.mame_dir, "fonts")
+            os.makedirs(fonts_dir, exist_ok=True)
             
-            # Directory to store custom fonts
-            custom_fonts_dir = os.path.join(self.mame_dir, "fonts")
-            os.makedirs(custom_fonts_dir, exist_ok=True)
+            # Get filename from path
+            filename = os.path.basename(font_path)
             
-            # Copy the font file to our custom fonts directory
-            import shutil
-            font_filename = os.path.basename(font_path)
-            destination = os.path.join(custom_fonts_dir, font_filename)
+            # Destination path
+            dest_path = os.path.join(fonts_dir, filename)
             
-            # Only copy if it doesn't already exist
-            if not os.path.exists(destination):
-                shutil.copy2(font_path, destination)
-                
-            # Try to load the font to make sure it works
-            font = ImageFont.truetype(destination, 24)
+            # Copy the file
+            if os.path.exists(dest_path):
+                # File already exists
+                print(f"Font file already exists: {dest_path}")
+            else:
+                shutil.copy2(font_path, dest_path)
+                print(f"Copied font file to: {dest_path}")
             
-            # Store the path in our settings
-            settings = self.get_text_settings()
+            # Get display name
+            display_name = self.get_font_display_name(dest_path, filename)
             
-            if "custom_fonts" not in settings:
-                settings["custom_fonts"] = []
-                
-            if destination not in settings["custom_fonts"]:
-                settings["custom_fonts"].append(destination)
-                
-            self.save_text_appearance_settings(settings)
-            
-            print(f"Successfully registered custom font: {font_filename}")
-            return True, font_filename
+            return True, display_name
         except Exception as e:
-            print(f"Error registering custom font: {e}")
+            print(f"Error registering font: {e}")
             import traceback
             traceback.print_exc()
             return False, str(e)
     
     def show_text_appearance_settings(self, update_preview=False):
-        """Show message about fixed font settings"""
+        """Show dialog for text appearance settings with font selection from fonts directory"""
+        import os
         import tkinter as tk
-        from tkinter import messagebox
+        from tkinter import filedialog, messagebox
         
-        messagebox.showinfo(
-            "Fixed Font Settings",
-            "Text formatting customization has been disabled.\n\n" +
-            "The application now uses ScoutCond Bold font with fixed settings " +
-            "for better consistency with The Spirit theme."
+        # Get current settings
+        settings = self.get_text_settings(refresh=True)
+        
+        # Create dialog
+        dialog = ctk.CTkToplevel(self)
+        dialog.title("Text Appearance Settings")
+        dialog.geometry("500x650")  # Taller to accommodate font selection and notes
+        dialog.transient(self)
+        dialog.grab_set()
+        
+        # Main frame with scrolling
+        main_frame = ctk.CTkScrollableFrame(dialog)
+        main_frame.pack(expand=True, fill="both", padx=10, pady=10)
+        
+        # Warning about restart
+        restart_frame = ctk.CTkFrame(main_frame)
+        restart_frame.pack(fill="x", pady=5)
+        
+        restart_label = ctk.CTkLabel(
+            restart_frame,
+            text="⚠️ Note: Font changes may require app restart to fully apply.",
+            text_color="#FF8C00",  # Orange warning color
+            font=("Arial", 12, "bold")
         )
+        restart_label.pack(pady=10)
         
-        # If we need to update the preview, do it with the fixed settings
-        if update_preview and hasattr(self, 'preview_canvas') and self.preview_canvas.winfo_exists():
-            self.update_preview_text_appearance()
+        # Font selection section
+        font_section = ctk.CTkFrame(main_frame)
+        font_section.pack(fill="x", pady=10)
+        
+        ctk.CTkLabel(font_section, text="Font Selection", font=("Arial", 14, "bold")).pack(anchor="w", padx=10, pady=5)
+        
+        # Scan both system fonts and directory fonts
+        available_fonts = self.scan_fonts_directory()
+        system_fonts = self.get_system_fonts()
+        
+        # Create a mapping of display_name -> filename for easier lookup
+        font_name_to_file = {display_name: filename for filename, display_name in available_fonts}
+        
+        # Current font
+        current_font = settings.get("font_family", "Press Start 2P")
+        
+        # Create frame for font controls
+        font_controls = ctk.CTkFrame(font_section)
+        font_controls.pack(fill="x", padx=10, pady=5)
+        
+        # Radio buttons for font source
+        font_source_var = ctk.StringVar(value="directory")
+        
+        source_frame = ctk.CTkFrame(font_controls)
+        source_frame.pack(fill="x", pady=5)
+        
+        ctk.CTkLabel(source_frame, text="Font Source:").pack(side="left", padx=5)
+        
+        ctk.CTkRadioButton(
+            source_frame,
+            text="Fonts Directory",
+            variable=font_source_var,
+            value="directory"
+        ).pack(side="left", padx=10)
+        
+        ctk.CTkRadioButton(
+            source_frame,
+            text="System Fonts",
+            variable=font_source_var,
+            value="system"
+        ).pack(side="left", padx=10)
+        
+        # Create a variable to store selected font
+        font_var = ctk.StringVar(value=current_font)
+        
+        # Get list of font display names for dropdown
+        directory_font_names = [display_name for _, display_name in available_fonts]
+        
+        # Add "Press Start 2P" if not in the list (our default)
+        if "Press Start 2P" not in directory_font_names:
+            directory_font_names.insert(0, "Press Start 2P")
+        
+        # Font dropdown
+        font_dropdown_frame = ctk.CTkFrame(font_controls)
+        font_dropdown_frame.pack(fill="x", pady=5)
+        
+        ctk.CTkLabel(font_dropdown_frame, text="Font:", width=60).pack(side="left", padx=5)
+        
+        font_dropdown = ctk.CTkOptionMenu(
+            font_dropdown_frame,
+            values=directory_font_names,
+            variable=font_var,
+            width=300
+        )
+        font_dropdown.pack(side="left", padx=5, fill="x", expand=True)
+        
+        # Function to toggle between directory and system fonts
+        def toggle_font_source():
+            if font_source_var.get() == "directory":
+                font_dropdown.configure(values=directory_font_names)
+                if font_var.get() not in directory_font_names:
+                    font_var.set(directory_font_names[0])
+            else:  # system
+                font_dropdown.configure(values=system_fonts)
+                if font_var.get() not in system_fonts and system_fonts:
+                    font_var.set(system_fonts[0])
+        
+        # Connect the radio buttons to the toggle function
+        font_source_var.trace_add("write", lambda *args: toggle_font_source())
+        
+        # Add font button
+        def add_custom_font():
+            filetypes = [("Font Files", "*.ttf *.otf")]
+            font_path = filedialog.askopenfilename(
+                title="Select Font File",
+                filetypes=filetypes
+            )
+            
+            if font_path:
+                # Register the font
+                success, result = self.register_custom_font(font_path)
+                if success:
+                    # Refresh the font list
+                    new_fonts = self.scan_fonts_directory()
+                    # Update dropdown values
+                    new_display_names = [name for _, name in new_fonts]
+                    
+                    # Make sure we're showing directory fonts
+                    font_source_var.set("directory")
+                    font_dropdown.configure(values=new_display_names)
+                    
+                    # Select the newly added font
+                    if result in new_display_names:
+                        font_var.set(result)
+                        
+                    messagebox.showinfo("Success", f"Added font: {result}")
+                else:
+                    messagebox.showerror("Error", f"Could not add font: {result}")
+        
+        add_font_button = ctk.CTkButton(
+            font_controls,
+            text="Add Font...",
+            command=add_custom_font
+        )
+        add_font_button.pack(pady=5)
+        
+        # Font preview
+        preview_frame = ctk.CTkFrame(font_section)
+        preview_frame.pack(fill="x", padx=10, pady=10)
+        
+        preview_label = ctk.CTkLabel(
+            preview_frame,
+            text="AaBbCcXxYyZz 123",
+            font=("Arial", 18)
+        )
+        preview_label.pack(pady=10)
+        
+        # Function to update preview
+        def update_font_preview(*args):
+            selected_font = font_var.get()
+            try:
+                # Try to create the font for preview
+                preview_label.configure(font=(selected_font, 18))
+            except Exception as e:
+                print(f"Error previewing font {selected_font}: {e}")
+                # Fall back to default if selected font can't be loaded
+                preview_label.configure(font=("Arial", 18))
+                
+                # If it's a directory font that failed, show a warning
+                if font_source_var.get() == "directory" and selected_font in directory_font_names:
+                    preview_label.configure(
+                        text=f"⚠️ Font preview failed. Font may need installation.",
+                        text_color="#FF8C00"  # Orange for warning
+                    )
+                    return
+            
+            # Reset preview text if successful
+            preview_label.configure(
+                text="AaBbCcXxYyZz 123",
+                text_color=("black", "white")  # Default color
+            )
+        
+        # Update preview when selection changes
+        font_var.trace_add("write", update_font_preview)
+        
+        # Initialize preview
+        update_font_preview()
+        
+        # Size and formatting section
+        size_section = ctk.CTkFrame(main_frame)
+        size_section.pack(fill="x", pady=10)
+        
+        ctk.CTkLabel(size_section, text="Size and Formatting", font=("Arial", 14, "bold")).pack(anchor="w", padx=10, pady=5)
+        
+        # Font size
+        size_frame = ctk.CTkFrame(size_section)
+        size_frame.pack(fill="x", padx=10, pady=5)
+        
+        ctk.CTkLabel(size_frame, text="Font Size:", width=100).pack(side="left", padx=5)
+        
+        # Get current size
+        current_size = settings.get("font_size", 28)
+        
+        size_var = ctk.IntVar(value=current_size)
+        size_slider = ctk.CTkSlider(
+            size_frame,
+            from_=10, 
+            to=50,
+            number_of_steps=40,
+            variable=size_var
+        )
+        size_slider.pack(side="left", fill="x", expand=True, padx=5)
+        
+        size_label = ctk.CTkLabel(size_frame, text=str(current_size), width=30)
+        size_label.pack(side="left", padx=5)
+        
+        def update_size_label(value):
+            size_label.configure(text=str(int(value)))
+        
+        size_slider.configure(command=update_size_label)
+        
+        # Uppercase toggle
+        uppercase_var = ctk.BooleanVar(value=settings.get("uppercase", True))
+        uppercase_check = ctk.CTkCheckBox(
+            size_section, 
+            text="Use UPPERCASE text",
+            variable=uppercase_var
+        )
+        uppercase_check.pack(anchor="w", padx=15, pady=5)
+        
+        # Bold strength
+        bold_frame = ctk.CTkFrame(size_section)
+        bold_frame.pack(fill="x", padx=10, pady=5)
+        
+        ctk.CTkLabel(bold_frame, text="Bold Strength:", width=100).pack(side="left", padx=5)
+        
+        current_bold = settings.get("bold_strength", 2)
+        bold_var = ctk.IntVar(value=current_bold)
+        bold_slider = ctk.CTkSlider(
+            bold_frame,
+            from_=0,
+            to=5,
+            number_of_steps=5,
+            variable=bold_var
+        )
+        bold_slider.pack(side="left", fill="x", expand=True, padx=5)
+        
+        bold_label = ctk.CTkLabel(bold_frame, text=str(current_bold), width=30)
+        bold_label.pack(side="left", padx=5)
+        
+        def update_bold_label(value):
+            bold_label.configure(text=str(int(value)))
+        
+        bold_slider.configure(command=update_bold_label)
+        
+        # Y-offset
+        offset_frame = ctk.CTkFrame(size_section)
+        offset_frame.pack(fill="x", padx=10, pady=5)
+        
+        ctk.CTkLabel(offset_frame, text="Y Offset:", width=100).pack(side="left", padx=5)
+        
+        current_offset = settings.get("y_offset", -40)
+        offset_var = ctk.IntVar(value=current_offset)
+        offset_slider = ctk.CTkSlider(
+            offset_frame,
+            from_=-100,
+            to=20,
+            number_of_steps=120,
+            variable=offset_var
+        )
+        offset_slider.pack(side="left", fill="x", expand=True, padx=5)
+        
+        offset_label = ctk.CTkLabel(offset_frame, text=str(current_offset), width=30)
+        offset_label.pack(side="left", padx=5)
+        
+        def update_offset_label(value):
+            offset_label.configure(text=str(int(value)))
+        
+        offset_slider.configure(command=update_offset_label)
+        
+        # Buttons frame
+        button_frame = ctk.CTkFrame(dialog)
+        button_frame.pack(fill="x", padx=10, pady=10)
+        
+        def save_settings():
+            # Extract values from UI
+            new_settings = {
+                "font_family": font_var.get(),  # Store display name
+                "font_size": int(size_var.get()),
+                "uppercase": uppercase_var.get(),
+                "use_uppercase": uppercase_var.get(),  # Duplicate for compatibility
+                "bold_strength": int(bold_var.get()),
+                "y_offset": int(offset_var.get()),
+                "title_size": int(size_var.get()) + 8,  # Title size is font_size + 8
+                "title_font_size": int(size_var.get()) + 8,  # Duplicate for compatibility
+                "font_source": font_source_var.get()  # Store whether using directory or system font
+            }
+            
+            # Save the selected font filename if it's a directory font
+            if font_source_var.get() == "directory":
+                selected_display_name = font_var.get()
+                if selected_display_name in font_name_to_file:
+                    # Get filename that corresponds to this display name
+                    font_filename = font_name_to_file[selected_display_name]
+                    # Store this in settings for later use
+                    new_settings["font_filename"] = font_filename
+            
+            # Save settings
+            self.save_text_appearance_settings(new_settings)
+            
+            # Update preview if requested
+            if update_preview and hasattr(self, 'preview_canvas') and self.preview_canvas.winfo_exists():
+                try:
+                    self.update_preview_text_appearance()
+                    messagebox.showinfo(
+                        "Settings Saved", 
+                        "Settings saved successfully. Some font changes may require restarting the app to fully apply."
+                    )
+                except Exception as e:
+                    messagebox.showwarning(
+                        "Preview Update",
+                        f"Settings saved, but preview update failed. Please restart the app to apply font changes.\n\nError: {str(e)}"
+                    )
+            else:
+                messagebox.showinfo(
+                    "Settings Saved", 
+                    "Settings saved successfully. Please restart the app to apply font changes."
+                )
+            
+            dialog.destroy()
+        
+        # Save button
+        save_button = ctk.CTkButton(
+            button_frame,
+            text="Save Settings",
+            command=save_settings
+        )
+        save_button.pack(side="left", padx=10)
+        
+        # Apply Button (applies without closing dialog)
+        def apply_settings():
+            # Extract values from UI
+            new_settings = {
+                "font_family": font_var.get(),
+                "font_size": int(size_var.get()),
+                "uppercase": uppercase_var.get(),
+                "use_uppercase": uppercase_var.get(),
+                "bold_strength": int(bold_var.get()),
+                "y_offset": int(offset_var.get()),
+                "title_size": int(size_var.get()) + 8,
+                "title_font_size": int(size_var.get()) + 8,
+                "font_source": font_source_var.get()
+            }
+            
+            # Save the selected font filename if it's a directory font
+            if font_source_var.get() == "directory":
+                selected_display_name = font_var.get()
+                if selected_display_name in font_name_to_file:
+                    font_filename = font_name_to_file[selected_display_name]
+                    new_settings["font_filename"] = font_filename
+            
+            # Save settings
+            self.save_text_appearance_settings(new_settings)
+            
+            # Try to update preview
+            if hasattr(self, 'preview_canvas') and self.preview_canvas.winfo_exists():
+                try:
+                    self.update_preview_text_appearance()
+                    messagebox.showinfo(
+                        "Settings Applied", 
+                        "Settings applied to preview. Some font changes may not appear until app restart."
+                    )
+                except Exception as e:
+                    messagebox.showwarning(
+                        "Preview Update Failed",
+                        f"Failed to update preview: {str(e)}\nTry restarting the app to apply font changes."
+                    )
+        
+        apply_button = ctk.CTkButton(
+            button_frame,
+            text="Apply",
+            command=apply_settings
+        )
+        apply_button.pack(side="left", padx=10)
+        
+        # Cancel button
+        cancel_button = ctk.CTkButton(
+            button_frame,
+            text="Cancel",
+            command=dialog.destroy
+        )
+        cancel_button.pack(side="right", padx=10)
+        
+        # Reset button
+        def reset_to_defaults():
+            # Set controls to default values
+            font_source_var.set("directory")
+            font_var.set("Press Start 2P")
+            size_var.set(28)
+            uppercase_var.set(True)
+            bold_var.set(2)
+            offset_var.set(-40)
+            
+            # Update labels
+            update_size_label(28)
+            update_bold_label(2)
+            update_offset_label(-40)
+            update_font_preview()
+        
+        reset_button = ctk.CTkButton(
+            button_frame,
+            text="Reset to Defaults",
+            command=reset_to_defaults
+        )
+        reset_button.pack(side="left", padx=10)
 
     def debug_font_system(self):
         """Debug the font system and print detailed information"""
@@ -7512,7 +8127,7 @@ class MAMEControlConfig(ctk.CTk):
                     print(f"Loaded text appearance settings from: {settings_path}")
                 except Exception as e:
                     print(f"Error loading text settings: {e}")
-                    
+                        
         return self._text_settings_cache
 
     def ensure_font_available(self):
