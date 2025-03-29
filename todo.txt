@@ -5,4 +5,12 @@ LUA
 
 FONTS
 
--fonts are loaded from mame\fonts. may make it easier to have an in app menu to select a font from this location. possibly even adjust size etc from the app
+remove system fonts
+
+Optimise
+
+-look into ijson. generate controls and standalone preview for a game without loading full json
+
+Hotkey
+
+-hotkey to move preview screen to second screen, and/or hide so you can navigate tab menu
