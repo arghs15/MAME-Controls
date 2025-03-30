@@ -14,3 +14,6 @@ Optimise
 Hotkey
 
 -hotkey to move preview screen to second screen, and/or hide so you can navigate tab menu
+
+- Logo placement for Exact Preview and save image
+I noticed image placement is not right in preview compared to when actually saved - its higher. I think this happened when I manually edited the code to lower it. Guess I missed a place to edit the new y value. 

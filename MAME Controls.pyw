@@ -14,6 +14,7 @@ from PIL import Image, ImageTk
 # Make sure to add this import at the top of your file
 import tkinter as tk
 from tkinter import ttk, messagebox
+import sqlite3
 
 def get_application_path():
     """Get the base path for the application (handles PyInstaller bundling)"""
@@ -207,12 +208,14 @@ class MAMEControlConfig(ctk.CTk):
         
         # Find necessary directories
         self.mame_dir = self.find_mame_directory()
-        # ...rest of initialization...
         if not self.mame_dir:
             messagebox.showerror("Error", "Please place this script in the MAME directory!")
             self.quit()
             return
             
+        # Initialize the SQLite database
+        self.initialize_database()
+        
         # Initialize the position manager
         self.position_manager = PositionManager(self)
 
@@ -239,13 +242,6 @@ class MAMEControlConfig(ctk.CTk):
             
             # Set initial fullscreen state
             self.after(100, self.state, 'zoomed')  # Use zoomed for Windows
-            
-            # Find necessary directories
-            self.mame_dir = self.find_mame_directory()
-            if not self.mame_dir:
-                messagebox.showerror("Error", "Please place this script in the MAME directory!")
-                self.quit()
-                return
 
             # Now we can load settings that depend on mame_dir
             self.load_logo_settings()
@@ -258,7 +254,7 @@ class MAMEControlConfig(ctk.CTk):
             self.create_layout()
             
             # Load all data
-            self.load_all_data()
+            self.load_all_data()  # Use your existing method to load ROMs and other data
 
             # Add generate images button
             self.add_generate_images_button()  
@@ -386,6 +382,342 @@ class MAMEControlConfig(ctk.CTk):
         
         print("=== BENCHMARK COMPLETE ===\n")
         return regular_time, ijson_time
+
+    def build_gamedata_db(self):
+        """Build a SQLite database from gamedata.json"""
+        # Find the gamedata.json file
+        gamedata_path = None
+        for path in [
+            os.path.join(self.mame_dir, "gamedata.json"),
+            os.path.join(self.mame_dir, "metadata", "gamedata.json"),
+            os.path.join(self.mame_dir, "data", "gamedata.json")
+        ]:
+            if os.path.exists(path):
+                gamedata_path = path
+                break
+        
+        if not gamedata_path:
+            print("Error: gamedata.json not found")
+            return False
+        
+        # Set up database path
+        db_path = os.path.join(self.mame_dir, "preview", "settings", "gamedata.db")
+        os.makedirs(os.path.dirname(db_path), exist_ok=True)
+        
+        # Check if we need to rebuild the database
+        rebuild_db = True
+        if os.path.exists(db_path):
+            try:
+                # Compare modification times
+                db_mtime = os.path.getmtime(db_path)
+                json_mtime = os.path.getmtime(gamedata_path)
+                
+                if db_mtime > json_mtime:
+                    print("SQLite database is up to date")
+                    self.db_path = db_path
+                    return True
+            except Exception as e:
+                print(f"Error checking database: {e}")
+        
+        print(f"Building SQLite database from {gamedata_path}...")
+        start_time = time.time()
+        
+        try:
+            # Connect to the database
+            conn = sqlite3.connect(db_path)
+            cursor = conn.cursor()
+            
+            # Create the games table
+            cursor.execute('''
+            CREATE TABLE IF NOT EXISTS games (
+                romname TEXT PRIMARY KEY,
+                gamename TEXT,
+                players INTEGER,
+                alternating INTEGER,
+                buttons TEXT,
+                sticks TEXT,
+                data TEXT
+            )
+            ''')
+            
+            # Create the clones table
+            cursor.execute('''
+            CREATE TABLE IF NOT EXISTS clones (
+                clone TEXT PRIMARY KEY,
+                parent TEXT
+            )
+            ''')
+            
+            # Begin a transaction for faster inserts
+            conn.execute('BEGIN TRANSACTION')
+            
+            # Load the file in chunks to avoid memory issues
+            game_count = 0
+            clone_count = 0
+            
+            # Read the file and parse JSON
+            with open(gamedata_path, 'r', encoding='utf-8') as f:
+                # This loads the entire file, but we'll keep this simple
+                # For extremely large files, you'd use a streaming approach
+                game_data = json.load(f)
+                
+                # Process each game
+                for romname, data in game_data.items():
+                    # Extract basic game info
+                    gamename = data.get('description', romname)
+                    players = int(data.get('playercount', 1))
+                    alternating = 1 if data.get('alternating', False) else 0
+                    buttons = data.get('buttons', '')
+                    sticks = data.get('sticks', '')
+                    
+                    # Store the game data
+                    cursor.execute(
+                        'INSERT OR REPLACE INTO games VALUES (?, ?, ?, ?, ?, ?, ?)',
+                        (romname, gamename, players, alternating, buttons, sticks, json.dumps(data))
+                    )
+                    game_count += 1
+                    
+                    # Process clones if available
+                    if 'clones' in data:
+                        for clone in data['clones']:
+                            cursor.execute(
+                                'INSERT OR REPLACE INTO clones VALUES (?, ?)',
+                                (clone, romname)
+                            )
+                            clone_count += 1
+                    
+                    # Commit every 1000 games to avoid transaction getting too big
+                    if game_count % 1000 == 0:
+                        conn.commit()
+                        conn.execute('BEGIN TRANSACTION')
+                        print(f"Processed {game_count} games...")
+            
+            # Final commit
+            conn.commit()
+            
+            # Create indexes for performance
+            cursor.execute('CREATE INDEX IF NOT EXISTS idx_games_gamename ON games (gamename)')
+            cursor.execute('CREATE INDEX IF NOT EXISTS idx_clones_parent ON clones (parent)')
+            
+            # Close the connection
+            conn.close()
+            
+            # Store the database path
+            self.db_path = db_path
+            
+            # Report performance
+            duration = time.time() - start_time
+            print(f"SQLite database built in {duration:.2f} seconds")
+            print(f"Indexed {game_count} games and {clone_count} clones")
+            
+            return True
+        
+        except Exception as e:
+            print(f"Error building database: {e}")
+            import traceback
+            traceback.print_exc()
+            return False
+    
+    def get_game_data_from_db(self, romname):
+        """Get game data from SQLite database"""
+        # Make sure we have a database
+        if not hasattr(self, 'db_path'):
+            if not self.build_gamedata_db():
+                return None
+        
+        try:
+            # Connect to the database
+            conn = sqlite3.connect(self.db_path)
+            cursor = conn.cursor()
+            
+            # First try direct lookup
+            cursor.execute('SELECT data FROM games WHERE romname = ?', (romname,))
+            row = cursor.fetchone()
+            
+            if row:
+                # Game found directly
+                game_data = json.loads(row[0])
+                result = self.convert_db_game_data(romname, game_data)
+                conn.close()
+                return result
+            
+            # If not found directly, check if it's a clone
+            cursor.execute('SELECT parent FROM clones WHERE clone = ?', (romname,))
+            clone_row = cursor.fetchone()
+            
+            if clone_row:
+                # It's a clone, get the parent data
+                parent = clone_row[0]
+                cursor.execute('SELECT data FROM games WHERE romname = ?', (parent,))
+                parent_row = cursor.fetchone()
+                
+                if parent_row:
+                    # Use parent data but update clone-specific fields
+                    parent_data = json.loads(parent_row[0])
+                    result = self.convert_db_game_data(romname, parent_data)
+                    result['gamename'] = f"{romname} (Clone of {parent})"
+                    conn.close()
+                    return result
+            
+            # Not found
+            conn.close()
+            return None
+        
+        except Exception as e:
+            print(f"Error getting game data from database: {e}")
+            return None
+    
+    def convert_db_game_data(self, romname, game_data):
+        """Convert game data from database format to application format"""
+        # Default action names for standard controls
+        default_actions = {
+            'P1_JOYSTICK_UP': 'Up',
+            'P1_JOYSTICK_DOWN': 'Down',
+            'P1_JOYSTICK_LEFT': 'Left',
+            'P1_JOYSTICK_RIGHT': 'Right',
+            'P2_JOYSTICK_UP': 'Up',
+            'P2_JOYSTICK_DOWN': 'Down',
+            'P2_JOYSTICK_LEFT': 'Left',
+            'P2_JOYSTICK_RIGHT': 'Right',
+            'P1_BUTTON1': 'A Button',
+            'P1_BUTTON2': 'B Button',
+            'P1_BUTTON3': 'X Button',
+            'P1_BUTTON4': 'Y Button',
+            'P1_BUTTON5': 'LB Button',
+            'P1_BUTTON6': 'RB Button',
+            'P2_BUTTON1': 'A Button',
+            'P2_BUTTON2': 'B Button',
+            'P2_BUTTON3': 'X Button',
+            'P2_BUTTON4': 'Y Button',
+            'P2_BUTTON5': 'LB Button',
+            'P2_BUTTON6': 'RB Button',
+        }
+        
+        # Basic structure for output
+        converted_data = {
+            'romname': romname,
+            'gamename': game_data.get('description', romname),
+            'numPlayers': int(game_data.get('playercount', 1)),
+            'alternating': game_data.get('alternating', False),
+            'mirrored': False,
+            'miscDetails': f"Buttons: {game_data.get('buttons', '?')}, Sticks: {game_data.get('sticks', '?')}",
+            'players': [],
+            'source': 'database'
+        }
+        
+        # Process controls if available
+        controls = None
+        if 'controls' in game_data:
+            controls = game_data['controls']
+        
+        if controls:
+            # First collect P1 button names to mirror to P2
+            p1_button_names = {}
+            for control_name, control_data in controls.items():
+                if control_name.startswith('P1_BUTTON') and 'name' in control_data:
+                    button_num = control_name.replace('P1_BUTTON', '')
+                    p1_button_names[f'P2_BUTTON{button_num}'] = control_data['name']
+            
+            # Process player controls
+            p1_controls = []
+            p2_controls = []
+            
+            for control_name, control_data in controls.items():
+                # Add P1 controls
+                if control_name.startswith('P1_'):
+                    if 'JOYSTICK' in control_name or 'BUTTON' in control_name:
+                        friendly_name = None
+                        if 'name' in control_data:
+                            friendly_name = control_data['name']
+                        elif control_name in default_actions:
+                            friendly_name = default_actions[control_name]
+                        else:
+                            parts = control_name.split('_')
+                            if len(parts) > 1:
+                                friendly_name = parts[-1]
+                        
+                        if friendly_name:
+                            p1_controls.append({
+                                'name': control_name,
+                                'value': friendly_name
+                            })
+                
+                # Add P2 controls
+                elif control_name.startswith('P2_'):
+                    if 'JOYSTICK' in control_name or 'BUTTON' in control_name:
+                        friendly_name = None
+                        if 'name' in control_data:
+                            friendly_name = control_data['name']
+                        elif control_name in p1_button_names:
+                            friendly_name = p1_button_names[control_name]
+                        elif control_name in default_actions:
+                            friendly_name = default_actions[control_name]
+                        else:
+                            parts = control_name.split('_')
+                            if len(parts) > 1:
+                                friendly_name = parts[-1]
+                        
+                        if friendly_name:
+                            p2_controls.append({
+                                'name': control_name,
+                                'value': friendly_name
+                            })
+            
+            # Special handling for direction mappings
+            special_mappings = {
+                'P1_UP': 'P1_JOYSTICK_UP',
+                'P1_DOWN': 'P1_JOYSTICK_DOWN',
+                'P1_LEFT': 'P1_JOYSTICK_LEFT',
+                'P1_RIGHT': 'P1_JOYSTICK_RIGHT',
+                'P2_UP': 'P2_JOYSTICK_UP',
+                'P2_DOWN': 'P2_JOYSTICK_DOWN',
+                'P2_LEFT': 'P2_JOYSTICK_LEFT',
+                'P2_RIGHT': 'P2_JOYSTICK_RIGHT'
+            }
+            
+            for special, joystick in special_mappings.items():
+                if special in controls and 'name' in controls[special]:
+                    # Find the matching joystick control
+                    if joystick.startswith('P1_'):
+                        for control in p1_controls:
+                            if control['name'] == joystick:
+                                control['value'] = controls[special]['name']
+                    elif joystick.startswith('P2_'):
+                        for control in p2_controls:
+                            if control['name'] == joystick:
+                                control['value'] = controls[special]['name']
+            
+            # Sort controls by name
+            p1_controls.sort(key=lambda x: x['name'])
+            p2_controls.sort(key=lambda x: x['name'])
+            
+            # Add player 1 controls if available
+            if p1_controls:
+                converted_data['players'].append({
+                    'number': 1,
+                    'numButtons': int(game_data.get('buttons', 1)),
+                    'labels': p1_controls
+                })
+            
+            # Add player 2 controls if available
+            if p2_controls:
+                converted_data['players'].append({
+                    'number': 2,
+                    'numButtons': int(game_data.get('buttons', 1)),
+                    'labels': p2_controls
+                })
+        
+        return converted_data
+
+    def initialize_database(self):
+        """Initialize SQLite database and patch methods"""
+        # Save original method if needed
+        if not hasattr(self, 'orig_get_game_data'):
+            self.orig_get_game_data = self.get_game_data
+        
+        # Try to build or load the database
+        if not hasattr(self, 'db_path') or not os.path.exists(getattr(self, 'db_path', '')):
+            self.build_gamedata_db()
     
     def add_appearance_settings_button(self):
         """Add a button to configure text appearance settings"""
@@ -2644,23 +2976,43 @@ class MAMEControlConfig(ctk.CTk):
             self.preview_canvas.itemconfig(data['shadow'], state=state)
     
     def load_all_data(self):
-        """Load all necessary data sources"""
-        # Load settings from file
+        """Modified load_all_data to use SQLite database"""
+        # Display loading status
+        if hasattr(self, 'stats_label'):
+            self.stats_label.configure(text="Loading settings and ROMs...")
+        
+        # Load settings first (small and fast)
         self.load_settings()
         
-        # Scan ROMs directory
+        # Begin database building in the background if needed
+        build_thread = None
+        
+        # Check if we need to build or update the database
+        if not hasattr(self, 'db_path') or not os.path.exists(getattr(self, 'db_path', '')):
+            # Start a thread to build the database in the background
+            import threading
+            build_thread = threading.Thread(target=self.build_gamedata_db)
+            build_thread.daemon = True
+            build_thread.start()
+        
+        # Scan ROMs directory (with caching for speed)
         self.scan_roms_directory()
         
-        # Load default controls
+        # Load default config (usually quick)
         self.load_default_config()
         
-        # Load gamedata.json
-        self.load_gamedata_json()
-        
-        # Always load custom configs
+        # Load custom configs (can be slow for many files)
         self.load_custom_configs()
         
-        # Update UI
+        # If database building is still running, show status
+        if build_thread and build_thread.is_alive():
+            if hasattr(self, 'stats_label'):
+                self.stats_label.configure(text="Building SQLite index (this may take a moment)...")
+            
+            # Wait for the database to be built (UI will freeze temporarily)
+            build_thread.join()
+        
+        # Update UI after all data is loaded
         self.update_stats_label()
         self.update_game_list()
         
@@ -3275,230 +3627,114 @@ class MAMEControlConfig(ctk.CTk):
             return self.get_game_data(romname)
 
     def get_game_data(self, romname):
-        """Get control data for a ROM from gamedata.json with caching for improved performance"""
-        # Initialize cache if it doesn't exist
-        if not hasattr(self, 'rom_data_cache'):
-            self.rom_data_cache = {}
-            
-        # Return cached data if available
-        if romname in self.rom_data_cache:
-            #print(f"Using cached data for {romname}")
-            return self.rom_data_cache[romname]
+        """Get game data using SQLite database"""
+        # Prevent recursion
+        if hasattr(self, '_in_get_game_data') and self._in_get_game_data:
+            return None
         
-        # First check for custom edits
-        custom_path = os.path.join(self.mame_dir, "custom_controls", f"{romname}.json")
-        if os.path.exists(custom_path):
-            try:
-                with open(custom_path, 'r', encoding='utf-8') as f:
-                    custom_data = json.load(f)
-                    # Make sure essential fields are set
-                    custom_data['romname'] = romname
-                    custom_data['source'] = 'custom'
-                    print(f"Using custom controls for {romname}")
-                    # Cache the result before returning
-                    self.rom_data_cache[romname] = custom_data
-                    return custom_data
-            except Exception as e:
-                print(f"Error loading custom controls for {romname}: {e}")
+        # Set recursion guard
+        self._in_get_game_data = True
         
-        # If no custom controls or there was an error, continue with original method
-        if not hasattr(self, 'gamedata_json'):
-            self.load_gamedata_json()
+        try:
+            # Check cache first for fastest response
+            if hasattr(self, 'rom_data_cache') and romname in self.rom_data_cache:
+                self._in_get_game_data = False
+                return self.rom_data_cache[romname]
             
-        if romname in self.gamedata_json:
-            # Your existing code remains unchanged from here...
-            game_data = self.gamedata_json[romname]
-            
-            # Simple name defaults
-            default_actions = {
-                'P1_JOYSTICK_UP': 'Up',
-                'P1_JOYSTICK_DOWN': 'Down',
-                'P1_JOYSTICK_LEFT': 'Left',
-                'P1_JOYSTICK_RIGHT': 'Right',
-                'P2_JOYSTICK_UP': 'Up',
-                'P2_JOYSTICK_DOWN': 'Down',
-                'P2_JOYSTICK_LEFT': 'Left',
-                'P2_JOYSTICK_RIGHT': 'Right',
-                'P1_BUTTON1': 'A Button',
-                'P1_BUTTON2': 'B Button',
-                'P1_BUTTON3': 'X Button',
-                'P1_BUTTON4': 'Y Button',
-                'P1_BUTTON5': 'LB Button',
-                'P1_BUTTON6': 'RB Button',
-                # Mirror P1 button names for P2
-                'P2_BUTTON1': 'A Button',
-                'P2_BUTTON2': 'B Button',
-                'P2_BUTTON3': 'X Button',
-                'P2_BUTTON4': 'Y Button',
-                'P2_BUTTON5': 'LB Button',
-                'P2_BUTTON6': 'RB Button',
-            }
-            
-            # Basic structure conversion
-            converted_data = {
-                'romname': romname,
-                'gamename': game_data.get('description', romname),
-                'numPlayers': int(game_data.get('playercount', 1)),
-                'alternating': game_data.get('alternating', False),
-                'mirrored': False,
-                'miscDetails': f"Buttons: {game_data.get('buttons', '?')}, Sticks: {game_data.get('sticks', '?')}",
-                'players': []
-            }
-            
-            # Find controls (direct or in a clone)
-            controls = None
-            if 'controls' in game_data:
-                controls = game_data['controls']
-            elif 'clones' in game_data:
-                for clone in game_data['clones'].values():
-                    if 'controls' in clone:
-                        controls = clone['controls']
-                        break
-            
-            if controls:
-                # First pass - collect P1 button names to mirror to P2
-                p1_button_names = {}
-                for control_name, control_data in controls.items():
-                    if control_name.startswith('P1_BUTTON') and 'name' in control_data:
-                        button_num = control_name.replace('P1_BUTTON', '')
-                        p1_button_names[f'P2_BUTTON{button_num}'] = control_data['name']
+            # First check for custom controls
+            custom_path = os.path.join(self.mame_dir, "custom_controls", f"{romname}.json")
+            if os.path.exists(custom_path):
+                try:
+                    with open(custom_path, 'r', encoding='utf-8') as f:
+                        custom_data = json.load(f)
+                        custom_data['romname'] = romname
+                        custom_data['source'] = 'custom'
                         
-                # Process player controls
-                p1_controls = []
-                p2_controls = []
+                        # Cache the result
+                        if not hasattr(self, 'rom_data_cache'):
+                            self.rom_data_cache = {}
+                        self.rom_data_cache[romname] = custom_data
+                        self._in_get_game_data = False
+                        return custom_data
+                except Exception as e:
+                    print(f"Error loading custom controls: {e}")
+            
+            # Try SQLite database method - make sure we have a database
+            if not hasattr(self, 'db_path') or not self.db_path:
+                # Try to build database
+                if not self.build_gamedata_db():
+                    # Fall back to original method if database can't be built
+                    self._in_get_game_data = False
+                    # Call the original method directly
+                    if hasattr(self, 'gamedata_json') and romname in self.gamedata_json:
+                        return self.orig_get_game_data(romname)
+                    return None
+            
+            try:
+                # Connect to the database
+                conn = sqlite3.connect(self.db_path)
+                cursor = conn.cursor()
                 
-                for control_name, control_data in controls.items():
-                    # Add P1 controls
-                    if control_name.startswith('P1_'):
-                        # Skip non-joystick/button controls
-                        if 'JOYSTICK' in control_name or 'BUTTON' in control_name:
-                            # Get the friendly name
-                            friendly_name = None
-                            
-                            # First check for explicit name
-                            if 'name' in control_data:
-                                friendly_name = control_data['name']
-                            # Then check for default actions
-                            elif control_name in default_actions:
-                                friendly_name = default_actions[control_name]
-                            # Fallback to control name
-                            else:
-                                parts = control_name.split('_')
-                                if len(parts) > 1:
-                                    friendly_name = parts[-1]
-                                
-                            if friendly_name:
-                                p1_controls.append({
-                                    'name': control_name,
-                                    'value': friendly_name
-                                })
+                # First try direct lookup
+                cursor.execute('SELECT data FROM games WHERE romname = ?', (romname,))
+                row = cursor.fetchone()
+                
+                if row:
+                    # Game found directly
+                    game_data = json.loads(row[0])
+                    result = self.convert_db_game_data(romname, game_data)
+                    conn.close()
                     
-                    # Add P2 controls
-                    elif control_name.startswith('P2_'):
-                        if 'JOYSTICK' in control_name or 'BUTTON' in control_name:
-                            friendly_name = None
-                            
-                            # First check for explicit name
-                            if 'name' in control_data:
-                                friendly_name = control_data['name']
-                            # Then check if we have a matching P1 button name
-                            elif control_name in p1_button_names:
-                                friendly_name = p1_button_names[control_name]
-                            # Then check defaults
-                            elif control_name in default_actions:
-                                friendly_name = default_actions[control_name]
-                            # Fallback to control name
-                            else:
-                                parts = control_name.split('_')
-                                if len(parts) > 1:
-                                    friendly_name = parts[-1]
-                                
-                            if friendly_name:
-                                p2_controls.append({
-                                    'name': control_name,
-                                    'value': friendly_name
-                                })
+                    # Cache the result
+                    if not hasattr(self, 'rom_data_cache'):
+                        self.rom_data_cache = {}
+                    self.rom_data_cache[romname] = result
+                    
+                    self._in_get_game_data = False
+                    return result
                 
-                # Also check for special direction mappings
-                for control_name, control_data in controls.items():
-                    if control_name == 'P1_UP' and 'name' in control_data:
-                        # Update the joystick control if it exists
-                        for control in p1_controls:
-                            if control['name'] == 'P1_JOYSTICK_UP':
-                                control['value'] = control_data['name']
-                    elif control_name == 'P1_DOWN' and 'name' in control_data:
-                        for control in p1_controls:
-                            if control['name'] == 'P1_JOYSTICK_DOWN':
-                                control['value'] = control_data['name']
-                    elif control_name == 'P1_LEFT' and 'name' in control_data:
-                        for control in p1_controls:
-                            if control['name'] == 'P1_JOYSTICK_LEFT':
-                                control['value'] = control_data['name']
-                    elif control_name == 'P1_RIGHT' and 'name' in control_data:
-                        for control in p1_controls:
-                            if control['name'] == 'P1_JOYSTICK_RIGHT':
-                                control['value'] = control_data['name']
-                    # Also handle P2 directional controls the same way
-                    elif control_name == 'P2_UP' and 'name' in control_data:
-                        for control in p2_controls:
-                            if control['name'] == 'P2_JOYSTICK_UP':
-                                control['value'] = control_data['name']
-                    elif control_name == 'P2_DOWN' and 'name' in control_data:
-                        for control in p2_controls:
-                            if control['name'] == 'P2_JOYSTICK_DOWN':
-                                control['value'] = control_data['name']
-                    elif control_name == 'P2_LEFT' and 'name' in control_data:
-                        for control in p2_controls:
-                            if control['name'] == 'P2_JOYSTICK_LEFT':
-                                control['value'] = control_data['name']
-                    elif control_name == 'P2_RIGHT' and 'name' in control_data:
-                        for control in p2_controls:
-                            if control['name'] == 'P2_JOYSTICK_RIGHT':
-                                control['value'] = control_data['name']
+                # If not found directly, check if it's a clone
+                cursor.execute('SELECT parent FROM clones WHERE clone = ?', (romname,))
+                clone_row = cursor.fetchone()
                 
-                # Sort controls by name for consistent order (Button 1 before Button 2)
-                p1_controls.sort(key=lambda x: x['name'])
-                p2_controls.sort(key=lambda x: x['name'])
-                            
-                # Add player 1 if we have controls
-                if p1_controls:
-                    converted_data['players'].append({
-                        'number': 1,
-                        'numButtons': int(game_data.get('buttons', 1)),
-                        'labels': p1_controls
-                    })
-
-                # Add player 2 if we have controls
-                if p2_controls:
-                    converted_data['players'].append({
-                        'number': 2,
-                        'numButtons': int(game_data.get('buttons', 1)),
-                        'labels': p2_controls
-                    })
+                if clone_row:
+                    # It's a clone, get the parent data
+                    parent = clone_row[0]
+                    cursor.execute('SELECT data FROM games WHERE romname = ?', (parent,))
+                    parent_row = cursor.fetchone()
+                    
+                    if parent_row:
+                        # Use parent data but update clone-specific fields
+                        parent_data = json.loads(parent_row[0])
+                        result = self.convert_db_game_data(romname, parent_data)
+                        result['gamename'] = f"{romname} (Clone of {parent})"
+                        conn.close()
+                        
+                        # Cache the result
+                        if not hasattr(self, 'rom_data_cache'):
+                            self.rom_data_cache = {}
+                        self.rom_data_cache[romname] = result
+                        
+                        self._in_get_game_data = False
+                        return result
                 
-            # Mark as gamedata source
-            converted_data['source'] = 'gamedata.json'
+                # Not found in database, close connection
+                conn.close()
+            except Exception as e:
+                print(f"Error with database lookup: {e}")
             
-            # Cache the result before returning
-            self.rom_data_cache[romname] = converted_data
-            return converted_data
+            # Fall back to original method
+            self._in_get_game_data = False
             
-        # Try parent lookup if direct lookup failed
-        if romname in self.gamedata_json and 'parent' in self.gamedata_json[romname]:
-            parent_rom = self.gamedata_json[romname]['parent']
-            if parent_rom:
-                # Recursive call to get parent data
-                parent_data = self.get_game_data(parent_rom)
-                if parent_data:
-                    # Update with this ROM's info
-                    parent_data['romname'] = romname
-                    parent_data['gamename'] = self.gamedata_json[romname].get('description', f"{romname} (Clone)")
-                    # Cache the result before returning
-                    self.rom_data_cache[romname] = parent_data
-                    return parent_data
-        
-        # Not found
-        return None
+            # Call the original method directly if it still exists
+            if hasattr(self, 'gamedata_json') and romname in self.gamedata_json:
+                return self.orig_get_game_data(romname)
+            
+            # Not found by any method
+            return None
+        finally:
+            # Clear recursion guard
+            self._in_get_game_data = False
 
     def scan_roms_directory(self):
         """Scan the roms directory for available games"""
