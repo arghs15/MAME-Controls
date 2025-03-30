@@ -197,13 +197,17 @@ class MAMEControlConfig(ctk.CTk):
         self.custom_configs = {}
         self.current_game = None
         self.use_xinput = True
-        self.show_rom_info = False  # Set to False to hide ROM info
+        self.show_rom_info = False
         # Logo size settings (as percentages)
         self.logo_width_percentage = 15
         self.logo_height_percentage = 15
         
+        # IMPORTANT: Bind the method only after initializing attributes
+        self.get_game_data_with_ijson = self.get_game_data_with_ijson.__get__(self, type(self))
+        
         # Find necessary directories
         self.mame_dir = self.find_mame_directory()
+        # ...rest of initialization...
         if not self.mame_dir:
             messagebox.showerror("Error", "Please place this script in the MAME directory!")
             self.quit()
@@ -286,6 +290,102 @@ class MAMEControlConfig(ctk.CTk):
             
             # Hide the main window completely
             self.withdraw()
+    
+    def benchmark_rom_loading(self, rom_name):
+        """
+        Run a benchmark comparing ijson vs regular JSON loading for a specific ROM
+        This will help verify that ijson is actually improving performance
+        """
+        import time
+        import gc
+        import os
+        
+        print("\n=== ROM LOADING BENCHMARK ===")
+        print(f"Testing performance for ROM: {rom_name}")
+        
+        # Get the file size of gamedata.json
+        json_path = None
+        for path in [
+            os.path.join(self.mame_dir, "gamedata.json"),
+            os.path.join(self.mame_dir, "metadata", "gamedata.json"),
+            os.path.join(self.mame_dir, "data", "gamedata.json")
+        ]:
+            if os.path.exists(path):
+                json_path = path
+                break
+        
+        if json_path:
+            file_size_mb = os.path.getsize(json_path) / (1024 * 1024)
+            print(f"gamedata.json size: {file_size_mb:.2f} MB")
+        
+        # Clear any existing cache
+        if hasattr(self, 'rom_data_cache'):
+            self.rom_data_cache = {}
+        
+        # Force garbage collection
+        gc.collect()
+        
+        # Test 1: Regular JSON loading
+        print("\nTesting regular JSON loading...")
+        start_time = time.time()
+        try:
+            # Temporarily rename the ijson method to force using the regular method
+            if hasattr(self, 'get_game_data_with_ijson'):
+                original_method = self.get_game_data_with_ijson
+                delattr(self, 'get_game_data_with_ijson')
+            
+            # Load the game data using the regular method
+            result = self.get_game_data(rom_name)
+            
+            # Restore the method
+            if 'original_method' in locals():
+                self.get_game_data_with_ijson = original_method
+            
+            regular_time = time.time() - start_time
+            print(f"Regular JSON loading time: {regular_time:.4f} seconds")
+            print(f"Data found: {'Yes' if result else 'No'}")
+        except Exception as e:
+            print(f"Error in regular JSON test: {e}")
+            regular_time = float('inf')
+        
+        # Force cache clear again
+        if hasattr(self, 'rom_data_cache'):
+            self.rom_data_cache = {}
+        
+        # Force garbage collection
+        gc.collect()
+        
+        # Test 2: ijson loading
+        print("\nTesting ijson loading...")
+        start_time = time.time()
+        try:
+            # Make sure the ijson method exists
+            if hasattr(self, 'get_game_data_with_ijson'):
+                # Load the game data using ijson
+                result = self.get_game_data_with_ijson(rom_name)
+                
+                ijson_time = time.time() - start_time
+                print(f"ijson loading time: {ijson_time:.4f} seconds")
+                print(f"Data found: {'Yes' if result else 'No'}")
+                print(f"Source: {result.get('source', 'unknown') if result else 'N/A'}")
+            else:
+                print("ijson method not available")
+                ijson_time = float('inf')
+        except Exception as e:
+            print(f"Error in ijson test: {e}")
+            ijson_time = float('inf')
+        
+        # Calculate improvement
+        if regular_time != float('inf') and ijson_time != float('inf'):
+            improvement = (regular_time - ijson_time) / regular_time * 100
+            print(f"\nPerformance improvement: {improvement:.2f}%")
+            if improvement > 0:
+                print("ijson is faster!")
+            else:
+                print("Regular JSON is faster for this ROM")
+        
+        print("=== BENCHMARK COMPLETE ===\n")
+        return regular_time, ijson_time
     
     def add_appearance_settings_button(self):
         """Add a button to configure text appearance settings"""
@@ -436,17 +536,27 @@ class MAMEControlConfig(ctk.CTk):
             "show_button_names": getattr(self, 'show_button_names', True)
         }
         
+        # Use centralized path function
         settings_path = self.get_settings_path("general")
         try:
             with open(settings_path, 'w') as f:
                 json.dump(settings, f)
             print(f"Saved general settings to: {settings_path}")
+            return True
         except Exception as e:
             print(f"Error saving settings: {e}")
+            return False
 
     def load_settings(self):
         """Load settings from JSON file with improved defaults using the centralized file path"""
         settings_path = self.get_settings_path("general")
+        
+        # Set sensible defaults
+        self.preferred_preview_screen = 2  # Default to second screen
+        self.visible_control_types = ["BUTTON"]  # Default to just buttons
+        self.hide_preview_buttons = False
+        self.show_button_names = True
+        
         if os.path.exists(settings_path):
             try:
                 with open(settings_path, 'r') as f:
@@ -459,27 +569,37 @@ class MAMEControlConfig(ctk.CTk):
                 
                 # Load visibility settings
                 if 'visible_control_types' in settings:
-                    self.visible_control_types = settings['visible_control_types']
-                    print(f"Loaded visible control types: {self.visible_control_types}")
+                    # Important: Properly handle empty or invalid lists
+                    if isinstance(settings['visible_control_types'], list):
+                        self.visible_control_types = settings['visible_control_types']
+                        print(f"Loaded visible control types: {self.visible_control_types}")
+                    else:
+                        print(f"Warning: Invalid visible_control_types format in settings: {settings['visible_control_types']}")
                     
-                    # Make sure both BUTTON and JOYSTICK are included for proper display
-                    if 'BUTTON' in self.visible_control_types and 'JOYSTICK' not in self.visible_control_types:
-                        print("Adding JOYSTICK to visible control types for complete display")
-                        self.visible_control_types.append('JOYSTICK')
-                        # Save the updated settings
+                    # Make sure BUTTON is always included for proper display
+                    if "BUTTON" not in self.visible_control_types:
+                        self.visible_control_types.append("BUTTON")
+                        print("Added BUTTON to visible control types for complete display")
+                        # Update the saved settings
                         settings['visible_control_types'] = self.visible_control_types
                         with open(settings_path, 'w') as f:
                             json.dump(settings, f)
                 else:
-                    # Default to showing both buttons and joystick
-                    self.visible_control_types = ["BUTTON", "JOYSTICK"]
+                    # Default to showing just buttons
+                    self.visible_control_types = ["BUTTON"]
                     settings['visible_control_types'] = self.visible_control_types
                     with open(settings_path, 'w') as f:
                         json.dump(settings, f)
 
                 # Load hide preview buttons setting
                 if 'hide_preview_buttons' in settings:
-                    self.hide_preview_buttons = settings['hide_preview_buttons']
+                    # Handle both boolean and integer (0/1) formats
+                    if isinstance(settings['hide_preview_buttons'], bool):
+                        self.hide_preview_buttons = settings['hide_preview_buttons']
+                    elif isinstance(settings['hide_preview_buttons'], int):
+                        self.hide_preview_buttons = bool(settings['hide_preview_buttons'])
+                    print(f"Loaded hide_preview_buttons: {self.hide_preview_buttons}")
+                    
                     # Update toggle if it exists
                     if hasattr(self, 'hide_buttons_toggle'):
                         if self.hide_preview_buttons:
@@ -489,9 +609,14 @@ class MAMEControlConfig(ctk.CTk):
                 else:
                     self.hide_preview_buttons = False
                     
-                # Load show button names setting (NEW)
+                # Load show button names setting
                 if 'show_button_names' in settings:
-                    self.show_button_names = settings['show_button_names']
+                    # Handle both boolean and integer (0/1) formats
+                    if isinstance(settings['show_button_names'], bool):
+                        self.show_button_names = settings['show_button_names']
+                    elif isinstance(settings['show_button_names'], int):
+                        self.show_button_names = bool(settings['show_button_names'])
+                    print(f"Loaded show_button_names: {self.show_button_names}")
                 else:
                     # Default to showing button names for backward compatibility
                     self.show_button_names = True
@@ -501,18 +626,20 @@ class MAMEControlConfig(ctk.CTk):
                         
             except Exception as e:
                 print(f"Error loading settings: {e}")
+                import traceback
+                traceback.print_exc()
                 self.hide_preview_buttons = False
-                self.visible_control_types = ["BUTTON", "JOYSTICK"]  # Default to both
+                self.visible_control_types = ["BUTTON"]  # Default to just buttons
                 self.show_button_names = True  # Default to showing button names
         else:
             # Default settings
             self.hide_preview_buttons = False
-            self.visible_control_types = ["BUTTON", "JOYSTICK"]  # Default to both
+            self.visible_control_types = ["BUTTON"]  # Default to just buttons
             self.show_button_names = True  # Default to showing button names
             
             # Create settings file with defaults
             settings = {
-                'preferred_preview_screen': getattr(self, 'preferred_preview_screen', 2),
+                'preferred_preview_screen': self.preferred_preview_screen,
                 'visible_control_types': self.visible_control_types,
                 'hide_preview_buttons': self.hide_preview_buttons,
                 'show_button_names': self.show_button_names
@@ -524,9 +651,12 @@ class MAMEControlConfig(ctk.CTk):
             except Exception as e:
                 print(f"Error creating settings file: {e}")
         
-        # Ensure the visible_control_types is initialized even if loading failed
-        if not hasattr(self, 'visible_control_types') or self.visible_control_types is None:
-            self.visible_control_types = ["BUTTON", "JOYSTICK"]
+        # Debug output of final settings
+        print(f"\nFinal settings:")
+        print(f"  - visible_control_types: {self.visible_control_types}")
+        print(f"  - hide_preview_buttons: {self.hide_preview_buttons}")
+        print(f"  - show_button_names: {self.show_button_names}")
+        print(f"  - preferred_preview_screen: {self.preferred_preview_screen}\n")
     
      # Show/hide methods for preview buttons
     def show_button_frame(self):
@@ -2102,10 +2232,10 @@ class MAMEControlConfig(ctk.CTk):
             print(f"Error saving setting: {e}")
     
     def save_visibility_settings(self):
-        """Save joystick visibility and other display settings"""
+        """Save joystick visibility and other display settings using the centralized path"""
         try:
-            # Get the settings file path
-            settings_path = os.path.join(self.mame_dir, "control_config_settings.json")
+            # Get settings path using the centralized function
+            settings_path = self.get_settings_path("general")
             
             # Load existing settings if available
             settings = {}
@@ -2113,21 +2243,22 @@ class MAMEControlConfig(ctk.CTk):
                 with open(settings_path, 'r') as f:
                     settings = json.load(f)
             
-            # Add visibility settings
+            # Update with current visibility settings
             settings['visible_control_types'] = self.visible_control_types
             
             # Save back to file
             with open(settings_path, 'w') as f:
                 json.dump(settings, f)
                 
-            print(f"Saved visibility settings: {self.visible_control_types}")
+            print(f"Saved visibility settings to: {settings_path}")
+            print(f"Visibility settings: {self.visible_control_types}")
             return True
         except Exception as e:
             print(f"Error saving visibility settings: {e}")
             return False
 
     def toggle_joystick_controls(self):
-        """Toggle joystick controls visibility and save the setting"""
+        """Toggle joystick controls visibility and save the setting using centralized path"""
         # Check if joystick is currently visible
         joystick_visible = "JOYSTICK" in self.visible_control_types
         
@@ -2168,10 +2299,10 @@ class MAMEControlConfig(ctk.CTk):
                 if 'shadow' in data and data['shadow']:
                     self.preview_canvas.itemconfigure(data['shadow'], state=state)
         
-        # Save the visibility setting
-        self.save_visibility_settings()
-        print(f"Toggled joystick visibility to: {joystick_visible}")
-    
+        # Save the visibility setting using centralized path function
+        success = self.save_visibility_settings()
+        
+        print(f"Toggled joystick visibility to: {joystick_visible} (Save success: {success})")
     
     def save_global_positions(self):
         """Save all positions to global file, including hidden controls"""
@@ -2703,11 +2834,11 @@ class MAMEControlConfig(ctk.CTk):
                 row += 1
 
     def load_gamedata_json(self):
-        """Load and parse the gamedata.json file for control data"""
+        """Load and parse the gamedata.json file for control data with improved performance"""
         if hasattr(self, 'gamedata_json') and self.gamedata_json:
             # Already loaded
             return self.gamedata_json
-            
+                
         self.gamedata_json = {}
         
         # Look for gamedata.json in common locations
@@ -2726,16 +2857,16 @@ class MAMEControlConfig(ctk.CTk):
         if not json_path:
             print("gamedata.json not found")
             return {}
-            
+                
         try:
             print(f"Loading gamedata.json from: {json_path}")
             with open(json_path, 'r', encoding='utf-8') as f:
                 data = json.load(f)
-                
+                    
             # Process the data to find both main games and clones
             for rom_name, game_data in data.items():
                 self.gamedata_json[rom_name] = game_data
-                
+                    
                 # Also index clones for easier lookup
                 if 'clones' in game_data:
                     for clone_name, clone_data in game_data['clones'].items():
@@ -2745,13 +2876,404 @@ class MAMEControlConfig(ctk.CTk):
             
             print(f"Loaded {len(self.gamedata_json)} games from gamedata.json")
             return self.gamedata_json
-            
+                
         except Exception as e:
             print(f"Error loading gamedata.json: {str(e)}")
             import traceback
             traceback.print_exc()
             return {}
     
+    def get_game_data_with_ijson(self, romname):
+        """Get game data for a specific ROM using ijson for better performance"""
+        # Initialize cache if it doesn't exist
+        if not hasattr(self, 'rom_data_cache'):
+            self.rom_data_cache = {}
+                
+        # Return cached data if available
+        if romname in self.rom_data_cache:
+            print(f"Using cached data for {romname}")
+            return self.rom_data_cache[romname]
+        
+        # First check for custom edits
+        custom_path = os.path.join(self.mame_dir, "custom_controls", f"{romname}.json")
+        if os.path.exists(custom_path):
+            try:
+                with open(custom_path, 'r', encoding='utf-8') as f:
+                    custom_data = json.load(f)
+                    # Make sure essential fields are set
+                    custom_data['romname'] = romname
+                    custom_data['source'] = 'custom'
+                    print(f"Using custom controls for {romname}")
+                    # Cache the result before returning
+                    self.rom_data_cache[romname] = custom_data
+                    return custom_data
+            except Exception as e:
+                print(f"Error loading custom controls for {romname}: {e}")
+        
+        try:
+            print(f"Attempting to load data for ROM {romname} using ijson")
+            
+            # Find gamedata.json path
+            json_paths = [
+                os.path.join(self.mame_dir, "gamedata.json"),
+                os.path.join(self.mame_dir, "metadata", "gamedata.json"),
+                os.path.join(self.mame_dir, "data", "gamedata.json")
+            ]
+            
+            json_path = None
+            for path in json_paths:
+                if os.path.exists(path):
+                    json_path = path
+                    print(f"Found gamedata.json at: {path}")
+                    break
+                    
+            if not json_path:
+                print("gamedata.json not found in any expected location")
+                return None
+            
+            # Try importing ijson
+            try:
+                import ijson
+                print("Successfully imported ijson")
+            except ImportError:
+                print("ijson not installed, falling back to regular JSON parsing")
+                return self.get_game_data(romname)
+            
+            # Data structures we'll build
+            found_data = None
+            parent_rom = None
+            controls = None
+            
+            # First attempt: try to find ROM as direct entry
+            with open(json_path, 'rb') as f:
+                print(f"Searching for {romname} as direct entry")
+                parser = ijson.parse(f)
+                
+                # First pass to find if this ROM exists directly
+                for prefix, event, value in parser:
+                    if event == 'map_key' and value == romname:
+                        print(f"Found {romname} as direct entry")
+                        found_data = {}
+                        found_data['romname'] = romname
+                        break
+                
+            # If ROM found as direct entry, get its data
+            if found_data is not None:
+                print(f"Extracting data for direct entry {romname}")
+                with open(json_path, 'rb') as f:
+                    for prefix, event, value in ijson.parse(f):
+                        if prefix == f"{romname}.description" and event == 'string':
+                            found_data['description'] = value
+                            print(f"Found description for {romname}: {value}")
+                        elif prefix == f"{romname}.buttons" and (event == 'string' or event == 'number'):
+                            found_data['buttons'] = value
+                        elif prefix == f"{romname}.sticks" and (event == 'string' or event == 'number'):
+                            found_data['sticks'] = value
+                        elif prefix == f"{romname}.playercount" and (event == 'string' or event == 'number'):
+                            found_data['playercount'] = value
+                        elif prefix == f"{romname}.alternating" and (event == 'string' or event == 'boolean'):
+                            found_data['alternating'] = value
+                        elif prefix == f"{romname}.controls":
+                            if event == 'map_key':
+                                # ROM has controls - will collect them in a separate pass
+                                if controls is None:
+                                    controls = {}
+                                    print(f"ROM {romname} has controls section")
+            
+            # If we found the ROM but need to extract controls
+            if found_data is not None and controls is not None:
+                print(f"Extracting controls for {romname}")
+                with open(json_path, 'rb') as f:
+                    current_control = None
+                    control_name = None
+                    
+                    for prefix, event, value in ijson.parse(f):
+                        # Look for controls section and populate it
+                        if prefix.startswith(f"{romname}.controls."):
+                            parts = prefix.split('.')
+                            if len(parts) == 3 and event == 'map_key':
+                                # This is a control name (e.g., "P1_BUTTON1")
+                                control_name = value
+                                controls[control_name] = {}
+                                current_control = controls[control_name]
+                                print(f"Found control: {control_name}")
+                            elif len(parts) == 4 and current_control is not None:
+                                # This is a control property
+                                attr_name = parts[3]
+                                if event in ('string', 'number', 'boolean'):
+                                    current_control[attr_name] = value
+                                    if attr_name == 'name':
+                                        print(f"  - {control_name} name: {value}")
+            
+            # If we didn't find it as a direct entry, look for it as a clone
+            if found_data is None:
+                print(f"ROM {romname} not found as direct entry, checking for clone")
+                with open(json_path, 'rb') as f:
+                    for prefix, event, value in ijson.parse(f):
+                        parts = prefix.split('.')
+                        # Look for entries like "somegame.clones"
+                        if len(parts) == 2 and parts[1] == 'clones' and event == 'map_key':
+                            potential_parent = parts[0]
+                            # Then check if our ROM is a clone of this game
+                            clone_check_prefix = f"{potential_parent}.clones.{romname}"
+                            
+                            # Look ahead to see if this clone exists
+                            for p2, e2, v2 in ijson.parse(f):
+                                if p2.startswith(clone_check_prefix):
+                                    # Found our ROM as a clone
+                                    print(f"Found {romname} as clone of {potential_parent}")
+                                    parent_rom = potential_parent
+                                    found_data = {'romname': romname, 'parent': parent_rom}
+                                    break
+                            
+                            if parent_rom:
+                                break
+            
+            # If we found it as a clone, extract its data
+            if parent_rom and found_data:
+                print(f"Extracting data for clone {romname} of parent {parent_rom}")
+                with open(json_path, 'rb') as f:
+                    clone_prefix = f"{parent_rom}.clones.{romname}"
+                    for prefix, event, value in ijson.parse(f):
+                        if prefix == f"{clone_prefix}.description" and event == 'string':
+                            found_data['description'] = value
+                            print(f"Found description for clone {romname}: {value}")
+                        elif prefix == f"{clone_prefix}.buttons" and (event == 'string' or event == 'number'):
+                            found_data['buttons'] = value
+                        elif prefix == f"{clone_prefix}.sticks" and (event == 'string' or event == 'number'):
+                            found_data['sticks'] = value
+                        elif prefix == f"{clone_prefix}.playercount" and (event == 'string' or event == 'number'):
+                            found_data['playercount'] = value
+                        elif prefix == f"{clone_prefix}.alternating" and (event == 'string' or event == 'boolean'):
+                            found_data['alternating'] = value
+                
+                # If clone doesn't have controls, try to get controls from parent
+                if controls is None:
+                    print(f"Checking if parent {parent_rom} has controls")
+                    with open(json_path, 'rb') as f:
+                        # First check if parent has controls section
+                        has_controls = False
+                        for prefix, event, value in ijson.parse(f):
+                            if prefix == f"{parent_rom}.controls" and event == 'map_key':
+                                has_controls = True
+                                controls = {}
+                                print(f"Parent {parent_rom} has controls section")
+                                break
+                        
+                        # If parent has controls, extract them
+                        if has_controls:
+                            print(f"Extracting controls from parent {parent_rom}")
+                            current_control = None
+                            control_name = None
+                            
+                            with open(json_path, 'rb') as f2:
+                                for prefix, event, value in ijson.parse(f2):
+                                    # Look for controls section and populate it
+                                    if prefix.startswith(f"{parent_rom}.controls."):
+                                        parts = prefix.split('.')
+                                        if len(parts) == 3 and event == 'map_key':
+                                            # This is a control name (e.g., "P1_BUTTON1")
+                                            control_name = value
+                                            controls[control_name] = {}
+                                            current_control = controls[control_name]
+                                            print(f"Found control from parent: {control_name}")
+                                        elif len(parts) == 4 and current_control is not None:
+                                            # This is a control property
+                                            attr_name = parts[3]
+                                            if event in ('string', 'number', 'boolean'):
+                                                current_control[attr_name] = value
+                                                if attr_name == 'name':
+                                                    print(f"  - {control_name} name: {value}")
+            
+            # If we couldn't find the ROM at all
+            if found_data is None:
+                print(f"ROM {romname} not found in gamedata.json")
+                return None
+                
+            # If we found ROM data but don't have description
+            if 'description' not in found_data:
+                print(f"Missing description for {romname}")
+                found_data['description'] = romname  # Use ROM name as fallback
+            
+            # Convert to expected format
+            print(f"Converting data for {romname} to expected format")
+            
+            # Default action names
+            default_actions = {
+                'P1_JOYSTICK_UP': 'Up',
+                'P1_JOYSTICK_DOWN': 'Down',
+                'P1_JOYSTICK_LEFT': 'Left',
+                'P1_JOYSTICK_RIGHT': 'Right',
+                'P2_JOYSTICK_UP': 'Up',
+                'P2_JOYSTICK_DOWN': 'Down',
+                'P2_JOYSTICK_LEFT': 'Left',
+                'P2_JOYSTICK_RIGHT': 'Right',
+                'P1_BUTTON1': 'A Button',
+                'P1_BUTTON2': 'B Button',
+                'P1_BUTTON3': 'X Button',
+                'P1_BUTTON4': 'Y Button',
+                'P1_BUTTON5': 'LB Button',
+                'P1_BUTTON6': 'RB Button',
+                'P2_BUTTON1': 'A Button',
+                'P2_BUTTON2': 'B Button',
+                'P2_BUTTON3': 'X Button',
+                'P2_BUTTON4': 'Y Button',
+                'P2_BUTTON5': 'LB Button',
+                'P2_BUTTON6': 'RB Button',
+            }
+            
+            # Basic structure for output
+            converted_data = {
+                'romname': romname,
+                'gamename': found_data.get('description', romname),
+                'numPlayers': int(found_data.get('playercount', 1)),
+                'alternating': found_data.get('alternating', False),
+                'mirrored': False,
+                'miscDetails': f"Buttons: {found_data.get('buttons', '?')}, Sticks: {found_data.get('sticks', '?')}",
+                'players': [],
+                'source': 'ijson'
+            }
+            
+            # Process controls if we have any
+            if controls:
+                # First collect P1 button names to mirror to P2
+                p1_button_names = {}
+                for control_name, control_data in controls.items():
+                    if control_name.startswith('P1_BUTTON') and 'name' in control_data:
+                        button_num = control_name.replace('P1_BUTTON', '')
+                        p1_button_names[f'P2_BUTTON{button_num}'] = control_data['name']
+                
+                # Organize controls by player
+                p1_controls = []
+                p2_controls = []
+                
+                for control_name, control_data in controls.items():
+                    if control_name.startswith('P1_'):
+                        if 'JOYSTICK' in control_name or 'BUTTON' in control_name:
+                            # Get friendly name for this control
+                            friendly_name = None
+                            if 'name' in control_data:
+                                friendly_name = control_data['name']
+                            elif control_name in default_actions:
+                                friendly_name = default_actions[control_name]
+                            else:
+                                parts = control_name.split('_')
+                                if len(parts) > 1:
+                                    friendly_name = parts[-1]
+                            
+                            if friendly_name:
+                                p1_controls.append({
+                                    'name': control_name,
+                                    'value': friendly_name
+                                })
+                    
+                    elif control_name.startswith('P2_'):
+                        if 'JOYSTICK' in control_name or 'BUTTON' in control_name:
+                            friendly_name = None
+                            if 'name' in control_data:
+                                friendly_name = control_data['name']
+                            elif control_name in p1_button_names:
+                                friendly_name = p1_button_names[control_name]
+                            elif control_name in default_actions:
+                                friendly_name = default_actions[control_name]
+                            else:
+                                parts = control_name.split('_')
+                                if len(parts) > 1:
+                                    friendly_name = parts[-1]
+                            
+                            if friendly_name:
+                                p2_controls.append({
+                                    'name': control_name,
+                                    'value': friendly_name
+                                })
+                
+                # Handle special direction mappings
+                direction_mappings = {
+                    'P1_UP': 'P1_JOYSTICK_UP',
+                    'P1_DOWN': 'P1_JOYSTICK_DOWN',
+                    'P1_LEFT': 'P1_JOYSTICK_LEFT',
+                    'P1_RIGHT': 'P1_JOYSTICK_RIGHT',
+                    'P2_UP': 'P2_JOYSTICK_UP',
+                    'P2_DOWN': 'P2_JOYSTICK_DOWN',
+                    'P2_LEFT': 'P2_JOYSTICK_LEFT',
+                    'P2_RIGHT': 'P2_JOYSTICK_RIGHT'
+                }
+                
+                for dir_control, joy_control in direction_mappings.items():
+                    if dir_control in controls and 'name' in controls[dir_control]:
+                        # Find the corresponding joystick control and update its name
+                        if dir_control.startswith('P1_'):
+                            for control in p1_controls:
+                                if control['name'] == joy_control:
+                                    control['value'] = controls[dir_control]['name']
+                        elif dir_control.startswith('P2_'):
+                            for control in p2_controls:
+                                if control['name'] == joy_control:
+                                    control['value'] = controls[dir_control]['name']
+                
+                # Sort controls by name
+                p1_controls.sort(key=lambda x: x['name'])
+                p2_controls.sort(key=lambda x: x['name'])
+                
+                # Add controls to players if we have any
+                if p1_controls:
+                    converted_data['players'].append({
+                        'number': 1,
+                        'numButtons': int(found_data.get('buttons', 1)),
+                        'labels': p1_controls
+                    })
+                
+                if p2_controls:
+                    converted_data['players'].append({
+                        'number': 2,
+                        'numButtons': int(found_data.get('buttons', 1)),
+                        'labels': p2_controls
+                    })
+            
+            # Add default controls if needed
+            if not converted_data['players']:
+                print(f"No controls found, creating default controls for {romname}")
+                # If we have no controls at all, create some defaults
+                p1_controls = []
+                
+                # Add basic joystick controls
+                for direction in ['UP', 'DOWN', 'LEFT', 'RIGHT']:
+                    control_name = f'P1_JOYSTICK_{direction}'
+                    p1_controls.append({
+                        'name': control_name,
+                        'value': default_actions[control_name]
+                    })
+                
+                # Add some default buttons
+                for button_num in range(1, 7):  # Buttons 1-6
+                    control_name = f'P1_BUTTON{button_num}'
+                    p1_controls.append({
+                        'name': control_name,
+                        'value': default_actions.get(control_name, f'Button {button_num}')
+                    })
+                
+                # Add the default player 1 controls
+                converted_data['players'].append({
+                    'number': 1,
+                    'numButtons': int(found_data.get('buttons', 1)) or 6,
+                    'labels': p1_controls
+                })
+            
+            # Cache the result
+            self.rom_data_cache[romname] = converted_data
+            print(f"Successfully created game data for {romname} using ijson")
+            
+            # Return the converted data
+            return converted_data
+            
+        except Exception as e:
+            print(f"Error in ijson parsing for {romname}: {str(e)}")
+            import traceback
+            traceback.print_exc()
+            # Fall back to regular method
+            print(f"Falling back to regular get_game_data method for {romname}")
+            return self.get_game_data(romname)
+
     def get_game_data(self, romname):
         """Get control data for a ROM from gamedata.json with caching for improved performance"""
         # Initialize cache if it doesn't exist
@@ -2760,7 +3282,7 @@ class MAMEControlConfig(ctk.CTk):
             
         # Return cached data if available
         if romname in self.rom_data_cache:
-            print(f"Using cached data for {romname}")
+            #print(f"Using cached data for {romname}")
             return self.rom_data_cache[romname]
         
         # First check for custom edits
@@ -4610,21 +5132,35 @@ class MAMEControlConfig(ctk.CTk):
         if not hasattr(self, 'default_controls') or not self.default_controls:
             self.load_default_config()
         
-        # Scan ROMs directory if needed
-        if not hasattr(self, 'available_roms') or not self.available_roms:
-            self.scan_roms_directory()
-        
-        # Load gamedata.json if not already loaded
-        if not hasattr(self, 'gamedata_json') or not self.gamedata_json:
-            self.load_gamedata_json()
-        
         # Set the current game
         self.current_game = rom_name
         
-        # Load game data
-        game_data = self.get_game_data(rom_name)
+        # Load game data using ijson for better performance
+        game_data = None
+        try:
+            # First try with ijson for better performance
+            print("Attempting to load game data with ijson...")
+            game_data = self.get_game_data_with_ijson(rom_name)
+            
+            if game_data:
+                print("Successfully loaded game data with ijson")
+            else:
+                print("No game data found with ijson, falling back to regular method")
+                game_data = self.get_game_data(rom_name)
+                
+        except Exception as e:
+            print(f"Error with ijson method: {e}")
+            import traceback
+            traceback.print_exc()
+            
+            # Fall back to regular method
+            print("Falling back to regular get_game_data method")
+            game_data = self.get_game_data(rom_name)
+        
         if not game_data:
             print(f"Error: No control data found for {rom_name}")
+            import tkinter as tk
+            from tkinter import messagebox
             messagebox.showerror("Error", f"No control data found for {rom_name}")
             return
         
@@ -4655,6 +5191,7 @@ class MAMEControlConfig(ctk.CTk):
             print(f"Error showing preview: {str(e)}")
             import traceback
             traceback.print_exc()
+            from tkinter import messagebox
             messagebox.showerror("Error", f"Failed to show preview: {str(e)}")
             return
         
