@@ -5351,7 +5351,7 @@ class MAMEControlConfig(ctk.CTk):
         
         # Force logo visibility if requested
         if force_logo:
-            self.logo_visible = True  
+            self.logo_visible = True
             self.save_logo_settings()
             print("Forced logo visibility enabled")
         
@@ -5363,6 +5363,9 @@ class MAMEControlConfig(ctk.CTk):
             if not os.path.exists(preview_dir):
                 os.makedirs(preview_dir)
         
+        # Initialize SQLite database - ADDED THIS LINE
+        self.initialize_database()
+        
         # Minimal data loading required for preview
         # We need these for the preview to work
         if not hasattr(self, 'default_controls') or not self.default_controls:
@@ -5371,27 +5374,9 @@ class MAMEControlConfig(ctk.CTk):
         # Set the current game
         self.current_game = rom_name
         
-        # Load game data using ijson for better performance
-        game_data = None
-        try:
-            # First try with ijson for better performance
-            print("Attempting to load game data with ijson...")
-            game_data = self.get_game_data_with_ijson(rom_name)
-            
-            if game_data:
-                print("Successfully loaded game data with ijson")
-            else:
-                print("No game data found with ijson, falling back to regular method")
-                game_data = self.get_game_data(rom_name)
-                
-        except Exception as e:
-            print(f"Error with ijson method: {e}")
-            import traceback
-            traceback.print_exc()
-            
-            # Fall back to regular method
-            print("Falling back to regular get_game_data method")
-            game_data = self.get_game_data(rom_name)
+        # Load game data using SQLite database - CHANGED THIS SECTION
+        print("Loading game data from SQLite database...")
+        game_data = self.get_game_data(rom_name)
         
         if not game_data:
             print(f"Error: No control data found for {rom_name}")
