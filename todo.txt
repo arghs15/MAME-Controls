@@ -7,7 +7,8 @@ Show unmatched ROMs and Find Missing Controls buttons
 -Show unmatched ROMs looks cleaner but Find Missing Controls buttons has better calls. Look into this and combine into one
 
 LUA
--update latest mame pua to use newly created params
+-create new plgin that checks for version, and runs the appropriate script. This way one plugin can be created for all versions
+-update latest mame lua to use newly created params
 -test new mame lua works as it should
 
 Hotkey
