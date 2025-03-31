@@ -287,6 +287,29 @@ class MAMEControlConfig(ctk.CTk):
             # Hide the main window completely
             self.withdraw()
     
+    def get_gamedata_path(self):
+        """Get the path to the gamedata.json file"""
+        # Primary location in settings directory
+        settings_path = os.path.join(self.mame_dir, "preview", "settings", "gamedata.json")
+        
+        # Check if the file exists in settings path
+        if os.path.exists(settings_path):
+            return settings_path
+            
+        # Legacy paths for backward compatibility
+        legacy_paths = [
+            os.path.join(self.mame_dir, "gamedata.json"),
+            os.path.join(self.mame_dir, "metadata", "gamedata.json"),
+            os.path.join(self.mame_dir, "data", "gamedata.json")
+        ]
+        
+        for path in legacy_paths:
+            if os.path.exists(path):
+                return path
+                
+        # If no existing file found, return the settings path as the default location
+        return settings_path
+    
     def benchmark_rom_loading(self, rom_name):
         """
         Run a benchmark comparing ijson vs regular JSON loading for a specific ROM
@@ -300,19 +323,14 @@ class MAMEControlConfig(ctk.CTk):
         print(f"Testing performance for ROM: {rom_name}")
         
         # Get the file size of gamedata.json
-        json_path = None
-        for path in [
-            os.path.join(self.mame_dir, "gamedata.json"),
-            os.path.join(self.mame_dir, "metadata", "gamedata.json"),
-            os.path.join(self.mame_dir, "data", "gamedata.json")
-        ]:
-            if os.path.exists(path):
-                json_path = path
-                break
-        
-        if json_path:
+        # Get the file size of gamedata.json
+        json_path = self.get_gamedata_path()
+
+        if json_path and os.path.exists(json_path):
             file_size_mb = os.path.getsize(json_path) / (1024 * 1024)
             print(f"gamedata.json size: {file_size_mb:.2f} MB")
+        else:
+            print("gamedata.json not found")
         
         # Clear any existing cache
         if hasattr(self, 'rom_data_cache'):
@@ -386,17 +404,8 @@ class MAMEControlConfig(ctk.CTk):
     def build_gamedata_db(self):
         """Build a SQLite database from gamedata.json"""
         # Find the gamedata.json file
-        gamedata_path = None
-        for path in [
-            os.path.join(self.mame_dir, "gamedata.json"),
-            os.path.join(self.mame_dir, "metadata", "gamedata.json"),
-            os.path.join(self.mame_dir, "data", "gamedata.json")
-        ]:
-            if os.path.exists(path):
-                gamedata_path = path
-                break
-        
-        if not gamedata_path:
+        gamedata_path = self.get_gamedata_path()
+        if not os.path.exists(gamedata_path):
             print("Error: gamedata.json not found")
             return False
         
@@ -759,10 +768,11 @@ class MAMEControlConfig(ctk.CTk):
         """Find the MAME directory containing necessary files"""
         # First check in the application directory
         app_dir = get_application_path()
-        app_gamedata = os.path.join(app_dir, "gamedata.json")
+        #app_gamedata = os.path.join(app_dir, "gamedata.json")
         
-        if os.path.exists(app_gamedata):
-            print(f"Using bundled gamedata.json: {app_dir}")
+        settings_gamedata = os.path.join(app_dir, "preview", "settings", "gamedata.json")
+        if os.path.exists(settings_gamedata):
+            print(f"Using gamedata.json in settings folder: {app_dir}")
             return app_dir
             
         # Then check in the current directory
@@ -1218,8 +1228,8 @@ class MAMEControlConfig(ctk.CTk):
         def save_controls():
             """Save controls directly to gamedata.json"""
             try:
-                # Load the gamedata.json file
-                gamedata_path = os.path.join(self.mame_dir, "gamedata.json")
+                # Load the gamedata.json file using centralized path
+                gamedata_path = self.get_gamedata_path()
                 with open(gamedata_path, 'r', encoding='utf-8') as f:
                     gamedata = json.load(f)
                 
@@ -1752,11 +1762,28 @@ class MAMEControlConfig(ctk.CTk):
     
     def find_mame_directory(self) -> Optional[str]:
         """Find the MAME directory containing necessary files"""
+        # First check in the application directory
+        app_dir = get_application_path()
+        
+        # Check for gamedata.json in application directory
+        app_gamedata = os.path.join(app_dir, "gamedata.json")
+        if os.path.exists(app_gamedata):
+            print(f"Using bundled gamedata.json: {app_dir}")
+            return app_dir
+        
+        # Check for gamedata.json in settings directory within app dir
+        settings_gamedata = os.path.join(app_dir, "preview", "settings", "gamedata.json")
+        if os.path.exists(settings_gamedata):
+            print(f"Using gamedata.json in settings folder: {app_dir}")
+            return app_dir
+            
+        # Then check in the current directory
         current_dir = os.path.abspath(os.path.dirname(__file__))
         
-        # Look for gamedata.json instead of controls.json
+        # Look for gamedata.json in various locations
         gamedata_paths = [
             os.path.join(current_dir, "gamedata.json"),
+            os.path.join(current_dir, "preview", "settings", "gamedata.json"),  # Added settings path
             os.path.join(current_dir, "metadata", "gamedata.json"),
             os.path.join(current_dir, "data", "gamedata.json")
         ]
@@ -1766,7 +1793,22 @@ class MAMEControlConfig(ctk.CTk):
                 print(f"Found MAME directory: {current_dir}")
                 return current_dir
             
-        print("Error: gamedata.json not found in:", current_dir)
+        # Then check common MAME paths
+        common_paths = [
+            os.path.join(os.environ.get('PROGRAMFILES', 'C:\\Program Files'), "MAME"),
+            os.path.join(os.environ.get('PROGRAMFILES(X86)', 'C:\\Program Files (x86)'), "MAME"),
+            "C:\\MAME",
+            "D:\\MAME"
+        ]
+        
+        for path in common_paths:
+            # Check both direct and settings paths
+            if os.path.exists(os.path.join(path, "gamedata.json")) or \
+            os.path.exists(os.path.join(path, "preview", "settings", "gamedata.json")):
+                print(f"Found MAME directory: {path}")
+                return path
+                
+        print("Error: gamedata.json not found in known locations")
         return None
 
     def toggle_xinput(self):
@@ -3194,22 +3236,11 @@ class MAMEControlConfig(ctk.CTk):
         self.gamedata_json = {}
         
         # Look for gamedata.json in common locations
-        json_paths = [
-            os.path.join(self.mame_dir, "gamedata.json"),
-            os.path.join(self.mame_dir, "metadata", "gamedata.json"),
-            os.path.join(self.mame_dir, "data", "gamedata.json")
-        ]
-        
-        json_path = None
-        for path in json_paths:
-            if os.path.exists(path):
-                json_path = path
-                break
-        
-        if not json_path:
+        json_path = self.get_gamedata_path()
+        if not os.path.exists(json_path):
             print("gamedata.json not found")
-            return {}
-                
+            return {}  
+        
         try:
             print(f"Loading gamedata.json from: {json_path}")
             with open(json_path, 'r', encoding='utf-8') as f:
@@ -3265,21 +3296,8 @@ class MAMEControlConfig(ctk.CTk):
         try:
             print(f"Attempting to load data for ROM {romname} using ijson")
             
-            # Find gamedata.json path
-            json_paths = [
-                os.path.join(self.mame_dir, "gamedata.json"),
-                os.path.join(self.mame_dir, "metadata", "gamedata.json"),
-                os.path.join(self.mame_dir, "data", "gamedata.json")
-            ]
-            
-            json_path = None
-            for path in json_paths:
-                if os.path.exists(path):
-                    json_path = path
-                    print(f"Found gamedata.json at: {path}")
-                    break
-                    
-            if not json_path:
+            json_path = self.get_gamedata_path()
+            if not json_path or not os.path.exists(json_path):
                 print("gamedata.json not found in any expected location")
                 return None
             
@@ -5294,6 +5312,40 @@ class MAMEControlConfig(ctk.CTk):
             messagebox.showerror("Error", f"Could not save positions: {e}")
             return False
 
+    def check_rom_relationship(self, rom_name):
+        """Check if ROM is a parent or clone and print relationship info"""
+        try:
+            # Connect to database
+            conn = sqlite3.connect(self.db_path)
+            cursor = conn.cursor()
+            
+            # Check if it's a parent with clones
+            cursor.execute('SELECT clone FROM clones WHERE parent = ?', (rom_name,))
+            clones = cursor.fetchall()
+            
+            # Check if it's a clone
+            cursor.execute('SELECT parent FROM clones WHERE clone = ?', (rom_name,))
+            parent_row = cursor.fetchone()
+            
+            # Print results
+            print(f"\nROM RELATIONSHIP CHECK FOR: {rom_name}")
+            if clones:
+                clone_list = [c[0] for c in clones]
+                print(f"This is a PARENT ROM with {len(clones)} clones: {', '.join(clone_list)}")
+            
+            if parent_row:
+                parent = parent_row[0]
+                print(f"This is a CLONE ROM. Parent is: {parent}")
+                
+            if not clones and not parent_row:
+                print(f"This ROM has no parent-clone relationships")
+                
+            conn.close()
+            return parent_row[0] if parent_row else None
+        except Exception as e:
+            print(f"Error checking ROM relationships: {e}")
+            return None
+    
     def show_preview_standalone(self, rom_name, auto_close=False, force_logo=False, hide_joystick=False):
         """Show the preview for a specific ROM without running the main app - with performance optimizations"""
         print(f"Starting standalone preview for ROM: {rom_name}")
@@ -5351,7 +5403,7 @@ class MAMEControlConfig(ctk.CTk):
         
         # Force logo visibility if requested
         if force_logo:
-            self.logo_visible = True
+            self.logo_visible = True  
             self.save_logo_settings()
             print("Forced logo visibility enabled")
         
@@ -5363,30 +5415,121 @@ class MAMEControlConfig(ctk.CTk):
             if not os.path.exists(preview_dir):
                 os.makedirs(preview_dir)
         
-        # Initialize SQLite database - ADDED THIS LINE
+        # Initialize database FIRST - ensure this happens before any game data loading
         self.initialize_database()
+        print(f"Database initialized, path: {getattr(self, 'db_path', 'Not set')}")
         
         # Minimal data loading required for preview
-        # We need these for the preview to work
         if not hasattr(self, 'default_controls') or not self.default_controls:
             self.load_default_config()
         
         # Set the current game
         self.current_game = rom_name
         
-        # Load game data using SQLite database - CHANGED THIS SECTION
-        print("Loading game data from SQLite database...")
+        # First try with the exact ROM name
+        print(f"Attempting to load game data for ROM: {rom_name}")
         game_data = self.get_game_data(rom_name)
+        if game_data:
+            print(f"Found game data for exact ROM name: {rom_name}")
+        else:
+            # Try parent-clone relationship
+            try:
+                # Connect to database
+                conn = sqlite3.connect(self.db_path)
+                cursor = conn.cursor()
+                
+                # 1. Check if it's a clone, and if so, try the parent
+                cursor.execute('SELECT parent FROM clones WHERE clone = ?', (rom_name,))
+                parent_row = cursor.fetchone()
+                
+                if parent_row:
+                    parent = parent_row[0]
+                    print(f"ROM {rom_name} is a clone of {parent}, trying parent")
+                    game_data = self.get_game_data(parent)
+                    if game_data:
+                        print(f"Using data from parent ROM: {parent}")
+                        self.current_game = parent
+                
+                # 2. If not found, check if it's a parent with clones
+                if not game_data:
+                    cursor.execute('SELECT clone FROM clones WHERE parent = ?', (rom_name,))
+                    clones = cursor.fetchall()
+                    
+                    if clones:
+                        print(f"ROM {rom_name} is a parent with clones, trying each clone")
+                        for clone_row in clones:
+                            clone = clone_row[0]
+                            clone_data = self.get_game_data(clone)
+                            if clone_data:
+                                print(f"Using data from clone ROM: {clone}")
+                                game_data = clone_data
+                                self.current_game = clone
+                                break
+                
+                conn.close()
+            except Exception as e:
+                print(f"Error checking ROM relationships: {e}")
         
+        # If still no data, try special case handling
         if not game_data:
-            print(f"Error: No control data found for {rom_name}")
-            import tkinter as tk
-            from tkinter import messagebox
-            messagebox.showerror("Error", f"No control data found for {rom_name}")
-            return
+            # Special handling for known problematic ROMs
+            if rom_name.lower() == "xmen":
+                alt_rom = "xmenu"
+                print(f"Special case: Trying alternative name: {alt_rom}")
+                game_data = self.get_game_data(alt_rom)
+                if game_data:
+                    self.current_game = alt_rom
+            elif rom_name.lower() == "xmenu":
+                alt_rom = "xmen"
+                print(f"Special case: Trying alternative name: {alt_rom}")
+                game_data = self.get_game_data(alt_rom)
+                if game_data:
+                    self.current_game = alt_rom
+        
+        # If still no data, create a default
+        if not game_data:
+            print(f"No game data found for {rom_name}, creating default data")
+            game_data = {
+                'romname': rom_name,
+                'gamename': rom_name.upper(),
+                'numPlayers': 1,
+                'alternating': False,
+                'players': [
+                    {
+                        'number': 1,
+                        'numButtons': 6,
+                        'labels': [
+                            {'name': 'P1_BUTTON1', 'value': 'A Button'},
+                            {'name': 'P1_BUTTON2', 'value': 'B Button'},
+                            {'name': 'P1_BUTTON3', 'value': 'X Button'},
+                            {'name': 'P1_BUTTON4', 'value': 'Y Button'},
+                            {'name': 'P1_BUTTON5', 'value': 'LB Button'},
+                            {'name': 'P1_BUTTON6', 'value': 'RB Button'},
+                            {'name': 'P1_JOYSTICK_UP', 'value': 'Up'},
+                            {'name': 'P1_JOYSTICK_DOWN', 'value': 'Down'},
+                            {'name': 'P1_JOYSTICK_LEFT', 'value': 'Left'},
+                            {'name': 'P1_JOYSTICK_RIGHT', 'value': 'Right'}
+                        ]
+                    }
+                ]
+            }
+            
+            # Cache this for future use
+            if not hasattr(self, 'rom_data_cache'):
+                self.rom_data_cache = {}
+            self.rom_data_cache[rom_name] = game_data
         
         print(f"Successfully loaded game data for {rom_name}")
         print(f"Using screen {self.preferred_preview_screen} for preview")
+        
+        # Create a flag file to indicate the preview is active
+        try:
+            import time
+            with open(os.path.join(self.mame_dir, "preview_active.txt"), "w") as f:
+                f.write(f"Preview active for: {rom_name}\n")
+                f.write(f"Started at: {time.strftime('%Y-%m-%d %H:%M:%S')}\n")
+        except Exception as e:
+            print(f"Error creating activity file: {e}")
         
         # Start MAME process monitoring only if auto_close is enabled
         if auto_close:
@@ -5404,6 +5547,10 @@ class MAMEControlConfig(ctk.CTk):
             if hasattr(self, 'preview_window') and self.preview_window.winfo_exists():
                 self.preview_window.attributes('-topmost', True)
                 self.preview_window.after(100, lambda: self.force_window_focus())
+                
+                # Ensure window stays open at least a minimum time
+                min_display_time = 10000  # 10 seconds minimum display time
+                self.preview_window.after(min_display_time, lambda: print("Minimum display time reached"))
                 
             # Start controller input polling
             self.start_xinput_polling()
@@ -9160,6 +9307,21 @@ class MAMEControlConfig(ctk.CTk):
                 if filename.endswith(".json"):
                     rom_name = filename.replace(".json", "")
                     migration_list.append(("custom_controls", os.path.join(custom_dir, filename), rom_name))
+        
+        # Add this to the migration_list in migrate_settings_files method
+        gamedata_legacy = os.path.join(self.mame_dir, "gamedata.json")
+        if os.path.exists(gamedata_legacy):
+            new_path = os.path.join(self.mame_dir, "preview", "settings", "gamedata.json")
+            if not os.path.exists(new_path):
+                try:
+                    # Create directory if needed
+                    os.makedirs(os.path.dirname(new_path), exist_ok=True)
+                    # Copy file
+                    shutil.copy2(gamedata_legacy, new_path)
+                    print(f"Migrated: {gamedata_legacy} -> {new_path}")
+                    migrated_count += 1
+                except Exception as e:
+                    print(f"Error migrating gamedata.json: {e}")
         
         # Perform the migration
         migrated_count = 0
