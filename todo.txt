@@ -1,7 +1,3 @@
-System Fonts
-- still debug font function left. then all removed
-- add a system default for new installs, as Press Start is default
-
 Show unmatched ROMs and Find Missing Controls buttons
 -both buttons do similar things'
 -Show unmatched ROMs looks cleaner but Find Missing Controls buttons has better calls. Look into this and combine into one
@@ -13,7 +9,3 @@ LUA
 
 Hotkey
 -hotkey to move preview screen to second screen, and/or hide so you can navigate tab menu
-
-Logo
-- Logo placement for Exact Preview and save image
-I noticed image placement is not right in preview compared to when actually saved - its higher. I think this happened when I manually edited the code to lower it. Guess I missed a place to edit the new y value. 

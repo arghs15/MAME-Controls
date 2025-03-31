@@ -6709,7 +6709,7 @@ class MAMEControlConfig(ctk.CTk):
         
         # Get font name from settings
         settings = self.get_text_settings()
-        font_family = settings.get("font_family", "Press Start 2P")
+        font_family = settings.get("font_family", "Arial")
         
         # Define all possible font paths
         font_dir = os.path.join(self.mame_dir, "fonts")
@@ -6732,7 +6732,7 @@ class MAMEControlConfig(ctk.CTk):
                 return font_path
         
         # No suitable font found, use a default fallback path
-        default_path = os.path.join(font_dir, "PressStart2P.ttf")
+        default_path = os.path.join(font_dir, "Arial.ttf")
         print(f"No suitable font found for '{font_family}', using default path: {default_path}")
         
         # Try to ensure the default font exists
@@ -7286,75 +7286,49 @@ class MAMEControlConfig(ctk.CTk):
         # List to store font information: (filename, display_name)
         available_fonts = []
         
-        # Add Press Start 2P as first option (even if not in directory)
-        default_added = False
+        # Only scan for fonts in the custom font directory
+        fonts_found = False
         
-        # First pass - scan for Press Start 2P font specifically
+        # Scan all font files in the directory
         for filename in os.listdir(fonts_dir):
             if filename.lower().endswith(('.ttf', '.otf')):
-                # Check if this is one of our default Press Start 2P fonts
-                name_lower = filename.lower()
-                if "press" in name_lower and ("start" in name_lower or "2p" in name_lower):
-                    # Full path to the font file
-                    font_path = os.path.join(fonts_dir, filename)
-                    # Use display name "Press Start 2P" for our default
-                    display_name = "Press Start 2P" 
-                    available_fonts.append((filename, display_name))
-                    default_added = True
-                    print(f"Found default font: {display_name} ({filename})")
-                    break
-        
-        # If we didn't find Press Start 2P, add it as an option anyway
-        if not default_added:
-            available_fonts.append(("PressStart2P.ttf", "Press Start 2P"))
-        
-        # Second pass - scan all other fonts
-        for filename in os.listdir(fonts_dir):
-            if filename.lower().endswith(('.ttf', '.otf')):
-                # Skip if this is the Press Start 2P we already added
-                name_lower = filename.lower()
-                if "press" in name_lower and ("start" in name_lower or "2p" in name_lower) and default_added:
-                    continue
-                    
                 # Full path to the font file
                 font_path = os.path.join(fonts_dir, filename)
                 
-                try:
-                    # Get display name using multiple methods
-                    display_name = self.get_font_display_name(font_path, filename)
-                    
-                    # Skip if it produced the same name as our default
-                    if display_name == "Press Start 2P":
-                        continue
-                    
-                    # Add to available fonts
-                    available_fonts.append((filename, display_name))
-                    print(f"Found font: {display_name} ({filename})")
-                except Exception as e:
-                    print(f"Error processing font {filename}: {e}")
+                # Get proper display name
+                display_name = self.get_font_display_name(font_path, filename)
+                
+                # Add to available fonts
+                available_fonts.append((filename, display_name))
+                fonts_found = True
+                print(f"Found font: {display_name} ({filename})")
         
-        # Sort alphabetically by display name, but keep Press Start 2P at the top
-        # Extract Press Start 2P entry
-        press_start = None
+        # Add fallback font only if no fonts were found
+        if not fonts_found:
+            fallback_font = ("Arial.ttf", "Arial (Default)")
+            available_fonts.append(fallback_font)
+            print(f"No fonts found in directory, added fallback option: {fallback_font[1]}")
+        
+        # Simply sort all fonts alphabetically by display name
+        # If we have the fallback Arial option, keep it at the top
+        fallback_fonts = []
         other_fonts = []
         
         for font in available_fonts:
-            if font[1] == "Press Start 2P":
-                press_start = font
+            if "Arial (Default)" in font[1]:
+                fallback_fonts.append(font)
             else:
                 other_fonts.append(font)
         
-        # Sort the other fonts
+        # Sort the other fonts alphabetically
         other_fonts.sort(key=lambda x: x[1].lower())
         
-        # Combine with Press Start 2P at the beginning
+        # Combine lists with fallback at the beginning
         result = []
-        if press_start:
-            result.append(press_start)
+        result.extend(fallback_fonts)
         result.extend(other_fonts)
         
         return result
-    
     
     def get_font_display_name(self, font_path, filename):
         """
@@ -7438,7 +7412,7 @@ class MAMEControlConfig(ctk.CTk):
         return False
 
     def debug_font_system(self):
-        """Simplified font debug that only checks our fonts directory"""
+        """Debug the font system and print information about available fonts in the fonts directory"""
         import os
         
         print("\n=== FONT DEBUG ===")
@@ -7446,19 +7420,50 @@ class MAMEControlConfig(ctk.CTk):
         # Check settings
         settings = self.get_text_settings(refresh=True)
         print(f"Font Family: {settings.get('font_family', 'Not set')}")
+        print(f"Font Name: {settings.get('font_name', 'Not set')}")
         
         # Check fonts directory
         font_dir = os.path.join(self.mame_dir, "fonts")
         print(f"\nFonts Directory: {font_dir}")
         if os.path.exists(font_dir):
             print("Directory exists")
-            files = os.listdir(font_dir)
-            print(f"Files found: {len(files)}")
-            for file in files:
-                if file.lower().endswith(('.ttf', '.otf')):
-                    print(f"  - {file}")
+            font_files = [f for f in os.listdir(font_dir) if f.lower().endswith(('.ttf', '.otf'))]
+            print(f"Font files found: {len(font_files)}")
+            for file in font_files:
+                print(f"  - {file}")
         else:
             print("Directory does not exist")
+            try:
+                os.makedirs(font_dir, exist_ok=True)
+                print(f"Created fonts directory: {font_dir}")
+            except Exception as e:
+                print(f"Error creating fonts directory: {e}")
+        
+        # Check for the selected font
+        target = settings.get('font_family', 'Arial')
+        print(f"\nSearching for font: {target}")
+        found = False
+        
+        # Look for exact match
+        for ext in ['.ttf', '.otf']:
+            path = os.path.join(font_dir, f"{target}{ext}")
+            if os.path.exists(path):
+                print(f"Found exact match: {path}")
+                found = True
+                break
+        
+        # Look for partial match if not found
+        if not found and os.path.exists(font_dir):
+            target_lower = target.lower().replace(' ', '')
+            for filename in os.listdir(font_dir):
+                if filename.lower().startswith(target_lower) and filename.lower().endswith(('.ttf', '.otf')):
+                    print(f"Found partial match: {filename}")
+                    found = True
+                    break
+        
+        if not found:
+            print(f"Font '{target}' not found in fonts directory")
+            print(f"Please add the font file to: {font_dir}")
         
         print("=== END FONT DEBUG ===\n")
         return True
@@ -7581,23 +7586,43 @@ class MAMEControlConfig(ctk.CTk):
         font_name_to_file = {display_name: filename for filename, display_name in available_fonts}
         
         # Current font
-        current_font = settings.get("font_family", "Press Start 2P")
+        current_font = settings.get("font_family", "Arial")
+        
+        # Create a warning label if no fonts found
+        if not available_fonts or (len(available_fonts) == 1 and "Arial (Default)" in available_fonts[0][1]):
+            warning_frame = ctk.CTkFrame(font_section, fg_color="#881111")  # Reddish background
+            warning_frame.pack(fill="x", padx=10, pady=5)
+            
+            warning_text = ctk.CTkLabel(
+                warning_frame,
+                text="⚠️ No font files found in the fonts directory!\nYou should add at least one font file.",
+                text_color="#FFFFFF",
+                font=("Arial", 14, "bold")
+            )
+            warning_text.pack(pady=10)
+            
+            # Add an "Add Font Now" button directly in the warning
+            add_font_now = ctk.CTkButton(
+                warning_frame,
+                text="Add Font Now...",
+                command=lambda: add_custom_font(),
+                fg_color="#FFD700",  # Gold color for emphasis
+                text_color="#000000",
+                hover_color="#FFA500"  # Orange hover
+            )
+            add_font_now.pack(pady=(0, 10))
         
         # Create frame for font controls
         font_controls = ctk.CTkFrame(font_section)
         font_controls.pack(fill="x", padx=10, pady=5)
         
-       # Create a variable to store selected font
+        # Create a variable to store selected font
         font_var = ctk.StringVar(value=current_font)
         
         # Get list of font display names for dropdown
         directory_font_names = [display_name for _, display_name in available_fonts]
         
-        # Add "Press Start 2P" if not in the list (our default)
-        if "Press Start 2P" not in directory_font_names:
-            directory_font_names.insert(0, "Press Start 2P")
-        
-        # Font dropdown
+        # Font dropdown section with a "browse" button next to it
         font_dropdown_frame = ctk.CTkFrame(font_controls)
         font_dropdown_frame.pack(fill="x", pady=5)
         
@@ -7607,11 +7632,11 @@ class MAMEControlConfig(ctk.CTk):
             font_dropdown_frame,
             values=directory_font_names,
             variable=font_var,
-            width=300
+            width=250  # Slightly narrower to make room for button
         )
         font_dropdown.pack(side="left", padx=5, fill="x", expand=True)
         
-        # Add font button
+        # Add font function
         def add_custom_font():
             filetypes = [("Font Files", "*.ttf *.otf")]
             font_path = filedialog.askopenfilename(
@@ -7635,15 +7660,23 @@ class MAMEControlConfig(ctk.CTk):
                         font_var.set(result)
                         
                     messagebox.showinfo("Success", f"Added font: {result}")
+                    
+                    # If there was a warning, remove it
+                    for widget in font_section.winfo_children():
+                        if isinstance(widget, ctk.CTkFrame) and widget._fg_color == "#881111":
+                            widget.destroy()
+                            break
                 else:
                     messagebox.showerror("Error", f"Could not add font: {result}")
         
-        add_font_button = ctk.CTkButton(
-            font_controls,
-            text="Add Font...",
-            command=add_custom_font
+        # Add the browse button directly next to the dropdown
+        browse_button = ctk.CTkButton(
+            font_dropdown_frame,
+            text="Browse...",
+            command=add_custom_font,
+            width=80
         )
-        add_font_button.pack(pady=5)
+        browse_button.pack(side="left", padx=5)
         
         # Font preview
         preview_frame = ctk.CTkFrame(font_section)
@@ -7874,11 +7907,10 @@ class MAMEControlConfig(ctk.CTk):
                     )
         
         # Reset button
-        # Reset button
         def reset_to_defaults():
             # Set controls to default values
             # Removed: font_source_var.set("directory")
-            font_var.set("Press Start 2P")
+            font_var.set("Arial")
             size_var.set(28)
             uppercase_var.set(True)
             bold_var.set(2)
@@ -8984,7 +9016,7 @@ class MAMEControlConfig(ctk.CTk):
         Returns default font settings - single source of truth for font defaults
         """
         return {
-            "font_family": "Press Start 2P",  # The font family name for display
+            "font_family": "Arial",  # The font family name for display
             "font_size": 28,              # Regular font size
             "title_size": 36,             # Title text size
             "title_font_size": 36,  # Duplicate for compatibility
@@ -9042,40 +9074,35 @@ class MAMEControlConfig(ctk.CTk):
                 return True
         
         print(f"Font '{font_family}' not found")
-        print(f"Please place a font file named '{font_family}.ttf' or similar in the fonts directory")
+        print(f"The application will attempt to use a system font.")
         
-        # Add a fallback if "Press Start 2P" is missing
-        if font_family == "Press Start 2P":
-            print("Default font not found. Creating an empty placeholder...")
-            # Create an empty placeholder file just to prevent errors
-            try:
-                placeholder_path = os.path.join(font_dir, "PressStart2P.ttf")
-                if not os.path.exists(placeholder_path):
-                    with open(placeholder_path, 'wb') as f:
-                        pass  # Create empty file
-                print("Created placeholder file. Please install the actual font.")
-            except Exception as e:
-                print(f"Error creating placeholder: {e}")
+        # Check if we have any fonts at all in the folder - just log, don't warn
+        fonts_found = False
+        for filename in os.listdir(font_dir):
+            if filename.lower().endswith(('.ttf', '.otf')):
+                fonts_found = True
+                break
+                
+        if not fonts_found:
+            # No fonts found, just log it without showing any warning dialog
+            print(f"No font files found in fonts directory: {font_dir}")
         
         return False
-    
+        
     def is_system_font(self, font_name):
         """Check if a font exists in our fonts directory"""
-        import os
-        
-        # Check for the font file
-        font_dir = os.path.join(self.mame_dir, "fonts")
-        if not os.path.exists(font_dir):
+        fonts_dir = os.path.join(self.mame_dir, "fonts")
+        if not os.path.exists(fonts_dir):
             return False
         
         # Look for exact match
         for ext in ['.ttf', '.otf']:
-            if os.path.exists(os.path.join(font_dir, f"{font_name}{ext}")):
+            if os.path.exists(os.path.join(fonts_dir, f"{font_name}{ext}")):
                 return True
         
         # Look for partial match
         font_name_lower = font_name.lower().replace(' ', '')
-        for filename in os.listdir(font_dir):
+        for filename in os.listdir(fonts_dir):
             if filename.lower().startswith(font_name_lower) and filename.lower().endswith(('.ttf', '.otf')):
                 return True
         
