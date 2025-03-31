@@ -289,26 +289,13 @@ class MAMEControlConfig(ctk.CTk):
             self.withdraw()
     
     def get_gamedata_path(self):
-        """Get the path to the gamedata.json file"""
+        """Get the path to the gamedata.json file without checking legacy paths"""
         # Primary location in settings directory
         settings_path = os.path.join(self.mame_dir, "preview", "settings", "gamedata.json")
         
-        # Check if the file exists in settings path
-        if os.path.exists(settings_path):
-            return settings_path
-            
-        # Legacy paths for backward compatibility
-        legacy_paths = [
-            os.path.join(self.mame_dir, "gamedata.json"),
-            os.path.join(self.mame_dir, "metadata", "gamedata.json"),
-            os.path.join(self.mame_dir, "data", "gamedata.json")
-        ]
+        # Create directory if it doesn't exist
+        os.makedirs(os.path.dirname(settings_path), exist_ok=True)
         
-        for path in legacy_paths:
-            if os.path.exists(path):
-                return path
-                
-        # If no existing file found, return the settings path as the default location
         return settings_path
     
     def benchmark_rom_loading(self, rom_name):
@@ -769,22 +756,22 @@ class MAMEControlConfig(ctk.CTk):
         """Find the MAME directory containing necessary files"""
         # First check in the application directory
         app_dir = get_application_path()
-        #app_gamedata = os.path.join(app_dir, "gamedata.json")
         
+        # Look for the settings directory path
         settings_gamedata = os.path.join(app_dir, "preview", "settings", "gamedata.json")
         if os.path.exists(settings_gamedata):
             print(f"Using gamedata.json in settings folder: {app_dir}")
             return app_dir
-            
-        # Then check in the current directory
-        current_dir = os.path.abspath(os.path.dirname(__file__))
-        current_gamedata = os.path.join(current_dir, "gamedata.json")
         
-        if os.path.exists(current_gamedata):
+        # Also check current directory with new path structure
+        current_dir = os.path.abspath(os.path.dirname(__file__))
+        current_settings_gamedata = os.path.join(current_dir, "preview", "settings", "gamedata.json")
+        
+        if os.path.exists(current_settings_gamedata):
             print(f"Found MAME directory: {current_dir}")
             return current_dir
-            
-        # Then check common MAME paths
+        
+        # Check common MAME paths with new structure
         common_paths = [
             os.path.join(os.environ.get('PROGRAMFILES', 'C:\\Program Files'), "MAME"),
             os.path.join(os.environ.get('PROGRAMFILES(X86)', 'C:\\Program Files (x86)'), "MAME"),
@@ -793,11 +780,11 @@ class MAMEControlConfig(ctk.CTk):
         ]
         
         for path in common_paths:
-            gamedata_path = os.path.join(path, "gamedata.json")
-            if os.path.exists(gamedata_path):
+            settings_gamedata_path = os.path.join(path, "preview", "settings", "gamedata.json")
+            if os.path.exists(settings_gamedata_path):
                 print(f"Found MAME directory: {path}")
                 return path
-                
+        
         print("Error: gamedata.json not found in known locations")
         return None
     
@@ -6718,48 +6705,41 @@ class MAMEControlConfig(ctk.CTk):
         
         # Get font name from settings
         settings = self.get_text_settings()
-        font_family = settings.get("font_family", "Segoe Print")  # Use font_family instead of font_name
+        font_family = settings.get("font_family", "Press Start 2P")
         
         # Define all possible font paths
-        font_paths = [
-            os.path.join(self.mame_dir, "fonts", f"{font_family}.otf"),
-            os.path.join(self.mame_dir, "fonts", f"{font_family}.ttf"),
-            os.path.join(self.mame_dir, "preview", f"{font_family}.otf"),
-            os.path.join(self.mame_dir, "preview", f"{font_family}.ttf"),
-            os.path.join(os.path.dirname(os.path.abspath(__file__)), "fonts", f"{font_family}.otf"),
-            os.path.join(os.path.dirname(os.path.abspath(__file__)), "fonts", f"{font_family}.ttf"),
-            os.path.join(os.path.dirname(os.path.abspath(__file__)), f"{font_family}.otf"),
-            os.path.join(os.path.dirname(os.path.abspath(__file__)), f"{font_family}.ttf")
-        ]
+        font_dir = os.path.join(self.mame_dir, "fonts")
+        if not os.path.exists(font_dir):
+            os.makedirs(font_dir, exist_ok=True)
         
-        # Check which font file exists
-        for path in font_paths:
-            if os.path.exists(path):
-                print(f"Using font file: {path}")
-                return path
+        # Check for exact match first
+        for ext in ['.otf', '.ttf']:
+            font_path = os.path.join(font_dir, f"{font_family}{ext}")
+            if os.path.exists(font_path):
+                print(f"Using font file: {font_path}")
+                return font_path
         
         # If no exact match, check for partial matches
-        font_dir = os.path.join(self.mame_dir, "fonts")
-        if os.path.exists(font_dir):
-            for filename in os.listdir(font_dir):
-                if filename.lower().startswith(font_family.lower().replace(' ', '')) and (filename.endswith('.ttf') or filename.endswith('.otf')):
-                    font_path = os.path.join(font_dir, filename)
-                    print(f"Using font file (partial match): {font_path}")
-                    return font_path
+        font_name_lower = font_family.lower().replace(' ', '')
+        for filename in os.listdir(font_dir):
+            if filename.lower().startswith(font_name_lower) and filename.lower().endswith(('.ttf', '.otf')):
+                font_path = os.path.join(font_dir, filename)
+                print(f"Using font file (partial match): {font_path}")
+                return font_path
         
-        # Add fallback to system fonts using direct rendering
-        if self.is_system_font(font_family):
-            # For system fonts, we can create a temporary file path
-            # This won't actually be used for file operations
-            print(f"Using system font: {font_family}")
-            return "system:/" + font_family
+        # No suitable font found, use a default fallback path
+        default_path = os.path.join(font_dir, "PressStart2P.ttf")
+        print(f"No suitable font found for '{font_family}', using default path: {default_path}")
         
-        # Last resort - use default PIL font
-        print(f"No suitable font found for '{font_family}'")
-        return None
+        # Try to ensure the default font exists
+        if not os.path.exists(default_path):
+            print("Default font file not found. Please install fonts in the fonts directory.")
+        
+        return default_path
     
+    # 2. Update get_fonts_from_settings to only use font files, not system fonts
     def get_fonts_from_settings(self, settings=None):
-        """Get font objects based on settings with direct file access"""
+        """Get font objects based on settings using only font files (no system fonts)"""
         import os
         from PIL import ImageFont
         
@@ -6767,27 +6747,31 @@ class MAMEControlConfig(ctk.CTk):
         if settings is None:
             settings = self.get_text_settings()
         
-        font_family = settings.get("font_family", "Segoe Print")
+        font_family = settings.get("font_family")
         font_size = settings.get("font_size", 28)
         title_font_size = settings.get("title_size", 36)
         
-        # Get the direct path to the font file
-        font_path = self.get_font_path()
+        # Look for the font file in the fonts directory
+        font_dir = os.path.join(self.mame_dir, "fonts")
+        font_path = None
         
-        # Check if it's a system font path
-        if font_path and font_path.startswith("system:/"):
-            # For system fonts, use a default font as fallback
-            # Or we can try to find a similar font on the system
-            try:
-                # First try with a default font
-                font = ImageFont.truetype(font_family, font_size)
-                title_font = ImageFont.truetype(font_family, title_font_size)
-                print(f"Using system font: {font_family}")
-                return font, title_font
-            except Exception as e:
-                print(f"Error using system font: {e}")
-                # Fall through to default handling
-        elif font_path and os.path.exists(font_path):
+        # Check exact name match
+        for ext in ['.ttf', '.otf']:
+            test_path = os.path.join(font_dir, f"{font_family}{ext}")
+            if os.path.exists(test_path):
+                font_path = test_path
+                break
+        
+        # If not found, look for partial name matches
+        if not font_path and os.path.exists(font_dir):
+            font_name_lower = font_family.lower().replace(' ', '')
+            for filename in os.listdir(font_dir):
+                if filename.lower().startswith(font_name_lower) and filename.lower().endswith(('.ttf', '.otf')):
+                    font_path = os.path.join(font_dir, filename)
+                    break
+        
+        # If font path found, load using direct file path
+        if font_path:
             try:
                 # Load using direct file path
                 font = ImageFont.truetype(font_path, font_size)
@@ -6798,7 +6782,7 @@ class MAMEControlConfig(ctk.CTk):
                 print(f"Error loading font from {font_path}: {e}")
         
         # Last resort - use default PIL font
-        print("Using default font as last resort")
+        print(f"Font '{font_family}' not found in fonts directory, using default")
         font = ImageFont.load_default()
         title_font = ImageFont.load_default()
         
@@ -7472,7 +7456,7 @@ class MAMEControlConfig(ctk.CTk):
     # Modified part of the show_text_appearance_settings method
     # Replace the font selection code with this:
     def create_font_selection(self, parent_frame, current_font, on_font_change_callback):
-        """Create a compact font selection interface"""
+        """Create a compact font selection interface using only fonts from fonts directory"""
         font_frame = ctk.CTkFrame(parent_frame)
         font_frame.pack(fill="x", pady=5)  # Reduced vertical padding
         
@@ -7482,14 +7466,21 @@ class MAMEControlConfig(ctk.CTk):
         
         ctk.CTkLabel(selection_row, text="Font:", width=60).pack(side="left", padx=5)
         
-        # Get all system fonts
-        all_fonts = self.get_system_fonts()
+        # Get fonts from directory only
+        available_fonts = self.scan_fonts_directory()
+        directory_font_names = [display_name for _, display_name in available_fonts]
+        
+        # Add "Press Start 2P" if not in the list (our default)
+        if "Press Start 2P" not in directory_font_names:
+            directory_font_names.insert(0, "Press Start 2P")
+        
+        # Create font variable
         font_var = ctk.StringVar(value=current_font)
         
-        # Create simple dropdown without scrollable frame
+        # Create dropdown with fonts from directory
         font_dropdown = ctk.CTkOptionMenu(
             selection_row, 
-            values=all_fonts,
+            values=directory_font_names,
             variable=font_var,
             command=on_font_change_callback,
             width=300
@@ -7536,7 +7527,7 @@ class MAMEControlConfig(ctk.CTk):
             return False, str(e)
     
     def show_text_appearance_settings(self, update_preview=False):
-        """Show dialog for text appearance settings with font selection from fonts directory"""
+        """Show dialog for text appearance settings with font selection from fonts directory only"""
         import os
         import tkinter as tk
         from tkinter import filedialog, messagebox
@@ -7547,7 +7538,7 @@ class MAMEControlConfig(ctk.CTk):
         # Create dialog
         dialog = ctk.CTkToplevel(self)
         dialog.title("Text Appearance Settings")
-        dialog.geometry("500x650")  # Taller to accommodate font selection and notes
+        dialog.geometry("500x600")  # Shorter without system fonts option
         dialog.transient(self)
         dialog.grab_set()
         
@@ -7573,9 +7564,8 @@ class MAMEControlConfig(ctk.CTk):
         
         ctk.CTkLabel(font_section, text="Font Selection", font=("Arial", 14, "bold")).pack(anchor="w", padx=10, pady=5)
         
-        # Scan both system fonts and directory fonts
+        # Scan directory fonts only
         available_fonts = self.scan_fonts_directory()
-        system_fonts = self.get_system_fonts()
         
         # Create a mapping of display_name -> filename for easier lookup
         font_name_to_file = {display_name: filename for filename, display_name in available_fonts}
@@ -7587,29 +7577,7 @@ class MAMEControlConfig(ctk.CTk):
         font_controls = ctk.CTkFrame(font_section)
         font_controls.pack(fill="x", padx=10, pady=5)
         
-        # Radio buttons for font source
-        font_source_var = ctk.StringVar(value="directory")
-        
-        source_frame = ctk.CTkFrame(font_controls)
-        source_frame.pack(fill="x", pady=5)
-        
-        ctk.CTkLabel(source_frame, text="Font Source:").pack(side="left", padx=5)
-        
-        ctk.CTkRadioButton(
-            source_frame,
-            text="Fonts Directory",
-            variable=font_source_var,
-            value="directory"
-        ).pack(side="left", padx=10)
-        
-        ctk.CTkRadioButton(
-            source_frame,
-            text="System Fonts",
-            variable=font_source_var,
-            value="system"
-        ).pack(side="left", padx=10)
-        
-        # Create a variable to store selected font
+       # Create a variable to store selected font
         font_var = ctk.StringVar(value=current_font)
         
         # Get list of font display names for dropdown
@@ -7633,20 +7601,6 @@ class MAMEControlConfig(ctk.CTk):
         )
         font_dropdown.pack(side="left", padx=5, fill="x", expand=True)
         
-        # Function to toggle between directory and system fonts
-        def toggle_font_source():
-            if font_source_var.get() == "directory":
-                font_dropdown.configure(values=directory_font_names)
-                if font_var.get() not in directory_font_names:
-                    font_var.set(directory_font_names[0])
-            else:  # system
-                font_dropdown.configure(values=system_fonts)
-                if font_var.get() not in system_fonts and system_fonts:
-                    font_var.set(system_fonts[0])
-        
-        # Connect the radio buttons to the toggle function
-        font_source_var.trace_add("write", lambda *args: toggle_font_source())
-        
         # Add font button
         def add_custom_font():
             filetypes = [("Font Files", "*.ttf *.otf")]
@@ -7664,8 +7618,6 @@ class MAMEControlConfig(ctk.CTk):
                     # Update dropdown values
                     new_display_names = [name for _, name in new_fonts]
                     
-                    # Make sure we're showing directory fonts
-                    font_source_var.set("directory")
                     font_dropdown.configure(values=new_display_names)
                     
                     # Select the newly added font
@@ -7705,13 +7657,11 @@ class MAMEControlConfig(ctk.CTk):
                 # Fall back to default if selected font can't be loaded
                 preview_label.configure(font=("Arial", 18))
                 
-                # If it's a directory font that failed, show a warning
-                if font_source_var.get() == "directory" and selected_font in directory_font_names:
-                    preview_label.configure(
-                        text=f"⚠️ Font preview failed. Font may need installation.",
-                        text_color="#FF8C00"  # Orange for warning
-                    )
-                    return
+                preview_label.configure(
+                    text=f"⚠️ Font preview failed. Font may need installation.",
+                    text_color="#FF8C00"  # Orange for warning
+                )
+                return
             
             # Reset preview text if successful
             preview_label.configure(
@@ -7832,17 +7782,16 @@ class MAMEControlConfig(ctk.CTk):
                 "y_offset": int(offset_var.get()),
                 "title_size": int(size_var.get()) + 8,  # Title size is font_size + 8
                 "title_font_size": int(size_var.get()) + 8,  # Duplicate for compatibility
-                "font_source": font_source_var.get()  # Store whether using directory or system font
+                # REMOVED: "font_source" setting - no longer needed
             }
             
-            # Save the selected font filename if it's a directory font
-            if font_source_var.get() == "directory":
-                selected_display_name = font_var.get()
-                if selected_display_name in font_name_to_file:
-                    # Get filename that corresponds to this display name
-                    font_filename = font_name_to_file[selected_display_name]
-                    # Store this in settings for later use
-                    new_settings["font_filename"] = font_filename
+            # Save the selected font filename
+            selected_display_name = font_var.get()
+            if selected_display_name in font_name_to_file:
+                # Get filename that corresponds to this display name
+                font_filename = font_name_to_file[selected_display_name]
+                # Store this in settings for later use
+                new_settings["font_filename"] = font_filename
             
             # Save settings
             self.save_text_appearance_settings(new_settings)
@@ -7887,16 +7836,15 @@ class MAMEControlConfig(ctk.CTk):
                 "bold_strength": int(bold_var.get()),
                 "y_offset": int(offset_var.get()),
                 "title_size": int(size_var.get()) + 8,
-                "title_font_size": int(size_var.get()) + 8,
-                "font_source": font_source_var.get()
+                "title_font_size": int(size_var.get()) + 8
+                # Removed: "font_source": font_source_var.get() 
             }
             
-            # Save the selected font filename if it's a directory font
-            if font_source_var.get() == "directory":
-                selected_display_name = font_var.get()
-                if selected_display_name in font_name_to_file:
-                    font_filename = font_name_to_file[selected_display_name]
-                    new_settings["font_filename"] = font_filename
+            # Save the selected font filename
+            selected_display_name = font_var.get()
+            if selected_display_name in font_name_to_file:
+                font_filename = font_name_to_file[selected_display_name]
+                new_settings["font_filename"] = font_filename
             
             # Save settings
             self.save_text_appearance_settings(new_settings)
@@ -7915,25 +7863,11 @@ class MAMEControlConfig(ctk.CTk):
                         f"Failed to update preview: {str(e)}\nTry restarting the app to apply font changes."
                     )
         
-        apply_button = ctk.CTkButton(
-            button_frame,
-            text="Apply",
-            command=apply_settings
-        )
-        apply_button.pack(side="left", padx=10)
-        
-        # Cancel button
-        cancel_button = ctk.CTkButton(
-            button_frame,
-            text="Cancel",
-            command=dialog.destroy
-        )
-        cancel_button.pack(side="right", padx=10)
-        
+        # Reset button
         # Reset button
         def reset_to_defaults():
             # Set controls to default values
-            font_source_var.set("directory")
+            # Removed: font_source_var.set("directory")
             font_var.set("Press Start 2P")
             size_var.set(28)
             uppercase_var.set(True)
@@ -9078,19 +9012,14 @@ class MAMEControlConfig(ctk.CTk):
         return self._text_settings_cache
 
     def ensure_font_available(self):
-        """Ensure font is available in the application directory or system"""
+        """Ensure font is available in the application directory"""
         import os
         
         # Get font settings
         settings = self.get_text_settings()
         font_family = settings.get("font_family")
         
-        # Check if it's a system font first
-        if self.is_system_font(font_family):
-            print(f"Using system font: {font_family}")
-            return True
-            
-        # If not a system font, check for the font file
+        # Check for the font file
         font_dir = os.path.join(self.mame_dir, "fonts")
         os.makedirs(font_dir, exist_ok=True)
         
@@ -9102,38 +9031,51 @@ class MAMEControlConfig(ctk.CTk):
                 return True
         
         # Look for font files that start with the font name (ignoring case)
+        font_name_lower = font_family.lower().replace(' ', '')
         for filename in os.listdir(font_dir):
-            if filename.lower().startswith(font_family.lower().replace(' ', '')):
+            if filename.lower().startswith(font_name_lower) and filename.lower().endswith(('.ttf', '.otf')):
                 print(f"Found font file with partial match: {filename}")
                 return True
         
-        print(f"Font '{font_family}' not found in system or as a file")
+        print(f"Font '{font_family}' not found")
         print(f"Please place a font file named '{font_family}.ttf' or similar in the fonts directory")
+        
+        # Add a fallback if "Press Start 2P" is missing
+        if font_family == "Press Start 2P":
+            print("Default font not found. Creating an empty placeholder...")
+            # Create an empty placeholder file just to prevent errors
+            try:
+                placeholder_path = os.path.join(font_dir, "PressStart2P.ttf")
+                if not os.path.exists(placeholder_path):
+                    with open(placeholder_path, 'wb') as f:
+                        pass  # Create empty file
+                print("Created placeholder file. Please install the actual font.")
+            except Exception as e:
+                print(f"Error creating placeholder: {e}")
+        
         return False
     
     def is_system_font(self, font_name):
-        """Check if a font exists in the system"""
-        try:
-            import tkinter as tk
-            import tkinter.font as tkfont
-            
-            # Need a root window to check fonts
-            temp_root = tk.Tk()
-            temp_root.withdraw()
-            
-            # Get system fonts
-            system_fonts = list(tkfont.families())
-            
-            # Check if our font is in the list (exact match)
-            result = font_name in system_fonts
-            
-            # Clean up
-            temp_root.destroy()
-            
-            return result
-        except Exception as e:
-            print(f"Error checking system fonts: {e}")
+        """Check if a font exists in our fonts directory"""
+        import os
+        
+        # Check for the font file
+        font_dir = os.path.join(self.mame_dir, "fonts")
+        if not os.path.exists(font_dir):
             return False
+        
+        # Look for exact match
+        for ext in ['.ttf', '.otf']:
+            if os.path.exists(os.path.join(font_dir, f"{font_name}{ext}")):
+                return True
+        
+        # Look for partial match
+        font_name_lower = font_name.lower().replace(' ', '')
+        for filename in os.listdir(font_dir):
+            if filename.lower().startswith(font_name_lower) and filename.lower().endswith(('.ttf', '.otf')):
+                return True
+        
+        return False
     
     def should_show_rom_info(self):
         """Helper method to determine if ROM info should be displayed"""
@@ -9198,15 +9140,7 @@ class MAMEControlConfig(ctk.CTk):
     
     def get_settings_path(self, file_type, rom_name=None, create_dirs=True):
         """
-        Centralized function to handle all settings file paths
-        
-        Args:
-            file_type: Type of settings file ("general", "text", "positions", "logo", "bezel", "layer", etc.)
-            rom_name: ROM name for game-specific files (optional)
-            create_dirs: Whether to create directories if they don't exist
-            
-        Returns:
-            Full path to the settings file
+        Centralized function to handle settings file paths without legacy checks
         """
         import os
         
@@ -9266,6 +9200,7 @@ class MAMEControlConfig(ctk.CTk):
                 return custom_dir
         
         # You can add more types as needed
+        return None
         
         # Legacy path fallback (for compatibility with existing installations)
         # This allows a smooth transition by checking old locations if file doesn't exist in new location
