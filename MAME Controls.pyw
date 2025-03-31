@@ -7888,7 +7888,7 @@ class MAMEControlConfig(ctk.CTk):
         reset_button.pack(side="left", padx=10)
 
     def debug_font_system(self):
-        """Debug the font system and print detailed information"""
+        """Debug the font system and print information about available fonts in the fonts directory"""
         import os
         
         print("\n=== FONT DEBUG ===")
@@ -7903,49 +7903,43 @@ class MAMEControlConfig(ctk.CTk):
         print(f"\nFonts Directory: {font_dir}")
         if os.path.exists(font_dir):
             print("Directory exists")
-            files = os.listdir(font_dir)
-            print(f"Files found: {len(files)}")
-            for file in files:
+            font_files = [f for f in os.listdir(font_dir) if f.lower().endswith(('.ttf', '.otf'))]
+            print(f"Font files found: {len(font_files)}")
+            for file in font_files:
                 print(f"  - {file}")
         else:
             print("Directory does not exist")
+            try:
+                os.makedirs(font_dir, exist_ok=True)
+                print(f"Created fonts directory: {font_dir}")
+            except Exception as e:
+                print(f"Error creating fonts directory: {e}")
         
-        # Check system fonts
-        try:
-            import tkinter.font as tkfont
-            import tkinter as tk
-            
-            # Need a root window to check fonts
-            temp_root = tk.Tk()
-            temp_root.withdraw()
-            
-            # Get all system fonts
-            all_fonts = sorted(list(tkfont.families()))
-            print(f"\nSystem fonts: {len(all_fonts)} total")
-            
-            # Look for our target font
-            target = settings.get('font_family', 'Press Start 2P')
-            matches = [f for f in all_fonts if target.lower() in f.lower()]
-            
-            print(f"Searching for: {target}")
-            if matches:
-                print("Matches found:")
-                for match in matches:
-                    print(f"  - {match}")
-            else:
-                print("No matches found in system fonts")
-                
-                # Show similar fonts
-                similar = [f for f in all_fonts if "press" in f.lower() or "start" in f.lower() or "2p" in f.lower()]
-                if similar:
-                    print("Similar fonts:")
-                    for font in similar:
-                        print(f"  - {font}")
-            
-            # Clean up
-            temp_root.destroy()
-        except Exception as e:
-            print(f"Error checking system fonts: {e}")
+        # Check for the selected font
+        target = settings.get('font_family', 'Press Start 2P')
+        print(f"\nSearching for font: {target}")
+        found = False
+        
+        # Look for exact match
+        for ext in ['.ttf', '.otf']:
+            path = os.path.join(font_dir, f"{target}{ext}")
+            if os.path.exists(path):
+                print(f"Found exact match: {path}")
+                found = True
+                break
+        
+        # Look for partial match if not found
+        if not found and os.path.exists(font_dir):
+            target_lower = target.lower().replace(' ', '')
+            for filename in os.listdir(font_dir):
+                if filename.lower().startswith(target_lower) and filename.lower().endswith(('.ttf', '.otf')):
+                    print(f"Found partial match: {filename}")
+                    found = True
+                    break
+        
+        if not found:
+            print(f"Font '{target}' not found in fonts directory")
+            print(f"Please add the font file to: {font_dir}")
         
         print("=== END FONT DEBUG ===\n")
         return True
