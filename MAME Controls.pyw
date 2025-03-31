@@ -264,14 +264,13 @@ class MAMEControlConfig(ctk.CTk):
             self.add_appearance_settings_button()
         
             # Add the text appearance settings button
-            if hasattr(self, 'stats_frame'):
-                self.appearance_button = ctk.CTkButton(
-                    self.stats_frame,
-                    text="Text Settings",
-                    command=self.show_text_appearance_settings,
-                    width=150
-                )
-                self.appearance_button.grid(row=0, column=4, padx=5, pady=5, sticky="e")
+            self.analyze_controls_button = ctk.CTkButton(
+                self.stats_frame,
+                text="Analyze Controls",
+                command=self.analyze_controls,
+                width=150
+            )
+            self.analyze_controls_button.grid(row=0, column=5, padx=5, pady=5, sticky="e")
             
             # Apply the preview update hook to update preview text with settings
             self.apply_preview_update_hook()
@@ -287,6 +286,114 @@ class MAMEControlConfig(ctk.CTk):
             
             # Hide the main window completely
             self.withdraw()
+    
+    def analyze_controls(self):
+        """Comprehensive analysis of ROM controls with editing capabilities"""
+        # Get data from both methods
+        generic_games, missing_games = self.identify_generic_controls()
+        matched_roms = set()
+        for rom in self.available_roms:
+            if self.get_game_data(rom):
+                matched_roms.add(rom)
+        unmatched_roms = self.available_roms - matched_roms
+        
+        # Identify default controls (games with real control data but not customized)
+        default_games = []
+        already_categorized = set([g[0] for g in generic_games]) | set(missing_games)
+        for rom_name in sorted(matched_roms):
+            if rom_name not in already_categorized:
+                game_data = self.get_game_data(rom_name)
+                if game_data and 'gamename' in game_data:
+                    default_games.append((rom_name, game_data.get('gamename', rom_name)))
+        
+        # Create dialog
+        dialog = ctk.CTkToplevel(self)
+        dialog.title("ROM Control Analysis")
+        dialog.geometry("800x600")
+        dialog.transient(self)
+        dialog.grab_set()
+        
+        # Create tabs
+        tabview = ctk.CTkTabview(dialog)
+        tabview.pack(expand=True, fill="both", padx=10, pady=10)
+        
+        # Summary tab
+        summary_tab = tabview.add("Summary")
+        stats_text = (
+            f"Total ROMs: {len(self.available_roms)}\n"
+            f"ROMs with control data: {len(matched_roms)}\n"
+            f"ROMs without control data: {len(unmatched_roms)}\n\n"
+            f"Control data breakdown:\n"
+            f"- ROMs with generic controls: {len(generic_games)}\n"
+            f"- ROMs with custom controls: {len(default_games)}\n"
+            f"- ROMs with missing controls: {len(missing_games)}\n\n"
+            f"Control data coverage: {(len(matched_roms) / max(len(self.available_roms), 1) * 100):.1f}%"
+        )
+        stats_label = ctk.CTkLabel(
+            summary_tab,
+            text=stats_text,
+            font=("Arial", 14),
+            justify="left"
+        )
+        stats_label.pack(padx=20, pady=20, anchor="w")
+        
+        # Create each tab with the better list UI from unmatched_roms
+        self.create_game_list_with_edit(tabview.add("Generic Controls"), 
+                                    generic_games, "ROMs with Generic Controls")
+        self.create_game_list_with_edit(tabview.add("Missing Controls"), 
+                                    [(rom, rom) for rom in missing_games], "ROMs with Missing Controls")
+        self.create_game_list_with_edit(tabview.add("Custom Controls"), 
+                                    default_games, "ROMs with Custom Controls")
+        
+        # Add export button
+        def export_analysis():
+            try:
+                file_path = os.path.join(self.mame_dir, "controls_analysis.txt")
+                with open(file_path, 'w', encoding='utf-8') as f:
+                    f.write("MAME Controls Analysis\n")
+                    f.write("====================\n\n")
+                    f.write(stats_text + "\n\n")
+                    
+                    f.write("Games with Generic Controls:\n")
+                    f.write("==========================\n")
+                    for rom, game_name in generic_games:
+                        f.write(f"{rom} - {game_name}\n")
+                    f.write("\n")
+                    
+                    f.write("Games with Missing Controls:\n")
+                    f.write("==========================\n")
+                    for rom in sorted(missing_games):
+                        f.write(f"{rom}\n")
+                    f.write("\n")
+                    
+                    f.write("Games with Custom Controls:\n")
+                    f.write("==========================\n")
+                    for rom, game_name in default_games:
+                        f.write(f"{rom} - {game_name}\n")
+                        
+                messagebox.showinfo("Export Complete", 
+                            f"Analysis exported to:\n{file_path}")
+            except Exception as e:
+                messagebox.showerror("Export Error", str(e))
+        
+        # Export button
+        export_button = ctk.CTkButton(
+            dialog,
+            text="Export Analysis",
+            command=export_analysis
+        )
+        export_button.pack(pady=10)
+        
+        # Close button
+        close_button = ctk.CTkButton(
+            dialog,
+            text="Close",
+            command=dialog.destroy
+        )
+        close_button.pack(pady=10)
+        
+        # Select Summary tab by default
+        tabview.set("Summary")
     
     def get_gamedata_path(self):
         """Get the path to the gamedata.json file without checking legacy paths"""
@@ -1854,14 +1961,14 @@ class MAMEControlConfig(ctk.CTk):
                                     font=("Arial", 12))
         self.stats_label.grid(row=0, column=0, padx=5, pady=5, sticky="w")
 
-        # Unmatched ROMs button
-        self.unmatched_button = ctk.CTkButton(
-            self.stats_frame,
-            text="Show Unmatched ROMs",
-            command=self.show_unmatched_roms,
-            width=150
-        )
-        self.unmatched_button.grid(row=0, column=1, padx=5, pady=5, sticky="e")
+        # Unmatched ROMs button. REPLACED/COMBINED WITH ANALYUZE CONTROLS BUTTON
+        #self.unmatched_button = ctk.CTkButton(
+        #    self.stats_frame,
+        #    text="Show Unmatched ROMs",
+        #    command=self.show_unmatched_roms,
+        #    width=150
+        #)
+        #self.unmatched_button.grid(row=0, column=1, padx=5, pady=5, sticky="e")
 
         # Generate configs button
         self.generate_configs_button = ctk.CTkButton(
@@ -1872,13 +1979,14 @@ class MAMEControlConfig(ctk.CTk):
         )
         self.generate_configs_button.grid(row=0, column=2, padx=5, pady=5, sticky="e")
 
-        self.generic_controls_button = ctk.CTkButton(
-            self.stats_frame,
-            text="Find Missing Controls",
-            command=self.show_generic_controls_dialog,
-            width=150
-        )
-        self.generic_controls_button.grid(row=0, column=5, padx=5, pady=5, sticky="e")
+        # REPLACED/COMBINED WITH ANALYUZE CONTROLS BUTTON
+        #self.generic_controls_button = ctk.CTkButton(
+        #    self.stats_frame,
+        #    text="Find Missing Controls",
+        #    command=self.show_generic_controls_dialog,
+        #    width=150
+        #)
+        #self.generic_controls_button.grid(row=0, column=5, padx=5, pady=5, sticky="e")
 
         # Search box
         self.search_var = ctk.StringVar()
