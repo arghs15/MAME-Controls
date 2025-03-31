@@ -6011,20 +6011,24 @@ class MAMEControlConfig(ctk.CTk):
                         
                         # Calculate position
                         padding = 20
-                        logo_position = getattr(self, 'logo_position', 'top-left')
+                        # Get Y offset from settings (default to 0 if not set)
+                        y_offset = getattr(self, 'logo_y_offset', 0)
                         
-                        if logo_position == 'top-left':
-                            position = (padding, padding)
-                        elif logo_position == 'top-right':
-                            position = (target_width - new_width - padding, padding)
-                        elif logo_position == 'bottom-left':
-                            position = (padding, target_height - new_height - padding)
-                        elif logo_position == 'bottom-center':
-                            position = ((target_width - new_width) // 2, target_height - new_height - padding)
-                        elif logo_position == 'bottom-right':
-                            position = (target_width - new_width - padding, target_height - new_height - padding)
+                        # Apply the Y offset to positioning
+                        if self.logo_position == 'top-left':
+                            position = (padding, padding + y_offset)
+                        elif self.logo_position == 'top-right':
+                            position = (target_width - new_width - padding, padding + y_offset)
+                        elif self.logo_position == 'bottom-left':
+                            position = (padding, target_height - new_height - padding + y_offset)
+                        elif self.logo_position == 'bottom-center':
+                            position = ((target_width - new_width) // 2, target_height - new_height - padding + y_offset)
+                        elif self.logo_position == 'bottom-right':
+                            position = (target_width - new_width - padding, target_height - new_height - padding + y_offset)
                         else:  # Default to top-center
-                            position = ((target_width - new_width) // 2, padding)
+                            position = ((target_width - new_width) // 2, padding + y_offset)
+                            
+                        print(f"Logo placement in exact preview: {position} (using Y offset: {y_offset})")
                         
                         # Paste logo onto logo layer
                         logo_layer.paste(logo_img, position, logo_img)
@@ -7040,18 +7044,24 @@ class MAMEControlConfig(ctk.CTk):
                         
                         # Calculate position
                         padding = 20
+                        # Get Y offset from settings (default to 0 if not set)
+                        y_offset = getattr(self, 'logo_y_offset', 0)
+                        
+                        # Apply the Y offset to positioning
                         if self.logo_position == 'top-left':
-                            position = (padding, padding)
+                            position = (padding, padding + y_offset)
                         elif self.logo_position == 'top-right':
-                            position = (target_width - new_width - padding, padding)
+                            position = (target_width - new_width - padding, padding + y_offset)
                         elif self.logo_position == 'bottom-left':
-                            position = (padding, target_height - new_height - padding)
+                            position = (padding, target_height - new_height - padding + y_offset)
                         elif self.logo_position == 'bottom-center':
-                            position = ((target_width - new_width) // 2, target_height - new_height - padding)
+                            position = ((target_width - new_width) // 2, target_height - new_height - padding + y_offset)
                         elif self.logo_position == 'bottom-right':
-                            position = (target_width - new_width - padding, target_height - new_height - padding)
+                            position = (target_width - new_width - padding, target_height - new_height - padding + y_offset)
                         else:  # Default to top-center
-                            position = ((target_width - new_width) // 2, padding)
+                            position = ((target_width - new_width) // 2, padding + y_offset)
+                            
+                        print(f"Logo placement in exact preview: {position} (using Y offset: {y_offset})")
                         
                         # Paste logo onto the transparent layer
                         logo_layer.paste(logo_img, position, logo_img)
@@ -8881,7 +8891,7 @@ class MAMEControlConfig(ctk.CTk):
             # Get Y offset (default to 0 if not set)
             y_offset = getattr(self, 'logo_y_offset', 0)
             
-            # Calculate position based on setting
+            # Calculate position based on setting - ensuring consistent Y offset handling
             if self.logo_position == 'top-left':
                 position = (padding, padding + y_offset)
             elif self.logo_position == 'top-center':
