@@ -212,14 +212,15 @@ class MAMEControlConfig(ctk.CTk):
             messagebox.showerror("Error", "Please place this script in the MAME directory!")
             self.quit()
             return
-            
-        # Initialize the SQLite database
-        self.initialize_database()
+        
+        # REMOVE THIS LINE - Initialize the SQLite database
+        # self.initialize_database()
         
         # Initialize the position manager
         self.position_manager = PositionManager(self)
 
-        self.debug_font_system()
+        # REMOVE THIS LINE - Debug font system checks
+        # self.debug_font_system()
 
         # Migrate settings files to new structure if needed
         self.migrate_settings_files()
@@ -3677,55 +3678,26 @@ class MAMEControlConfig(ctk.CTk):
                 except Exception as e:
                     print(f"Error loading custom controls: {e}")
             
-            # Try SQLite database method - make sure we have a database
+            # Lazy-initialize database if needed
             if not hasattr(self, 'db_path') or not self.db_path:
-                # Try to build database
-                if not self.build_gamedata_db():
-                    # Fall back to original method if database can't be built
-                    self._in_get_game_data = False
-                    # Call the original method directly
-                    if hasattr(self, 'gamedata_json') and romname in self.gamedata_json:
-                        return self.orig_get_game_data(romname)
-                    return None
+                # Initialize database on first use
+                self.initialize_database()
             
-            try:
-                # Connect to the database
-                conn = sqlite3.connect(self.db_path)
-                cursor = conn.cursor()
-                
-                # First try direct lookup
-                cursor.execute('SELECT data FROM games WHERE romname = ?', (romname,))
-                row = cursor.fetchone()
-                
-                if row:
-                    # Game found directly
-                    game_data = json.loads(row[0])
-                    result = self.convert_db_game_data(romname, game_data)
-                    conn.close()
+            # Try SQLite database method
+            if hasattr(self, 'db_path') and self.db_path:
+                try:
+                    # Connect to the database
+                    conn = sqlite3.connect(self.db_path)
+                    cursor = conn.cursor()
                     
-                    # Cache the result
-                    if not hasattr(self, 'rom_data_cache'):
-                        self.rom_data_cache = {}
-                    self.rom_data_cache[romname] = result
+                    # First try direct lookup
+                    cursor.execute('SELECT data FROM games WHERE romname = ?', (romname,))
+                    row = cursor.fetchone()
                     
-                    self._in_get_game_data = False
-                    return result
-                
-                # If not found directly, check if it's a clone
-                cursor.execute('SELECT parent FROM clones WHERE clone = ?', (romname,))
-                clone_row = cursor.fetchone()
-                
-                if clone_row:
-                    # It's a clone, get the parent data
-                    parent = clone_row[0]
-                    cursor.execute('SELECT data FROM games WHERE romname = ?', (parent,))
-                    parent_row = cursor.fetchone()
-                    
-                    if parent_row:
-                        # Use parent data but update clone-specific fields
-                        parent_data = json.loads(parent_row[0])
-                        result = self.convert_db_game_data(romname, parent_data)
-                        result['gamename'] = f"{romname} (Clone of {parent})"
+                    if row:
+                        # Game found directly
+                        game_data = json.loads(row[0])
+                        result = self.convert_db_game_data(romname, game_data)
                         conn.close()
                         
                         # Cache the result
@@ -3735,16 +3707,38 @@ class MAMEControlConfig(ctk.CTk):
                         
                         self._in_get_game_data = False
                         return result
-                
-                # Not found in database, close connection
-                conn.close()
-            except Exception as e:
-                print(f"Error with database lookup: {e}")
+                    
+                    # If not found directly, check if it's a clone
+                    cursor.execute('SELECT parent FROM clones WHERE clone = ?', (romname,))
+                    clone_row = cursor.fetchone()
+                    
+                    if clone_row:
+                        # It's a clone, get the parent data
+                        parent = clone_row[0]
+                        cursor.execute('SELECT data FROM games WHERE romname = ?', (parent,))
+                        parent_row = cursor.fetchone()
+                        
+                        if parent_row:
+                            # Use parent data but update clone-specific fields
+                            parent_data = json.loads(parent_row[0])
+                            result = self.convert_db_game_data(romname, parent_data)
+                            result['gamename'] = f"{romname} (Clone of {parent})"
+                            conn.close()
+                            
+                            # Cache the result
+                            if not hasattr(self, 'rom_data_cache'):
+                                self.rom_data_cache = {}
+                            self.rom_data_cache[romname] = result
+                            
+                            self._in_get_game_data = False
+                            return result
+                    
+                    # Not found in database, close connection
+                    conn.close()
+                except Exception as e:
+                    print(f"Error with database lookup: {e}")
             
-            # Fall back to original method
-            self._in_get_game_data = False
-            
-            # Call the original method directly if it still exists
+            # Fall back to original method if needed
             if hasattr(self, 'gamedata_json') and romname in self.gamedata_json:
                 return self.orig_get_game_data(romname)
             
