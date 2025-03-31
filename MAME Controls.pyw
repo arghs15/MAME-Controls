@@ -7405,36 +7405,69 @@ class MAMEControlConfig(ctk.CTk):
 
     # Modification to show_text_appearance_settings to improve font selection
     def get_system_fonts(self):
-        """Get all available system fonts for the application with reliable detection"""
-        # Start with fallback fonts that are commonly available
-        fallback_fonts = ["Arial", "Verdana", "Tahoma", "Calibri", "Times New Roman", "Courier New", "System"]
+        """Get only the fonts available in our fonts directory"""
+        # Default fallback fonts
+        fallback_fonts = ["Arial", "Press Start 2P"]
         
-        try:
-            # Need a temporary root window to get accurate font list
-            import tkinter as tk
-            import tkinter.font as tkfont
+        # Get fonts from the fonts directory
+        fonts_dir = os.path.join(self.mame_dir, "fonts")
+        if os.path.exists(fonts_dir):
+            font_list = []
+            for filename in os.listdir(fonts_dir):
+                if filename.lower().endswith(('.ttf', '.otf')):
+                    # Get display name
+                    display_name = self.get_font_display_name(os.path.join(fonts_dir, filename), filename)
+                    font_list.append(display_name)
             
-            # Create root window
-            temp_root = tk.Tk()
-            temp_root.withdraw()  # Hide the window
-            
-            # Get all system fonts
-            system_fonts = sorted(list(tkfont.families()))
-            
-            # Filter out fonts that start with @ (vertical fonts in Windows)
-            filtered_fonts = [f for f in system_fonts if not f.startswith('@')]
-            
-            # Clean up
-            temp_root.destroy()
-            
-            # Return the filtered fonts if we have any
-            if filtered_fonts:
-                return filtered_fonts
-                
-        except Exception as e:
-            print(f"Error loading system fonts: {e}")
+            if font_list:
+                return font_list
         
         return fallback_fonts
+
+    def is_system_font(self, font_name):
+        """Check if a font exists in our fonts directory"""
+        fonts_dir = os.path.join(self.mame_dir, "fonts")
+        if not os.path.exists(fonts_dir):
+            return False
+        
+        # Look for exact match
+        for ext in ['.ttf', '.otf']:
+            if os.path.exists(os.path.join(fonts_dir, f"{font_name}{ext}")):
+                return True
+        
+        # Look for partial match
+        font_name_lower = font_name.lower().replace(' ', '')
+        for filename in os.listdir(fonts_dir):
+            if filename.lower().startswith(font_name_lower) and filename.lower().endswith(('.ttf', '.otf')):
+                return True
+        
+        return False
+
+    def debug_font_system(self):
+        """Simplified font debug that only checks our fonts directory"""
+        import os
+        
+        print("\n=== FONT DEBUG ===")
+        
+        # Check settings
+        settings = self.get_text_settings(refresh=True)
+        print(f"Font Family: {settings.get('font_family', 'Not set')}")
+        
+        # Check fonts directory
+        font_dir = os.path.join(self.mame_dir, "fonts")
+        print(f"\nFonts Directory: {font_dir}")
+        if os.path.exists(font_dir):
+            print("Directory exists")
+            files = os.listdir(font_dir)
+            print(f"Files found: {len(files)}")
+            for file in files:
+                if file.lower().endswith(('.ttf', '.otf')):
+                    print(f"  - {file}")
+        else:
+            print("Directory does not exist")
+        
+        print("=== END FONT DEBUG ===\n")
+        return True
 
     # Modified part of the show_text_appearance_settings method
     # Replace the font selection code with this:
