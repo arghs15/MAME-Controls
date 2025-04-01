@@ -5,6 +5,3 @@ LUA
 
 Hotkey
 -hotkey to move preview screen to second screen, and/or hide so you can navigate tab menu
-
-Bezel
--button to add or hide bezel in preview
