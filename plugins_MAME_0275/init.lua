@@ -1,7 +1,7 @@
 -- MAME Controls Menu Plugin with F9 hotkey and Start+RB gamepad support
 local exports = {}
-exports.name = "mame_controls"
-exports.version = "0.2"
+exports.name = "controls"
+exports.version = "0.3"
 exports.description = "MAME Controls Display"
 exports.license = "MIT"
 exports.author = { name = "Custom" }

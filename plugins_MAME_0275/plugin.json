@@ -1,7 +1,7 @@
 {
   "plugin": {
-    "name": "mame_controls",
-    "description": "MAME Controls Display (Universal)",
+    "name": "controls",
+    "description": "controls",
     "version": "0.3",
     "author": "Custom Plugin",
     "type": "plugin",
