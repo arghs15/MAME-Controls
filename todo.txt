@@ -1,5 +1,8 @@
 LUA
--create new plgin that checks for version, and runs the appropriate script. This way one plugin can be created for all versions
+-unified plugin now works for both versions.
+If version ≤ 196: Use "old mode" (MAME 0.196 script)
+If version > 196: Use "new mode" (MAME 0.275+ script)
+-need to make it work with other versions. currently 231 doesnt work
 -update latest mame lua to use newly created params
 -test new mame lua works as it should
 
