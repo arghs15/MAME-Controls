@@ -863,19 +863,24 @@ class MAMEControlConfig(ctk.CTk):
         """Find the MAME directory containing necessary files"""
         # First check in the application directory
         app_dir = get_application_path()
+        print(f"\n=== DEBUG: find_mame_directory ===")
+        print(f"Application directory: {app_dir}")
         
         # Look for the settings directory path
         settings_gamedata = os.path.join(app_dir, "preview", "settings", "gamedata.json")
+        print(f"Checking for gamedata.json at: {settings_gamedata}")
         if os.path.exists(settings_gamedata):
-            print(f"Using gamedata.json in settings folder: {app_dir}")
+            print(f"FOUND: gamedata.json in settings folder at: {app_dir}")
             return app_dir
         
         # Also check current directory with new path structure
         current_dir = os.path.abspath(os.path.dirname(__file__))
+        print(f"Current directory: {current_dir}")
         current_settings_gamedata = os.path.join(current_dir, "preview", "settings", "gamedata.json")
+        print(f"Checking for gamedata.json at: {current_settings_gamedata}")
         
         if os.path.exists(current_settings_gamedata):
-            print(f"Found MAME directory: {current_dir}")
+            print(f"FOUND: gamedata.json in current directory at: {current_dir}")
             return current_dir
         
         # Check common MAME paths with new structure
@@ -888,11 +893,12 @@ class MAMEControlConfig(ctk.CTk):
         
         for path in common_paths:
             settings_gamedata_path = os.path.join(path, "preview", "settings", "gamedata.json")
+            print(f"Checking common path: {settings_gamedata_path}")
             if os.path.exists(settings_gamedata_path):
-                print(f"Found MAME directory: {path}")
+                print(f"FOUND: gamedata.json in common path at: {path}")
                 return path
-        
-        print("Error: gamedata.json not found in known locations")
+                
+        print("ERROR: gamedata.json not found in any known location")
         return None
     
     def ensure_preview_folder(self):
@@ -3746,6 +3752,8 @@ class MAMEControlConfig(ctk.CTk):
         if hasattr(self, '_in_get_game_data') and self._in_get_game_data:
             return None
         
+        #print(f"\n=== DEBUG: get_game_data for {romname} ===")
+        
         # Set recursion guard
         self._in_get_game_data = True
         
@@ -3846,7 +3854,9 @@ class MAMEControlConfig(ctk.CTk):
     def scan_roms_directory(self):
         """Scan the roms directory for available games"""
         roms_dir = os.path.join(self.mame_dir, "roms")
-        print(f"\nScanning ROMs directory: {roms_dir}")
+        print(f"\n=== DEBUG: scan_roms_directory ===")
+        print(f"Scanning ROMs directory: {roms_dir}")
+        print(f"Directory exists: {os.path.exists(roms_dir)}")
         
         if not os.path.exists(roms_dir):
             print(f"ERROR: ROMs directory not found: {roms_dir}")
@@ -3855,13 +3865,19 @@ class MAMEControlConfig(ctk.CTk):
         self.available_roms = set()  # Reset the set
         rom_count = 0
 
-        for filename in os.listdir(roms_dir):
-            # Strip common ROM extensions
-            base_name = os.path.splitext(filename)[0]
-            self.available_roms.add(base_name)
-            rom_count += 1
-            if rom_count <= 5:  # Print first 5 ROMs as sample
-                print(f"Found ROM: {base_name}")
+        try:
+            rom_files = os.listdir(roms_dir)
+            print(f"Found {len(rom_files)} files in ROMs directory")
+            
+            for filename in rom_files:
+                # Strip common ROM extensions
+                base_name = os.path.splitext(filename)[0]
+                self.available_roms.add(base_name)
+                rom_count += 1
+                if rom_count <= 5:  # Print first 5 ROMs as sample
+                    print(f"Found ROM: {base_name}")
+        except Exception as e:
+            print(f"Error scanning ROMs directory: {e}")
         
         print(f"Total ROMs found: {len(self.available_roms)}")
         if len(self.available_roms) > 0:
@@ -4304,17 +4320,25 @@ class MAMEControlConfig(ctk.CTk):
             # Highlight the selected line
             self.highlight_selected_game(line_num)
             
-            # Remove prefix indicators
-            if line.startswith("* "):
-                line = line[2:]
-            if line.startswith("+ ") or line.startswith("- "):
-                line = line[2:]
-                
-            romname = line.split(" - ")[0]
+            # IMPROVED PREFIX HANDLING: Strip all leading spaces first
+            line = line.strip()
+            
+            # Then remove specific prefixes
+            if line.startswith("*"):
+                line = line[1:].strip()
+            if line.startswith("+") or line.startswith("-"):
+                line = line[1:].strip()
+                    
+            romname = line.split(" - ")[0].strip()
             self.current_game = romname
 
             # Get game data including variants
             game_data = self.get_game_data(romname)
+            
+            # Rest of the method...
+            print(f"Game data found: {game_data is not None}")
+            
+            # ... rest of the method
             
             # Clear existing display
             for widget in self.control_frame.winfo_children():
