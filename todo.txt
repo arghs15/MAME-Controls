@@ -1,7 +1,3 @@
-MAME 276
--Only some games show preview screen. others say "No control data found for +  10yard"
-but its only some roms. very odd. button to show missing controls however, shows them all there, and also standalone preview works for all, so its just the in app list, and preview. need to investigate. 
-
 LUA
 -unified plugin now works for both versions.
 If version ≤ 196: Use "old mode" (MAME 0.196 script)
