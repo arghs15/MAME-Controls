@@ -1,7 +1,12 @@
+MAME 276
+-Only some games show preview screen. others say "No control data found for +  10yard"
+but its only some roms. very odd. button to show missing controls however, shows them all there, and also standalone preview works for all, so its just the in app list, and preview. need to investigate. 
+
 LUA
 -unified plugin now works for both versions.
 If version ≤ 196: Use "old mode" (MAME 0.196 script)
 If version > 196: Use "new mode" (MAME 0.275+ script)
+-plugins_MAME_0196_0215_0231 doesnt actually work, but using mameNEW264.exe -autoboot_script controls.lua xmenu   does. must be the boot.lua plugin error...
 -need to make it work with other versions. currently 231 doesnt work
 -update latest mame lua to use newly created params
 -test new mame lua works as it should
