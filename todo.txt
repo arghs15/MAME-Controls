@@ -1,3 +1,7 @@
+Info file directory
+-need to make the path relitive 
+-check other paths 
+
 LUA
 -unified plugin now works for both versions.
 If version ≤ 196: Use "old mode" (MAME 0.196 script)
