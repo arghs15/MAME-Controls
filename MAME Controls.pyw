@@ -38,25 +38,26 @@ class PositionManager:
         self.parent = parent  # Reference to the main app
         self.positions = {}   # Store for in-memory positions
     
-    def normalize(self, x, y, y_offset=None):
+    def normalize(self, x, y):
         """Convert a display position to a normalized position (without y-offset)"""
-        if y_offset is None:
-            # Get from settings if not provided
-            settings = self.parent.get_text_settings()  # Use direct method call
-            y_offset = settings.get("y_offset", -40)
+        # Get settings directly from the app for consistency
+        settings = self.parent.get_text_settings()
+        y_offset = settings.get("y_offset", -40)
         
-        # Remove y-offset
+        # Remove y-offset to get normalized position
         normalized_y = y - y_offset
         return x, normalized_y
     
     def apply_offset(self, x, normalized_y, y_offset=None):
         """Apply y-offset to a normalized position for display"""
+        # Get settings directly from the app for consistency
+        settings = self.parent.get_text_settings()
+        
+        # Use provided y_offset if specified, otherwise get from settings
         if y_offset is None:
-            # Get from settings if not provided
-            settings = self.parent.get_text_settings()  # Use direct method call
             y_offset = settings.get("y_offset", -40)
         
-        # Add y-offset
+        # Add y-offset for display
         display_y = normalized_y + y_offset
         return x, display_y
     
@@ -91,8 +92,8 @@ class PositionManager:
     
     def update_from_dragging(self, control_name, new_x, new_y):
         """Update a position from dragging (storing normalized values)"""
-        # Get settings for y-offset calculation
-        settings = self.get_text_settings()
+        # Get settings for consistent y-offset calculation
+        settings = self.parent.get_text_settings()
         y_offset = settings.get('y_offset', -40)
         
         # Calculate normalized y-coordinate (the true position without offset)
@@ -2649,6 +2650,7 @@ class MAMEControlConfig(ctk.CTk):
         # Define scaling factors for fonts that tend to appear small
         scaling_factors = {
             "Times New Roman": 1.5,
+            "Press Start 2P": 0.8,
             "Times": 1.5,
             "Georgia": 1.4,
             "Garamond": 1.7,
@@ -5954,11 +5956,11 @@ class MAMEControlConfig(ctk.CTk):
                 return
         
         try:
-            # Get all settings
+            # Get all settings from central settings function
             settings = self.get_text_settings()
             print(f"Using text settings for saved image: {settings}")
             
-            # Get fonts - with better error handling
+            # Get fonts with consistent handling
             font, title_font = self.get_fonts_from_settings(settings)
             
             # Create separate layer images for proper compositing
@@ -5973,6 +5975,10 @@ class MAMEControlConfig(ctk.CTk):
             # Create a draw object for the text layer
             text_draw = ImageDraw.Draw(text_layer)
             
+            # Get y-offset from settings to ensure consistency
+            settings = self.get_text_settings()
+            y_offset = settings.get("y_offset", -40)
+
             # 2. Add background image
             background_path = None
             for ext in ['.png', '.jpg', '.jpeg']:
@@ -6044,10 +6050,9 @@ class MAMEControlConfig(ctk.CTk):
                         for control, mapping in cfg_controls.items()
                     }
             
-           # Draw all currently visible control texts
+            # Draw all currently visible control texts using position manager for consistency
             if hasattr(self, 'text_items'):
                 print(f"Found {len(self.text_items)} text items to render")
-                y_offset = settings.get('y_offset', -35)
                 bold_strength = settings.get('bold_strength', 2)
                 
                 # Debug what's in text_items
@@ -6062,6 +6067,11 @@ class MAMEControlConfig(ctk.CTk):
                             print(f"    Display text: {data['display_text']}")
                         sample_count += 1
                 
+                # Make sure we have a position manager
+                if not hasattr(self, 'position_manager'):
+                    self.position_manager = PositionManager(self)
+                    self.position_manager.load_from_file(self.current_game)
+                
                 # Render each text item
                 for control_name, data in self.text_items.items():
                     # Skip hidden items
@@ -6074,52 +6084,65 @@ class MAMEControlConfig(ctk.CTk):
                     except Exception:
                         pass
                     
-                    # Get position and text
-                    if 'x' in data and 'y' in data:
-                        text_x = data['x']
-                        text_y = data['y']
+                    # Get normalized position and apply offset consistently
+                    if 'base_y' in data and 'x' in data:
+                        normalized_x, normalized_y = data['x'], data['base_y']
+                        # Use position manager to apply offset consistently
+                        text_x, text_y = self.position_manager.apply_offset(normalized_x, normalized_y)
+                    elif 'x' in data and 'y' in data:
+                        # We don't have base_y, so normalize first
+                        normalized_x, normalized_y = self.position_manager.normalize(data['x'], data['y'])
+                        # Then apply offset
+                        text_x, text_y = self.position_manager.apply_offset(normalized_x, normalized_y)
+                    else:
+                        print(f"No position data for {control_name}, skipping")
+                        continue
+                    
+                    # Get the text to display
+                    display_text = None
+                    
+                    # Try to get display_text directly
+                    if 'display_text' in data:
+                        display_text = data['display_text']
+                    # Try to get action and format it
+                    elif 'action' in data:
+                        action = data['action']
+                        # Apply uppercase if needed
+                        display_text = self.get_display_text(action, settings, 
+                                                            data.get('control_name'), 
+                                                            data.get('custom_mapping'))
+                    
+                    if not display_text:
+                        print(f"No display text for {control_name}, skipping")
+                        continue
                         
-                        # Get the text to display
-                        display_text = None
+                    print(f"Drawing text: '{display_text}' at ({text_x}, {text_y})")
+                    
+                    # Apply bold effect based on settings
+                    # Inside the save_current_preview method, replace the text drawing section with this:
+
+                    # Apply bold effect based on settings
+                    bold_strength = settings.get('bold_strength', 2)
+
+                    if bold_strength == 0:
+                        # No bold effect - explicitly use a top-left anchor point (default in PIL)
+                        text_draw.text((text_x, text_y), display_text, fill=(255, 255, 255, 255), font=font)
+                    else:
+                        # Draw shadows for bold effect
+                        offsets = []
+                        if bold_strength >= 1:
+                            offsets.extend([(1, 0), (0, 1), (-1, 0), (0, -1)])
+                        if bold_strength >= 2:
+                            offsets.extend([(1, 1), (-1, 1), (1, -1), (-1, -1)])
+                        if bold_strength >= 3:
+                            offsets.extend([(2, 0), (0, 2), (-2, 0), (0, -2)])
                         
-                        # Try to get display_text directly
-                        if 'display_text' in data:
-                            display_text = data['display_text']
-                        # Try to get action and format it
-                        elif 'action' in data:
-                            action = data['action']
-                            # Apply uppercase if needed
-                            if settings.get('use_uppercase', True):
-                                display_text = f"{control_name}: {action.upper()}"
-                            else:
-                                display_text = f"{control_name}: {action}"
+                        # Draw shadows
+                        for dx, dy in offsets:
+                            text_draw.text((text_x+dx, text_y+dy), display_text, fill=(0, 0, 0, 255), font=font)
                         
-                        if not display_text:
-                            print(f"No display text for {control_name}, skipping")
-                            continue
-                            
-                        print(f"Drawing text: '{display_text}' at ({text_x}, {text_y + y_offset})")
-                        
-                        # Apply bold effect based on settings
-                        if bold_strength == 0:
-                            # No bold effect
-                            text_draw.text((text_x, text_y + y_offset), display_text, fill=(255, 255, 255, 255), font=font)
-                        else:
-                            # Draw shadows for bold effect
-                            offsets = []
-                            if bold_strength >= 1:
-                                offsets.extend([(1, 0), (0, 1), (-1, 0), (0, -1)])
-                            if bold_strength >= 2:
-                                offsets.extend([(1, 1), (-1, 1), (1, -1), (-1, -1)])
-                            if bold_strength >= 3:
-                                offsets.extend([(2, 0), (0, 2), (-2, 0), (0, -2)])
-                                
-                            # Draw shadows
-                            for dx, dy in offsets:
-                                text_draw.text((text_x+dx, text_y+dy + y_offset), display_text, fill=(0, 0, 0, 255), font=font)
-                            
-                            # Draw main text
-                            text_draw.text((text_x, text_y + y_offset), display_text, fill=(255, 255, 255, 255), font=font)
+                        # Draw main text
+                        text_draw.text((text_x, text_y), display_text, fill=(255, 255, 255, 255), font=font)
             
             # 5. Add logo to logo_layer
             if hasattr(self, 'logo_visible') and self.logo_visible:
@@ -6141,9 +6164,8 @@ class MAMEControlConfig(ctk.CTk):
                         new_height = max(int(logo_height * scale_factor), 1)
                         logo_img = logo_img.resize((new_width, new_height), Image.LANCZOS)
                         
-                        # Calculate position
+                        # Calculate position with consistent y-offset handling
                         padding = 20
-                        # Get Y offset from settings (default to 0 if not set)
                         y_offset = getattr(self, 'logo_y_offset', 0)
                         
                         # Apply the Y offset to positioning
@@ -6160,7 +6182,7 @@ class MAMEControlConfig(ctk.CTk):
                         else:  # Default to top-center
                             position = ((target_width - new_width) // 2, padding + y_offset)
                             
-                        print(f"Logo placement in exact preview: {position} (using Y offset: {y_offset})")
+                        print(f"Logo placement in image: {position} (using Y offset: {y_offset})")
                         
                         # Paste logo onto logo layer
                         logo_layer.paste(logo_img, position, logo_img)
@@ -6350,15 +6372,15 @@ class MAMEControlConfig(ctk.CTk):
         if use_uppercase:
             text = text.upper()
         
-        # Apply Y offset adjustment
-        text_y = text_y + settings.get("y_offset", -40)
+        # Apply Y offset adjustment - REMOVED direct offset application here
+        # text_y = text_y + settings.get("y_offset", -40)
         
         # Apply bold effect based on strength
         bold_strength = settings.get("bold_strength", 2)
         
         if bold_strength == 0:
             # No bold effect, just draw the text
-            draw.text((text_x, text_y), text, fill="white", font=font)
+            draw.text((text_x, text_y), text, fill="white", font=font, anchor="nw")  # Explicitly use nw anchor
         else:
             # Calculate offsets based on bold strength
             offsets = []
@@ -6375,10 +6397,10 @@ class MAMEControlConfig(ctk.CTk):
             
             # Draw shadows
             for dx, dy in offsets:
-                draw.text((text_x+dx, text_y+dy), text, fill="black", font=font)
+                draw.text((text_x+dx, text_y+dy), text, fill="black", font=font, anchor="nw")  # Explicitly use nw anchor
             
             # Draw main text
-            draw.text((text_x, text_y), text, fill="white", font=font)
+            draw.text((text_x, text_y), text, fill="white", font=font, anchor="nw")  # Explicitly use nw anchor
 
     def get_tkfont(self, settings=None):
         """Get a tkinter font object based on settings"""
@@ -6422,7 +6444,6 @@ class MAMEControlConfig(ctk.CTk):
         # Get font settings
         font_family = settings.get("font_family", "Arial")
         font_size = settings.get("font_size", 28)
-        y_offset = settings.get('y_offset', -40)
         
         # Apply scaling factor
         adjusted_font_size = self.apply_font_scaling(font_family, font_size)
@@ -6494,9 +6515,6 @@ class MAMEControlConfig(ctk.CTk):
         actual_font_family = preview_font.actual("family")
         print(f"Actual font being used: {actual_font_family}")
         
-        success_count = 0
-        error_count = 0
-        
         # Update each text item in the preview
         for control_name, data in self.text_items.items():
             try:
@@ -6519,47 +6537,29 @@ class MAMEControlConfig(ctk.CTk):
                         self.preview_canvas.itemconfigure(data['shadow'], text=display_text, font=preview_font)
                 
                 # Get the normalized position
-                normalized_x, normalized_y = self.position_manager.get_normalized(control_name, data['x'], data.get('base_y', data['y']))
-                
-                # Apply the current offset
-                display_x, display_y = self.position_manager.apply_offset(normalized_x, normalized_y)
-                
-                # Update position on canvas
-                if 'text' in data:
-                    self.preview_canvas.coords(data['text'], display_x, display_y)
-                if 'shadow' in data and data['shadow'] is not None:
-                    # Shadow should have a small offset
-                    shadow_offset = settings.get('bold_strength', 2)
-                    shadow_offset = max(1, min(shadow_offset, 3))  # Clamp between 1-3 pixels
-                    self.preview_canvas.coords(data['shadow'], display_x+shadow_offset, display_y+shadow_offset)
+                if 'base_y' in data:
+                    normalized_x, normalized_y = data['x'], data['base_y']
                     
-                # Update stored position
-                data['x'] = display_x
-                data['y'] = display_y
-                data['base_y'] = normalized_y
-                
-                success_count += 1
+                    # Apply the current offset - don't modify the normalized y value
+                    display_x, display_y = self.position_manager.apply_offset(normalized_x, normalized_y)
+                    
+                    # Update position on canvas - for Tkinter, use top-left (northwest) anchor
+                    if 'text' in data:
+                        self.preview_canvas.coords(data['text'], display_x, display_y)
+                    if 'shadow' in data and data['shadow'] is not None:
+                        # Shadow should have a small offset
+                        shadow_offset = settings.get('bold_strength', 2)
+                        shadow_offset = max(1, min(shadow_offset, 3))  # Clamp between 1-3 pixels
+                        self.preview_canvas.coords(data['shadow'], display_x+shadow_offset, display_y+shadow_offset)
+                        
+                    # Update stored position without changing the base_y
+                    data['x'] = display_x
+                    data['y'] = display_y
                     
             except Exception as e:
                 print(f"Error updating text for {control_name}: {e}")
                 import traceback
                 traceback.print_exc()
-                error_count += 1
-        
-        # Show a message about restarting if we had errors
-        if error_count > 0:
-            print(f"⚠️ There were {error_count} errors updating text. App restart may be needed for font changes to fully apply.")
-            try:
-                import tkinter.messagebox as messagebox
-                messagebox.showwarning(
-                    "Font Update",
-                    f"Updated {success_count} text items with some issues.\n\n"
-                    f"For font changes to fully apply, you may need to restart the app."
-                )
-            except Exception:
-                pass
-        else:
-            print(f"Successfully updated {success_count} text items")
         
         # Force canvas update
         try:
@@ -6578,15 +6578,6 @@ class MAMEControlConfig(ctk.CTk):
         from PIL import Image, ImageDraw, ImageFont
         import traceback
         import sys
-
-        # At the start of generate_preview_images()
-        #settings = self.get_text_settings()
-        #print(f"DEBUG: Font settings being used:")
-        #print(f"  Font family: {settings.get('font_family')}")
-        #print(f"  Font filename: {settings.get('font_filename')}")
-        #print(f"  Font size: {settings.get('font_size')}")
-        #print(f"  Y-offset: {settings.get('y_offset')}")
-        #print(f"  Bold strength: {settings.get('bold_strength')}")
 
         # Ensure preview directory exists
         preview_dir = self.ensure_preview_folder()
@@ -6802,14 +6793,8 @@ class MAMEControlConfig(ctk.CTk):
                                 for control, mapping in cfg_controls.items()
                             }
                     
-                    # THIS IS THE CRITICAL PART: Draw all controls based on positions
-                    # Process Player 1 controls based on game_data and positions
+                    # THIS IS THE CRITICAL PART: Draw all controls based on positions with consistent y-offset
                     drawn_controls = 0
-                    
-                    # IMPORTANT Y-OFFSET ADJUSTMENT
-                    # If text appears too low, we can adjust with this value
-                    # Positive values move text up, negative values move text down
-                    adjustment = 40  # Adjust this value as needed to match manual saving
                     
                     for player in game_data.get('players', []):
                         if player['number'] != 1:  # Only show P1 controls for now
@@ -6851,25 +6836,24 @@ class MAMEControlConfig(ctk.CTk):
                                 
                             # Get position from the saved layout
                             if xinput_button in positions:
-                                # Get normalized position
-                                x, normalized_y = positions[xinput_button]
+                                # Get normalized position (positions are already normalized)
+                                normalized_x, normalized_y = positions[xinput_button]
                                 
-                                # Get y-offset from settings
-                                y_offset = settings.get('y_offset', -40)
-                                
-                                # Apply y-offset directly with the additional adjustment
-                                y = normalized_y + y_offset - adjustment
+                                # Use position manager to apply offset consistently
+                                display_x, display_y = self.position_manager.apply_offset(normalized_x, normalized_y)
                                 
                                 # Debug output - print position calculations for a few controls
                                 if drawn_controls < 2:
-                                    print(f"Position for {xinput_button} (control: {control_name}): normalized_y={normalized_y}, y_offset={y_offset}, adjustment={adjustment}, final_y={y}")
+                                    print(f"Position for {xinput_button} (control: {control_name}): " + 
+                                        f"normalized=({normalized_x}, {normalized_y}), " + 
+                                        f"display=({display_x}, {display_y})")
                                 
                                 # Apply bold effect based on settings
                                 bold_strength = settings.get('bold_strength', 2)
                                 
                                 if bold_strength == 0:
                                     # No bold effect
-                                    text_draw.text((x, y), display_text, fill=(255, 255, 255, 255), font=font)
+                                    text_draw.text((display_x, display_y), display_text, fill=(255, 255, 255, 255), font=font)
                                 else:
                                     # Draw shadows for bold effect
                                     offsets = []
@@ -6882,26 +6866,17 @@ class MAMEControlConfig(ctk.CTk):
                                         
                                     # Draw shadows
                                     for dx, dy in offsets:
-                                        text_draw.text((x+dx, y+dy), display_text, fill=(0, 0, 0, 255), font=font)
+                                        text_draw.text((display_x+dx, display_y+dy), display_text, fill=(0, 0, 0, 255), font=font)
                                     
                                     # Draw main text
-                                    text_draw.text((x, y), display_text, fill=(255, 255, 255, 255), font=font)
+                                    text_draw.text((display_x, display_y), display_text, fill=(255, 255, 255, 255), font=font)
                                     
                                 drawn_controls += 1
                             else:
                                 print(f"  Warning: No position for {xinput_button}")
-                        
+                    
                     print(f"Drew {drawn_controls} controls for {rom_name}")
 
-                    # Get layer ordering from settings (or use default)
-                    layer_order = getattr(self, 'layer_order', {
-                        'bezel': 1,       # Default: bezel on bottom
-                        'background': 2,  # Background above bezel
-                        'logo': 3,        # Logo above background
-                        'text': 4         # Text on top
-                    })
-                    
-                    # Apply layering based on settings
                     # Add bezel if enabled
                     if getattr(self, 'bezel_visible', True):
                         bezel_img = self.add_bezel_to_image(background_layer.copy().convert('RGB'), rom_name)
@@ -6913,6 +6888,14 @@ class MAMEControlConfig(ctk.CTk):
                         logo_img = self.add_logo_to_image(Image.new('RGBA', (target_width, target_height), (0, 0, 0, 0)), rom_name)
                         if logo_img.getbbox():  # Check if logo is not empty
                             logo_layer = logo_img.convert('RGBA')
+                    
+                    # Get layer ordering from settings (or use default)
+                    layer_order = getattr(self, 'layer_order', {
+                        'bezel': 1,       # Default: bezel on bottom
+                        'background': 2,  # Background above bezel
+                        'logo': 3,        # Logo above background
+                        'text': 4         # Text on top
+                    })
                     
                     # Create a dictionary of layers with their order
                     layers = {
@@ -7121,20 +7104,20 @@ class MAMEControlConfig(ctk.CTk):
         try:
             print("\n--- STARTING EXACT PREVIEW ---")
             
-            # Get all settings in one place
+            # Get all settings from central settings function
             settings = self.get_text_settings()
-            font_size = settings["font_size"]
-            title_size = settings["title_size"]
-            bold_strength = settings["bold_strength"]
-            y_offset = settings["y_offset"]
+            font_size = settings.get("font_size", 28)
+            title_size = settings.get("title_size", 36)
+            bold_strength = settings.get("bold_strength", 2)
+            y_offset = settings.get("y_offset", -40)
             
             print(f"Using text settings: size={font_size}, title={title_size}, "
-                f"bold={bold_strength}, y_offset={y_offset}, uppercase={settings['uppercase']}")
+                f"bold={bold_strength}, y_offset={y_offset}, uppercase={settings.get('uppercase', False)}")
             
             # Get direct path to font file
             font_path = self.get_font_path()
             if not font_path:
-                messagebox.showerror("Error", f"Font file not found! Please add {settings['font_name']} to the fonts folder.")
+                messagebox.showerror("Error", f"Font file not found! Please add {settings.get('font_family', 'Arial')} to the fonts folder.")
                 return
                     
             # Load font directly from file
@@ -7150,6 +7133,11 @@ class MAMEControlConfig(ctk.CTk):
             # Create a base black image
             target_width, target_height = 1920, 1080  # Standard full HD size
             base_img = Image.new('RGBA', (target_width, target_height), (0, 0, 0, 255))
+            
+            # Make sure we have a position manager
+            if not hasattr(self, 'position_manager'):
+                self.position_manager = PositionManager(self)
+                self.position_manager.load_from_file(self.current_game)
             
             # Get layer ordering (or use default)
             if not hasattr(self, 'layer_order'):
@@ -7242,46 +7230,54 @@ class MAMEControlConfig(ctk.CTk):
                     except Exception as e:
                         print(f"Error checking visibility for {control_name}: {e}")
                     
-                    # Get position and text
-                    try:
-                        text_x = data['x']
-                        text_y = data['y']
-                        
-                        # Adjust y-position for consistent placement with preview
-                        adjusted_y = text_y + y_offset
-                        
-                        # Get the original action text
+                    # Get normalized position from the data
+                    if 'base_y' in data and 'x' in data:
+                        # We have the normalized position already
+                        normalized_x, normalized_y = data['x'], data['base_y']
+                        # Use position manager to apply offset consistently
+                        text_x, text_y = self.position_manager.apply_offset(normalized_x, normalized_y)
+                    else:
+                        # We don't have base_y, need to normalize then apply offset
+                        normalized_x, normalized_y = self.position_manager.normalize(data['x'], data['y'])
+                        text_x, text_y = self.position_manager.apply_offset(normalized_x, normalized_y)
+                    
+                    # Get the display text
+                    display_text = None
+                    if 'display_text' in data:
+                        display_text = data['display_text']
+                    elif 'action' in data:
+                        # Generate display text from action
                         action = data['action']
-                        
-                        # Apply consistent formatting
-                        display_text = self.get_formatted_text(action)
-                        
-                        print(f"Drawing {control_name} at ({text_x}, {adjusted_y}): {display_text}")
-                        
-                        # Apply bold effect based on settings
-                        if bold_strength == 0:
-                            # No bold effect
-                            text_draw.text((text_x, adjusted_y), display_text, fill=(255, 255, 255, 255), font=font)
-                        else:
-                            # Draw shadows for bold effect
-                            offsets = []
-                            if bold_strength >= 1:
-                                offsets.extend([(1, 0), (0, 1), (-1, 0), (0, -1)])
-                            if bold_strength >= 2:
-                                offsets.extend([(1, 1), (-1, 1), (1, -1), (-1, -1)])
-                            if bold_strength >= 3:
-                                offsets.extend([(2, 0), (0, 2), (-2, 0), (0, -2)])
-                                
-                            # Draw shadows
-                            for dx, dy in offsets:
-                                text_draw.text((text_x+dx, adjusted_y+dy), display_text, fill=(0, 0, 0, 255), font=font)
-                            
-                            # Draw main text
-                            text_draw.text((text_x, adjusted_y), display_text, fill=(255, 255, 255, 255), font=font)
-                        
-                    except Exception as e:
-                        print(f"Error drawing text for {control_name}: {e}")
+                        control_name_for_display = data.get('control_name')
+                        custom_mapping = data.get('custom_mapping')
+                        display_text = self.get_display_text(action, settings, control_name_for_display, custom_mapping)
+                    
+                    if not display_text:
+                        print(f"No display text for {control_name}, skipping")
                         continue
+                    
+                    print(f"Drawing {control_name} at ({text_x}, {text_y}): {display_text}")
+                    
+                    # Apply bold effect based on settings
+                    if bold_strength == 0:
+                        # No bold effect
+                        text_draw.text((text_x, text_y), display_text, fill=(255, 255, 255, 255), font=font)
+                    else:
+                        # Draw shadows for bold effect
+                        offsets = []
+                        if bold_strength >= 1:
+                            offsets.extend([(1, 0), (0, 1), (-1, 0), (0, -1)])
+                        if bold_strength >= 2:
+                            offsets.extend([(1, 1), (-1, 1), (1, -1), (-1, -1)])
+                        if bold_strength >= 3:
+                            offsets.extend([(2, 0), (0, 2), (-2, 0), (0, -2)])
+                            
+                        # Draw shadows
+                        for dx, dy in offsets:
+                            text_draw.text((text_x+dx, text_y+dy), display_text, fill=(0, 0, 0, 255), font=font)
+                        
+                        # Draw main text
+                        text_draw.text((text_x, text_y), display_text, fill=(255, 255, 255, 255), font=font)
             
             # Add text layer to layers dict
             layers['text'] = {'image': text_layer, 'order': self.layer_order['text']}
@@ -7308,10 +7304,11 @@ class MAMEControlConfig(ctk.CTk):
                         # Create a full-size transparent image for the logo
                         logo_layer = Image.new('RGBA', (target_width, target_height), (0, 0, 0, 0))
                         
-                        # Calculate position
-                        padding = 20
                         # Get Y offset from settings (default to 0 if not set)
                         y_offset = getattr(self, 'logo_y_offset', 0)
+                        
+                        # Calculate position
+                        padding = 20
                         
                         # Apply the Y offset to positioning
                         if self.logo_position == 'top-left':
@@ -7347,22 +7344,6 @@ class MAMEControlConfig(ctk.CTk):
             for layer_name, layer_data in sorted_layers:
                 print(f"Compositing layer: {layer_name} (order {layer_data['order']})")
                 composite_img = Image.alpha_composite(composite_img, layer_data['image'])
-            
-            # Add bezel layer if enabled
-            if hasattr(self, 'bezel_visible') and self.bezel_visible:
-                bezel_path = self.get_bezel_path(self.current_game)
-                if bezel_path and os.path.exists(bezel_path):
-                    try:
-                        bezel_img = Image.open(bezel_path)
-                        bezel_img = bezel_img.resize((target_width, target_height), Image.LANCZOS)
-                        if bezel_img.mode != 'RGBA':
-                            bezel_img = bezel_img.convert('RGBA')
-                        
-                        # Add bezel to layers with proper order
-                        layers['bezel'] = {'image': bezel_img, 'order': self.layer_order['bezel']}
-                        print(f"Added bezel to layers, order: {self.layer_order['bezel']}")
-                    except Exception as e:
-                        print(f"Error loading bezel: {e}")
             
             # Convert final image back to RGB for display
             final_img = composite_img.convert('RGB')
@@ -7439,7 +7420,7 @@ class MAMEControlConfig(ctk.CTk):
         except Exception as e:
             messagebox.showerror("Error", f"Failed to create preview: {str(e)}")
             print(f"Error creating preview: {e}")
-            traceback.print_
+            traceback.print_exc()
 
     def toggle_logo_and_refresh(self, preview_window, canvas, photo, original_img, display_width, display_height):
         """Toggle logo visibility and refresh the exact preview image"""
@@ -9395,7 +9376,7 @@ class MAMEControlConfig(ctk.CTk):
         
         return False
     
-    def create_text_with_shadow(self, canvas, x, y, text, font=None, shadow_offset=2):
+    def create_text_with_shadow(self, canvas, x, y, text, font=None, shadow_offset=2, anchor="nw"):
         """Create text with shadow effect for better visibility"""
         # Get shadow offset from bold strength if available
         if hasattr(self, 'get_text_settings'):
@@ -9410,7 +9391,7 @@ class MAMEControlConfig(ctk.CTk):
                 text=text, 
                 font=font, 
                 fill="white",
-                anchor="sw"
+                anchor=anchor  # Use the provided anchor parameter
             )
             return text_item, None
         
@@ -9421,7 +9402,7 @@ class MAMEControlConfig(ctk.CTk):
             text=text, 
             font=font, 
             fill="black",
-            anchor="sw"
+            anchor=anchor  # Use the provided anchor parameter
         )
         
         # Create main text
@@ -9430,7 +9411,7 @@ class MAMEControlConfig(ctk.CTk):
             text=text, 
             font=font, 
             fill="white",
-            anchor="sw"
+            anchor=anchor  # Use the provided anchor parameter
         )
         
         return text_item, shadow
@@ -10048,7 +10029,8 @@ class MAMEControlConfig(ctk.CTk):
                         text_x, 
                         text_y, 
                         display_text, 
-                        text_font
+                        text_font,
+                        anchor="nw"  # Explicitly set anchor to northwest (top-left)
                     )
                     
                     # Set visibility state
