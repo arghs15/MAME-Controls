@@ -3,6 +3,10 @@ Edit Selected Game
 -also noticed in edit controls section it displays what the db holds - in this case the deleted control I manually edited, but still showed contlr I "deleted" in preview.
 This means preview etc., is still using json, but analysis is using db file. Not the intended use.
 
+Text Size and PLacement
+-made a few changes but text size is slightly off (smaller) when saving an image.
+-do I break out this image saving fuinction to a different script/app? cause confusion
+
 Global positions
 -global_positions is created by default, and no_names added if you save global with no names. Works well, but with names saves to global, but on first run, only global file exists, but defaults to no names... check logic
 
