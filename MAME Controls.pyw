@@ -3051,16 +3051,16 @@ class MAMEControlConfig(ctk.CTk):
         if not positions:
             # Default XInput button positions
             default_positions = {
-                "A": [742.3333333333334, 390.0], 
-                "B": [742.3333333333334, 466.0], 
-                "X": [742.3333333333334, 543.0], 
-                "Y": [742.3333333333334, 617.0], 
-                "LB": [742.3333333333334, 848.0], 
-                "RB": [742.3333333333334, 695.0], 
-                "LT": [742.3333333333334, 922.0], 
-                "RT": [742.3333333333334, 771.0], 
-                "LS": [734.3333333333334, 984.0], 
-                "RS": [742.3333333333334, 1026.0], 
+                "A": [742.3333333333334, 367.0], 
+                "B": [742.3333333333334, 443.0], 
+                "X": [742.3333333333334, 518.0], 
+                "Y": [742.3333333333334, 595.0], 
+                "LB": [739.3333333333334, 825.0], 
+                "RB": [742.3333333333334, 668.0], 
+                "LT": [739.3333333333334, 897.0], 
+                "RT": [742.3333333333334, 746.0], 
+                "LS": [742.3333333333334, 959.0], 
+                "RS": [742.3333333333334, 1007.0], 
                 "UP": [669.3333333333334, 367.0], 
                 "DOWN": [668.3333333333334, 322.0], 
                 "LEFT": [667.3333333333334, 456.0], 
@@ -4512,14 +4512,14 @@ class MAMEControlConfig(ctk.CTk):
     
     def create_info_directory(self):
         """Create info directory if it doesn't exist"""
-        info_dir = os.path.join(os.path.dirname(__file__), "info")
+        info_dir = os.path.join(os.path.dirname(__file__), "preview", "settings", "info")
         if not os.path.exists(info_dir):
             os.makedirs(info_dir)
         return info_dir
 
     def load_default_template(self):
         """Load the default.conf template"""
-        template_path = os.path.join(os.path.dirname(__file__), "info", "default.conf")
+        template_path = os.path.join(os.path.dirname(__file__), "preview", "settings", "info", "default.conf")
         try:
             with open(template_path, 'r', encoding='utf-8') as f:
                 return f.read()
@@ -6437,7 +6437,7 @@ class MAMEControlConfig(ctk.CTk):
         try:
             if "font_filename" in settings:
                 import os
-                font_path = os.path.join(self.mame_dir, "fonts", settings["font_filename"])
+                font_path = os.path.join(self.mame_dir, "preview", "settings", "fonts", settings["font_filename"])
                 if os.path.exists(font_path):
                     # We can't use the font file directly with tkinter, but we'll note it's available
                     print(f"Found font file at: {font_path}")
@@ -6978,7 +6978,7 @@ class MAMEControlConfig(ctk.CTk):
         font_family = settings.get("font_family", "Arial")
         
         # Define all possible font paths
-        font_dir = os.path.join(self.mame_dir, "fonts")
+        font_dir = os.path.join(self.mame_dir, "preview", "settings", "fonts")
         if not os.path.exists(font_dir):
             os.makedirs(font_dir, exist_ok=True)
         
@@ -7022,7 +7022,7 @@ class MAMEControlConfig(ctk.CTk):
         title_font_size = settings.get("title_size", 36)
         
         # Look for the font file in the fonts directory
-        font_dir = os.path.join(self.mame_dir, "fonts")
+        font_dir = os.path.join(self.mame_dir, "preview", "settings", "fonts")
         font_path = None
         
         # Check exact name match
@@ -7543,7 +7543,7 @@ class MAMEControlConfig(ctk.CTk):
         import re
         
         # Define the fonts directory
-        fonts_dir = os.path.join(self.mame_dir, "fonts")
+        fonts_dir = os.path.join(self.mame_dir, "preview", "settings", "fonts")
         if not os.path.exists(fonts_dir):
             os.makedirs(fonts_dir, exist_ok=True)
             print(f"Created fonts directory: {fonts_dir}")
@@ -7644,7 +7644,7 @@ class MAMEControlConfig(ctk.CTk):
         fallback_fonts = ["Arial", "Press Start 2P"]
         
         # Get fonts from the fonts directory
-        fonts_dir = os.path.join(self.mame_dir, "fonts")
+        fonts_dir = os.path.join(self.mame_dir, "preview", "settings", "fonts")
         if os.path.exists(fonts_dir):
             font_list = []
             for filename in os.listdir(fonts_dir):
@@ -7660,7 +7660,7 @@ class MAMEControlConfig(ctk.CTk):
 
     def is_system_font(self, font_name):
         """Check if a font exists in our fonts directory"""
-        fonts_dir = os.path.join(self.mame_dir, "fonts")
+        fonts_dir = os.path.join(self.mame_dir, "preview", "settings", "fonts")
         if not os.path.exists(fonts_dir):
             return False
         
@@ -7689,7 +7689,7 @@ class MAMEControlConfig(ctk.CTk):
         print(f"Font Name: {settings.get('font_name', 'Not set')}")
         
         # Check fonts directory
-        font_dir = os.path.join(self.mame_dir, "fonts")
+        font_dir = os.path.join(self.mame_dir, "preview", "settings", "fonts")
         print(f"\nFonts Directory: {font_dir}")
         if os.path.exists(font_dir):
             print("Directory exists")
@@ -7780,9 +7780,9 @@ class MAMEControlConfig(ctk.CTk):
         
         try:
             # Create fonts directory if it doesn't exist
-            fonts_dir = os.path.join(self.mame_dir, "fonts")
+            fonts_dir = os.path.join(self.mame_dir, "preview", "settings", "fonts")
             os.makedirs(fonts_dir, exist_ok=True)
-            
+
             # Get filename from path
             filename = os.path.basename(font_path)
             
@@ -8207,7 +8207,7 @@ class MAMEControlConfig(ctk.CTk):
         print(f"Font Name: {settings.get('font_name', 'Not set')}")
         
         # Check fonts directory
-        font_dir = os.path.join(self.mame_dir, "fonts")
+        font_dir = os.path.join(self.mame_dir, "preview", "settings", "fonts")
         print(f"\nFonts Directory: {font_dir}")
         if os.path.exists(font_dir):
             print("Directory exists")
@@ -9322,7 +9322,7 @@ class MAMEControlConfig(ctk.CTk):
         font_family = settings.get("font_family")
         
         # Check for the font file
-        font_dir = os.path.join(self.mame_dir, "fonts")
+        font_dir = os.path.join(self.mame_dir, "preview", "settings", "fonts")
         os.makedirs(font_dir, exist_ok=True)
         
         # Look for the font file with the exact name
@@ -9357,7 +9357,7 @@ class MAMEControlConfig(ctk.CTk):
         
     def is_system_font(self, font_name):
         """Check if a font exists in our fonts directory"""
-        fonts_dir = os.path.join(self.mame_dir, "fonts")
+        fonts_dir = os.path.join(self.mame_dir, "preview", "settings", "fonts")
         if not os.path.exists(fonts_dir):
             return False
         
@@ -10249,7 +10249,7 @@ class MAMEControlConfig(ctk.CTk):
             # Add exact preview button
             exact_preview_button = ctk.CTkButton(
                 top_row,
-                text="Exact Preview",
+                text="Exact Image Preview",
                 command=self.show_image_preview,
                 width=button_width
             )
