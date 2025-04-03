@@ -1,9 +1,15 @@
 Global positions
--global_positions_no and global_positions_no_names dont appear to have defaults - should add them global_positions does
+-global_positions is created by default, and no_names added if you save global with no names. Works well, but with names saves to global, but on first run, only global file exists, but defaults to no names... check logic
+
+Info and Fonts
+-move these folders to preview\settings from mame dir
+
+In Game Toggle
+-forgot what this does...
 
 LUA
 -unified plugin does not work, and not sure it will
--one boot lua for all mame versions, hence why plugin doesnt work. If I load it in isolation it works, but then other plugins dont load. best to leave CC Mame as is, and only work with 0.196
+-one boot lua for all mame versions, hence why plugin doesn't work. If I load it in isolation it works, but then other plugins don't load. best to leave CC Mame as is, and only work with 0.196
 -update both mame lua to use newly created params
 
 Hotkey

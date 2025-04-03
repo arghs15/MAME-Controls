@@ -1,0 +1,27 @@
+1. Copy MAME Controls.pyw to mame directory
+
+2. Create preview folder
+
+3. Create settings folder in preview folder
+
+4. Add gamedata.json to settings folder
+
+5. Add default.png to preview folder
+
+6. Add fonts folder to mame dir, and place fonts inside
+
+NOTE, prompt to add new font if directory empty. If you browse to a fint, and select it, it will create the fonts dir with the font inside and aply it in the app
+click save, and it will create the text_appearance_settings.json in the settings folder
+NOTE, Add fonts folder to preview\settings to-do list
+
+7. Text positioning using global_positioning.json has hardcoded default sin the script. A file also gets created for no names 
+NOTE, no names gets saved to global_positions_no_names and when you save global in preview with names, it saves to global_positioning.json
+still odd that no names is default on first run, but there's no global_positions_no_names.json only global_positions.json
+Some odd logic going on. Add to to do
+
+8. Info files needs a default.cfg file but there's not one by default. user needs to add one. App does create a info directory though
+NOTE, Add moving info folder to preview\settings to to-do list
+
+9. In Game Toggle doesnt really do anything - what was it there for?
+
+Everything else appears to work as it should
