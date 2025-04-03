@@ -1234,6 +1234,9 @@ class MAMEControlConfig(ctk.CTk):
         player_tabs = ctk.CTkTabview(content_frame)
         player_tabs.pack(expand=True, fill="both", padx=10, pady=10)
         
+        # Dictionary to track controls to be removed
+        controls_to_remove = {}
+        
         for player_idx, player in enumerate(players_data):
             player_name = player.get('name', f'Player {player_idx+1}')
             
@@ -1243,6 +1246,9 @@ class MAMEControlConfig(ctk.CTk):
             # Frame for player controls
             controls_frame = ctk.CTkScrollableFrame(player_tab)
             controls_frame.pack(expand=True, fill="both", padx=10, pady=10)
+            
+            # Set to track controls to remove for this player
+            controls_to_remove[player_idx] = set()
             
             # Header row - use pack instead of grid
             header_frame = ctk.CTkFrame(controls_frame)
@@ -1273,10 +1279,29 @@ class MAMEControlConfig(ctk.CTk):
                 action_entry.insert(0, action)
                 action_entry.pack(side=tk.LEFT, padx=5)
                 
+                # Add a remove button
+                def create_remove_callback(p_idx, c_idx, cf, btn_name):
+                    def remove_control():
+                        # Add to the set of controls to remove
+                        controls_to_remove[p_idx].add(c_idx)
+                        # Hide the control frame
+                        cf.pack_forget()
+                        print(f"Marked control {btn_name} for removal")
+                    return remove_control
+                
+                remove_button = ctk.CTkButton(
+                    control_frame,
+                    text="❌",
+                    width=30,
+                    command=create_remove_callback(player_idx, control_idx, control_frame, button)
+                )
+                remove_button.pack(side=tk.LEFT, padx=5)
+                
                 # Track this entry for saving later
                 control_entries[(player_idx, control_idx)] = {
                     'button': button,
-                    'entry': action_entry
+                    'entry': action_entry,
+                    'removed': False
                 }
             
             # Allow adding new controls for this player
@@ -1299,18 +1324,39 @@ class MAMEControlConfig(ctk.CTk):
                 control_frame = ctk.CTkFrame(controls_f)
                 control_frame.pack(fill="x", pady=2)
                 
-                ctk.CTkLabel(control_frame, text=btn_entry.get(), width=150).pack(side=tk.LEFT, padx=5)
+                button_name = btn_entry.get()
+                action_text = act_entry.get()
+                
+                ctk.CTkLabel(control_frame, text=button_name, width=150).pack(side=tk.LEFT, padx=5)
                 
                 # Entry for action
                 action_entry = ctk.CTkEntry(control_frame, width=300)
-                action_entry.insert(0, act_entry.get())
+                action_entry.insert(0, action_text)
                 action_entry.pack(side=tk.LEFT, padx=5)
                 
                 # Track this entry
                 control_idx = len(p_controls)
+                
+                # Add a remove button for the new control
+                def remove_new_control():
+                    # Mark this control for removal
+                    controls_to_remove[p_idx].add(control_idx)
+                    # Hide the control frame
+                    control_frame.pack_forget()
+                    print(f"Marked new control {button_name} for removal")
+                
+                remove_button = ctk.CTkButton(
+                    control_frame,
+                    text="❌",
+                    width=30,
+                    command=remove_new_control
+                )
+                remove_button.pack(side=tk.LEFT, padx=5)
+                
                 control_entries[(p_idx, control_idx)] = {
-                    'button': btn_entry.get(),
-                    'entry': action_entry
+                    'button': button_name,
+                    'entry': action_entry,
+                    'removed': False
                 }
                 
                 # Clear entries
@@ -1318,14 +1364,14 @@ class MAMEControlConfig(ctk.CTk):
                 act_entry.delete(0, 'end')
                 
                 # Add to player_controls for proper indexing on next add
-                p_controls.append({'name': btn_entry.get(), 'value': act_entry.get()})
+                p_controls.append({'name': button_name, 'value': action_text})
                 
             add_button = ctk.CTkButton(add_frame, text="Add", command=add_new_control)
             add_button.pack(side=tk.LEFT, padx=5)
         
-        # Bottom buttons frame
-        buttons_frame = ctk.CTkFrame(editor)
-        buttons_frame.pack(fill="x", padx=10, pady=10)
+        # Buttons frame
+        button_frame = ctk.CTkFrame(editor)
+        button_frame.pack(fill="x", padx=10, pady=10)
         
         def save_controls():
             """Save controls directly to gamedata.json"""
@@ -1340,7 +1386,13 @@ class MAMEControlConfig(ctk.CTk):
                 
                 # Process control entries
                 control_updates = {}
+                
                 for (player_idx, control_idx), control_info in control_entries.items():
+                    # Skip if this control was marked for removal
+                    if player_idx in controls_to_remove and control_idx in controls_to_remove[player_idx]:
+                        print(f"Skipping removed control: Player {player_idx}, Control {control_idx}")
+                        continue
+                    
                     control_name = control_info['button']
                     action_value = control_info['entry'].get()
                     
@@ -1353,6 +1405,20 @@ class MAMEControlConfig(ctk.CTk):
                 def update_controls_in_data(data):
                     if 'controls' not in data:
                         data['controls'] = {}
+                    
+                    # First, check if we need to explicitly remove any controls
+                    # This is for controls that existed in the original data but were removed in the editor
+                    if rom_name in gamedata and 'controls' in gamedata[rom_name]:
+                        existing_controls = set(gamedata[rom_name]['controls'].keys())
+                        updated_controls = set(control_updates.keys())
+                        
+                        # Find controls that were in the original data but aren't in our updates
+                        # These are ones that were explicitly removed
+                        for removed_control in existing_controls - updated_controls:
+                            # Remove from the data structure
+                            if removed_control in data['controls']:
+                                print(f"Removing control: {removed_control}")
+                                del data['controls'][removed_control]
                     
                     # Update or add name attributes to controls
                     for control_name, action in control_updates.items():
@@ -1379,7 +1445,8 @@ class MAMEControlConfig(ctk.CTk):
                     # If ROM has no controls but has clones with controls, update the last clone
                     clone_with_controls = None
                     
-                    for clone_name, clone_data in gamedata[rom_name]['clones'].items():
+                    for clone_name in gamedata[rom_name]['clones']:
+                        clone_data = gamedata[rom_name]['clones'][clone_name]
                         if 'controls' in clone_data:
                             clone_with_controls = clone_name
                             
@@ -1424,18 +1491,18 @@ class MAMEControlConfig(ctk.CTk):
                 traceback.print_exc()
         
         save_button = ctk.CTkButton(
-            buttons_frame,
+            button_frame,
             text="Save Controls",
             command=save_controls
         )
-        save_button.pack(side=tk.LEFT, padx=10)
+        save_button.pack(side="left", padx=10)
         
         close_button = ctk.CTkButton(
-            buttons_frame,
+            button_frame,
             text="Cancel",
             command=editor.destroy
         )
-        close_button.pack(side=tk.RIGHT, padx=10)
+        close_button.pack(side="right", padx=10)
 
     def create_game_list_with_edit(self, parent_frame, game_list, title_text):
         """Helper function to create a consistent list with edit button for games"""
@@ -3053,16 +3120,16 @@ class MAMEControlConfig(ctk.CTk):
         if not positions:
             # Default XInput button positions
             default_positions = {
-                "A": [742.3333333333334, 367.0], 
-                "B": [742.3333333333334, 443.0], 
-                "X": [742.3333333333334, 518.0], 
-                "Y": [742.3333333333334, 595.0], 
-                "LB": [739.3333333333334, 825.0], 
-                "RB": [742.3333333333334, 668.0], 
-                "LT": [739.3333333333334, 897.0], 
-                "RT": [742.3333333333334, 746.0], 
-                "LS": [742.3333333333334, 959.0], 
-                "RS": [742.3333333333334, 1007.0], 
+                "A": [739.3333333333334, 322.0], 
+                "B": [739.3333333333334, 401.0], 
+                "X": [739.3333333333334, 478.0], 
+                "Y": [739.3333333333334, 548.0], 
+                "LB": [739.3333333333334, 782.0], 
+                "RB": [739.3333333333334, 626.0], 
+                "LT": [739.3333333333334, 856.0], 
+                "RT": [739.3333333333334, 701.0], 
+                "LS": [739.3333333333334, 941.0], 
+                "RS": [739.3333333333334, 999.0], 
                 "UP": [669.3333333333334, 367.0], 
                 "DOWN": [668.3333333333334, 322.0], 
                 "LEFT": [667.3333333333334, 456.0], 
