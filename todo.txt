@@ -1,11 +1,11 @@
+Info file directory
+-need to make the path relitive 
+-check other paths 
+
 LUA
--unified plugin now works for both versions.
-If version ≤ 196: Use "old mode" (MAME 0.196 script)
-If version > 196: Use "new mode" (MAME 0.275+ script)
--plugins_MAME_0196_0215_0231 doesnt actually work, but using mameNEW264.exe -autoboot_script controls.lua xmenu   does. must be the boot.lua plugin error...
--need to make it work with other versions. currently 231 doesnt work
--update latest mame lua to use newly created params
--test new mame lua works as it should
+-unified plugin does not work, and not sure it will
+-one boot lua for all mame versions, hence why plugin doesnt work. If I load it in isolation it works, but then other plugins dont load. best to leave CC Mame as is, and only work with 0.196
+-update both mame lua to use newly created params
 
 Hotkey
 -hotkey to move preview screen to second screen, and/or hide so you can navigate tab menu
