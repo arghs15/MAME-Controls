@@ -1,7 +1,3 @@
-Info file directory
--need to make the path relitive 
--check other paths 
-
 LUA
 -unified plugin does not work, and not sure it will
 -one boot lua for all mame versions, hence why plugin doesnt work. If I load it in isolation it works, but then other plugins dont load. best to leave CC Mame as is, and only work with 0.196

@@ -6579,6 +6579,15 @@ class MAMEControlConfig(ctk.CTk):
         import traceback
         import sys
 
+        # At the start of generate_preview_images()
+        #settings = self.get_text_settings()
+        #print(f"DEBUG: Font settings being used:")
+        #print(f"  Font family: {settings.get('font_family')}")
+        #print(f"  Font filename: {settings.get('font_filename')}")
+        #print(f"  Font size: {settings.get('font_size')}")
+        #print(f"  Y-offset: {settings.get('y_offset')}")
+        #print(f"  Bold strength: {settings.get('bold_strength')}")
+
         # Ensure preview directory exists
         preview_dir = self.ensure_preview_folder()
         
@@ -6586,6 +6595,11 @@ class MAMEControlConfig(ctk.CTk):
         settings = self.get_text_settings()
         use_uppercase = settings.get("use_uppercase", False)
         print(f"Batch generation - Uppercase setting: {use_uppercase}")
+        
+        # Add more debug output for font/text settings
+        print(f"Font settings: family={settings.get('font_family', 'Arial')}, size={settings.get('font_size', 28)}")
+        print(f"Y-offset: {settings.get('y_offset', -40)}")
+        print(f"Bold strength: {settings.get('bold_strength', 2)}")
         
         # Get visibility settings
         visible_control_types = self.visible_control_types
@@ -6616,8 +6630,22 @@ class MAMEControlConfig(ctk.CTk):
             messagebox.showerror("Error", "No global position layout found. Please create and save a global layout first.")
             return
 
-        print(f"Loaded global positions: {global_positions}")
+        print(f"Loaded global positions: {len(global_positions)} items")
+        
+        # Print a sample of positions for debugging
+        sample_count = 0
+        for button, pos in global_positions.items():
+            if sample_count < 3:
+                print(f"Position sample - {button}: {pos}")
+                sample_count += 1
 
+        # Create an instance of position manager for consistent offset application
+        if not hasattr(self, 'position_manager'):
+            self.position_manager = PositionManager(self)
+
+        # Get fonts based on settings
+        font, title_font = self.get_fonts_from_settings(settings)
+        
         # Sort ROMs for processing
         sorted_roms = sorted(self.available_roms)
         
@@ -6701,9 +6729,6 @@ class MAMEControlConfig(ctk.CTk):
                 target_width, target_height = 1920, 1080
                 bg_img = Image.new('RGB', (target_width, target_height), color='black')
             
-            # Get fonts based on settings
-            font, title_font = self.get_fonts_from_settings(settings)
-            
             # Process each ROM
             for i, rom_name in enumerate(sorted_roms):
                 if cancel_flag[0]:
@@ -6736,15 +6761,56 @@ class MAMEControlConfig(ctk.CTk):
                 # Fall back to global positions if ROM-specific not available
                 positions = rom_positions if rom_positions else global_positions
                 
-                print(f"Using positions for {rom_name}: {positions}")
+                # Print the first few positions for debugging
+                print(f"Using positions for {rom_name} ({len(positions)} items)")
                 
                 try:
-                    # Start with a copy of the background image
-                    img = bg_img.copy()
-                    draw = ImageDraw.Draw(img)
+                    # Create separate layer images for proper compositing
+                    background_layer = Image.new('RGBA', (target_width, target_height), (0, 0, 0, 0))
+                    bezel_layer = Image.new('RGBA', (target_width, target_height), (0, 0, 0, 0))
+                    text_layer = Image.new('RGBA', (target_width, target_height), (0, 0, 0, 0))
+                    logo_layer = Image.new('RGBA', (target_width, target_height), (0, 0, 0, 0))
                     
-                    # Draw all controls based on positions
+                    # Create a draw object for the text layer
+                    text_draw = ImageDraw.Draw(text_layer)
+                    
+                    # Copy the background image to the background layer
+                    background_layer.paste(bg_img.convert('RGBA'), (0, 0))
+                    
+                    # Add game title text if show_rom_info is enabled
+                    if getattr(self, 'show_rom_info', False):
+                        # Draw title (always show this)
+                        game_title = game_data['gamename']
+                        text_draw.text((target_width//2, 60), game_title, fill=(255, 255, 255, 255), anchor="mt", font=title_font)
+                        
+                        # Draw ROM info
+                        text_draw.text((target_width//2, 110), f"ROM: {rom_name}", fill=(150, 150, 150, 255), anchor="mt", font=font)
+                            
+                        # Add any details if available
+                        if 'miscDetails' in game_data:
+                            text_draw.text((target_width//2, 150), game_data['miscDetails'], 
+                                    fill=(150, 150, 150, 255), anchor="mt", font=font)
+                    
+                    # Get custom controls if they exist
+                    cfg_controls = {}
+                    if rom_name in self.custom_configs:
+                        cfg_controls = self.parse_cfg_controls(self.custom_configs[rom_name])
+                        # Convert mappings if XInput is enabled
+                        if self.use_xinput:
+                            cfg_controls = {
+                                control: self.convert_mapping(mapping, True)
+                                for control, mapping in cfg_controls.items()
+                            }
+                    
+                    # THIS IS THE CRITICAL PART: Draw all controls based on positions
+                    # Process Player 1 controls based on game_data and positions
                     drawn_controls = 0
+                    
+                    # IMPORTANT Y-OFFSET ADJUSTMENT
+                    # If text appears too low, we can adjust with this value
+                    # Positive values move text up, negative values move text down
+                    adjustment = 40  # Adjust this value as needed to match manual saving
+                    
                     for player in game_data.get('players', []):
                         if player['number'] != 1:  # Only show P1 controls for now
                             continue
@@ -6765,50 +6831,118 @@ class MAMEControlConfig(ctk.CTk):
                                 print(f"  Skipping hidden control: {control_name}")
                                 continue
                             
-                            # Use position from saved layout
-                            if control_name in positions:
-                                # The positions are already in the correct scale (1920x1080)
-                                text_x, text_y = positions[control_name]
+                            # Get XInput button name for positioning
+                            custom_mapping = None
+                            if control_name in cfg_controls:
+                                custom_mapping = cfg_controls[control_name]
                                 
-                                # Use the apply_text_settings helper to draw text with current settings
-                                self.apply_text_settings(draw, action, text_x, text_y, font, settings)
+                            xinput_button = self.get_xinput_button_from_control(control_name, custom_mapping)
+                            
+                            # Skip controls that don't map to XInput buttons
+                            if not xinput_button:
+                                continue
+                            
+                            # Format the display text with proper settings
+                            display_text = self.get_display_text(action, settings, control_name, custom_mapping)
+                            
+                            # Skip if no display text
+                            if not display_text:
+                                continue
+                                
+                            # Get position from the saved layout
+                            if xinput_button in positions:
+                                # Get normalized position
+                                x, normalized_y = positions[xinput_button]
+                                
+                                # Get y-offset from settings
+                                y_offset = settings.get('y_offset', -40)
+                                
+                                # Apply y-offset directly with the additional adjustment
+                                y = normalized_y + y_offset - adjustment
+                                
+                                # Debug output - print position calculations for a few controls
+                                if drawn_controls < 2:
+                                    print(f"Position for {xinput_button} (control: {control_name}): normalized_y={normalized_y}, y_offset={y_offset}, adjustment={adjustment}, final_y={y}")
+                                
+                                # Apply bold effect based on settings
+                                bold_strength = settings.get('bold_strength', 2)
+                                
+                                if bold_strength == 0:
+                                    # No bold effect
+                                    text_draw.text((x, y), display_text, fill=(255, 255, 255, 255), font=font)
+                                else:
+                                    # Draw shadows for bold effect
+                                    offsets = []
+                                    if bold_strength >= 1:
+                                        offsets.extend([(1, 0), (0, 1), (-1, 0), (0, -1)])
+                                    if bold_strength >= 2:
+                                        offsets.extend([(1, 1), (-1, 1), (1, -1), (-1, -1)])
+                                    if bold_strength >= 3:
+                                        offsets.extend([(2, 0), (0, 2), (-2, 0), (0, -2)])
+                                        
+                                    # Draw shadows
+                                    for dx, dy in offsets:
+                                        text_draw.text((x+dx, y+dy), display_text, fill=(0, 0, 0, 255), font=font)
+                                    
+                                    # Draw main text
+                                    text_draw.text((x, y), display_text, fill=(255, 255, 255, 255), font=font)
+                                    
                                 drawn_controls += 1
                             else:
-                                print(f"  Warning: No position for {control_name}")
+                                print(f"  Warning: No position for {xinput_button}")
+                        
+                    print(f"Drew {drawn_controls} controls for {rom_name}")
+
+                    # Get layer ordering from settings (or use default)
+                    layer_order = getattr(self, 'layer_order', {
+                        'bezel': 1,       # Default: bezel on bottom
+                        'background': 2,  # Background above bezel
+                        'logo': 3,        # Logo above background
+                        'text': 4         # Text on top
+                    })
                     
-                    print(f"Drew {drawn_controls} controls for {rom_name}")
-
-                    # Add logo to the image
-                    img = self.add_logo_to_image(img, rom_name)
-
-                    # Then save the image
-                    img.save(image_path, format="PNG")
-
-                    # Replace it with this proper layering:
-                    print(f"Drew {drawn_controls} controls for {rom_name}")
-
-                    # Apply proper layering based on settings
-                    if getattr(self, 'layer_order', {}).get('bezel', 1) < getattr(self, 'layer_order', {}).get('logo', 3):
-                        # Add bezel first (it will be behind everything)
-                        img = self.add_bezel_to_image(img, rom_name)
-                        # Then add logo on top
-                        img = self.add_logo_to_image(img, rom_name)
-                    else:
-                        # Add logo first
-                        img = self.add_logo_to_image(img, rom_name)
-                        # Then add bezel on top
-                        img = self.add_bezel_to_image(img, rom_name)
-
-                    # Then save the image
-                    img.save(image_path, format="PNG")
+                    # Apply layering based on settings
+                    # Add bezel if enabled
+                    if getattr(self, 'bezel_visible', True):
+                        bezel_img = self.add_bezel_to_image(background_layer.copy().convert('RGB'), rom_name)
+                        if bezel_img != background_layer:
+                            bezel_layer = bezel_img.convert('RGBA')
+                            
+                    # Add logo if enabled
+                    if getattr(self, 'logo_visible', True):
+                        logo_img = self.add_logo_to_image(Image.new('RGBA', (target_width, target_height), (0, 0, 0, 0)), rom_name)
+                        if logo_img.getbbox():  # Check if logo is not empty
+                            logo_layer = logo_img.convert('RGBA')
+                    
+                    # Create a dictionary of layers with their order
+                    layers = {
+                        'bezel': {'image': bezel_layer, 'order': layer_order.get('bezel', 1)},
+                        'background': {'image': background_layer, 'order': layer_order.get('background', 2)},
+                        'logo': {'image': logo_layer, 'order': layer_order.get('logo', 3)},
+                        'text': {'image': text_layer, 'order': layer_order.get('text', 4)}
+                    }
+                    
+                    # Sort layers by order
+                    sorted_layers = sorted(layers.items(), key=lambda x: x[1]['order'])
+                    
+                    # Composite all layers in correct order
+                    composite_img = Image.new('RGBA', (target_width, target_height), (0, 0, 0, 0))
+                    for layer_name, layer_data in sorted_layers:
+                        print(f"Compositing layer: {layer_name} (order {layer_data['order']})")
+                        composite_img = Image.alpha_composite(composite_img, layer_data['image'])
+                    
+                    # Save the final image (convert to RGB for compatibility)
+                    final_img = composite_img.convert('RGB')
+                    final_img.save(image_path, format="PNG")
+                    
                     print(f"Created preview image for {rom_name}: {image_path}")
                     created += 1
-                    
+                        
                 except Exception as e:
                     print(f"Error creating image for {rom_name}: {e}")
                     traceback.print_exc()
                     errors += 1
-                    
+                        
         except Exception as e:
             messagebox.showerror("Error", f"Failed to generate images: {str(e)}")
             traceback.print_exc()
@@ -6834,7 +6968,7 @@ class MAMEControlConfig(ctk.CTk):
                 "errors": errors,
                 "total": len(sorted_roms)
             }
-
+    
     def get_font_path(self):
         """Get the absolute path to the font file based on settings"""
         import os
