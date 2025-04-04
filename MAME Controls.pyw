@@ -1482,6 +1482,27 @@ class MAMEControlConfig(ctk.CTk):
                     del self.gamedata_json
                     self.load_gamedata_json()
                 
+                # Clear the in-memory cache to force reloading data
+                if hasattr(self, 'rom_data_cache'):
+                    self.rom_data_cache = {}
+                    print("Cleared ROM data cache to force refresh")
+                
+                # Rebuild SQLite database if it's being used
+                if hasattr(self, 'db_path') and self.db_path:
+                    print("Rebuilding SQLite database to reflect control changes...")
+                    self.build_gamedata_db()
+                    print("Database rebuild complete")
+                
+                # Refresh any currently displayed data
+                if self.current_game == rom_name and hasattr(self, 'on_game_select'):
+                    print(f"Refreshing display for current game: {rom_name}")
+                    # Create a mock event to trigger refresh
+                    class MockEvent:
+                        def __init__(self):
+                            self.x = 10
+                            self.y = 10
+                    self.on_game_select(MockEvent())
+                
                 # Close the editor
                 editor.destroy()
                 
@@ -1490,6 +1511,7 @@ class MAMEControlConfig(ctk.CTk):
                 import traceback
                 traceback.print_exc()
         
+        # Save button
         save_button = ctk.CTkButton(
             button_frame,
             text="Save Controls",
@@ -1497,6 +1519,7 @@ class MAMEControlConfig(ctk.CTk):
         )
         save_button.pack(side="left", padx=10)
         
+        # Close button
         close_button = ctk.CTkButton(
             button_frame,
             text="Cancel",
