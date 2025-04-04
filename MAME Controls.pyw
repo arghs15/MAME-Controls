@@ -2342,14 +2342,6 @@ class MAMEControlConfig(ctk.CTk):
         self.xinput_toggle.select()  # Set it on by default
         self.xinput_toggle.grid(row=1, column=0, padx=5, pady=5)
 
-        # Add In-Game Mode toggle
-        self.ingame_toggle = ctk.CTkSwitch(
-            self.right_panel,
-            text="In-Game Mode",
-            command=self.toggle_ingame_mode
-        )
-        self.ingame_toggle.grid(row=1, column=1, padx=5, pady=5, sticky="e")
-
         # Controls display
         self.control_frame = ctk.CTkScrollableFrame(self.right_panel)
         self.control_frame.grid(row=2, column=0, columnspan=3, padx=5, pady=5, sticky="nsew")
@@ -2982,10 +2974,10 @@ class MAMEControlConfig(ctk.CTk):
 
     # 3. Add methods to save and load the setting
     def save_preview_button_setting(self):
-        """Save the preview buttons visibility setting"""
+        """Save the preview buttons visibility setting using centralized path"""
         try:
-            # Get the settings file path
-            settings_path = os.path.join(self.mame_dir, "control_config_settings.json")
+            # Use centralized settings path function
+            settings_path = self.get_settings_path("general")
             
             # Load existing settings if available
             settings = {}
@@ -3000,7 +2992,7 @@ class MAMEControlConfig(ctk.CTk):
             with open(settings_path, 'w') as f:
                 json.dump(settings, f)
                 
-            print(f"Saved hide_preview_buttons setting: {self.hide_preview_buttons}")
+            print(f"Saved hide_preview_buttons setting: {self.hide_preview_buttons} to {settings_path}")
         except Exception as e:
             print(f"Error saving setting: {e}")
     
@@ -3526,18 +3518,6 @@ class MAMEControlConfig(ctk.CTk):
             print(f"Error in auto-selection: {e}")
             import traceback
             traceback.print_exc()
-
-    def toggle_ingame_mode(self):
-        """Toggle between normal and in-game display modes"""
-        if self.ingame_toggle.get():
-            self.switch_to_ingame_mode()
-        else:
-            # Create mock event to reuse existing game select logic
-            class MockEvent:
-                def __init__(self):
-                    self.x = 0
-                    self.y = 5
-            self.on_game_select(MockEvent())
             
     def switch_to_ingame_mode(self):
         """Switch to a simplified, large-format display for in-game reference"""
