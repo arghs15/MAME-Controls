@@ -498,7 +498,7 @@ class MAMEControlConfig(ctk.CTk):
         return regular_time, ijson_time
 
     def build_gamedata_db(self):
-        """Build a SQLite database from gamedata.json"""
+        """Build a SQLite database from gamedata.json with improved handling of game removals"""
         # Find the gamedata.json file
         gamedata_path = self.get_gamedata_path()
         if not os.path.exists(gamedata_path):
@@ -509,21 +509,6 @@ class MAMEControlConfig(ctk.CTk):
         db_path = os.path.join(self.mame_dir, "preview", "settings", "gamedata.db")
         os.makedirs(os.path.dirname(db_path), exist_ok=True)
         
-        # Check if we need to rebuild the database
-        rebuild_db = True
-        if os.path.exists(db_path):
-            try:
-                # Compare modification times
-                db_mtime = os.path.getmtime(db_path)
-                json_mtime = os.path.getmtime(gamedata_path)
-                
-                if db_mtime > json_mtime:
-                    print("SQLite database is up to date")
-                    self.db_path = db_path
-                    return True
-            except Exception as e:
-                print(f"Error checking database: {e}")
-        
         print(f"Building SQLite database from {gamedata_path}...")
         start_time = time.time()
         
@@ -531,6 +516,10 @@ class MAMEControlConfig(ctk.CTk):
             # Connect to the database
             conn = sqlite3.connect(db_path)
             cursor = conn.cursor()
+            
+            # Drop existing tables to ensure a clean rebuild
+            cursor.execute('DROP TABLE IF EXISTS games')
+            cursor.execute('DROP TABLE IF EXISTS clones')
             
             # Create the games table
             cursor.execute('''
@@ -583,11 +572,11 @@ class MAMEControlConfig(ctk.CTk):
                     game_count += 1
                     
                     # Process clones if available
-                    if 'clones' in data:
-                        for clone in data['clones']:
+                    if 'clones' in data and isinstance(data['clones'], dict):
+                        for clone_name in data['clones']:
                             cursor.execute(
                                 'INSERT OR REPLACE INTO clones VALUES (?, ?)',
-                                (clone, romname)
+                                (clone_name, romname)
                             )
                             clone_count += 1
                     
@@ -1196,14 +1185,17 @@ class MAMEControlConfig(ctk.CTk):
         return generic_control_games, missing_control_games
 
     def show_control_editor(self, rom_name, game_name=None):
-        """Show editor for a game's controls with direct gamedata.json editing"""
+        """Show editor for a game's controls with direct gamedata.json editing and standard button layout"""
         game_data = self.get_game_data(rom_name) or {}
         game_name = game_name or game_data.get('gamename', rom_name)
         
+        # Check if this is an existing game or a new one
+        is_new_game = not bool(game_data)
+        
         # Create dialog
         editor = ctk.CTkToplevel(self)
-        editor.title(f"Edit Controls - {game_name}")
-        editor.geometry("900x600")
+        editor.title(f"{'Add New Game' if is_new_game else 'Edit Controls'} - {game_name}")
+        editor.geometry("900x750")  # Made taller to accommodate all controls
         editor.transient(self)
         editor.grab_set()
         
@@ -1213,169 +1205,235 @@ class MAMEControlConfig(ctk.CTk):
         
         ctk.CTkLabel(
             header_frame,
-            text=f"Edit Controls for {game_name}",
+            text=f"{'Add New Game' if is_new_game else 'Edit Controls for'} {game_name}",
             font=("Arial", 16, "bold")
         ).pack(side=tk.LEFT, padx=10)
         
-        # Main content frame
-        content_frame = ctk.CTkFrame(editor)
+        # Game properties section (shown prominently for new games)
+        properties_frame = ctk.CTkFrame(editor)
+        properties_frame.pack(fill="x", padx=10, pady=10)
+        
+        # Add a label for the properties section
+        ctk.CTkLabel(
+            properties_frame,
+            text="Game Properties",
+            font=("Arial", 14, "bold")
+        ).pack(anchor="w", padx=10, pady=(10, 5))
+        
+        # Create grid for properties
+        properties_grid = ctk.CTkFrame(properties_frame)
+        properties_grid.pack(fill="x", padx=10, pady=5)
+        
+        # Get current values
+        current_description = game_data.get('gamename', game_name) or rom_name
+        current_playercount = game_data.get('numPlayers', 2)
+        if isinstance(current_playercount, str):
+            current_playercount = int(current_playercount)
+        
+        # For buttons and sticks, try to extract from miscDetails if available
+        current_buttons = "6"  # Default
+        current_sticks = "1"  # Default
+        
+        if 'miscDetails' in game_data:
+            # Try to parse from miscDetails (format: "Buttons: X, Sticks: Y")
+            details = game_data.get('miscDetails', '')
+            buttons_match = re.search(r'Buttons: (\d+)', details)
+            sticks_match = re.search(r'Sticks: (\d+)', details)
+            
+            if buttons_match:
+                current_buttons = buttons_match.group(1)
+            if sticks_match:
+                current_sticks = sticks_match.group(1)
+        
+        # Row 0: Game Description (Name)
+        ctk.CTkLabel(properties_grid, text="Game Name:", width=100).grid(row=0, column=0, padx=5, pady=5, sticky="w")
+        description_var = ctk.StringVar(value=current_description)
+        description_entry = ctk.CTkEntry(properties_grid, width=300, textvariable=description_var)
+        description_entry.grid(row=0, column=1, padx=5, pady=5, sticky="ew")
+        
+        # Row 1: Player Count
+        ctk.CTkLabel(properties_grid, text="Players:", width=100).grid(row=1, column=0, padx=5, pady=5, sticky="w")
+        playercount_var = ctk.StringVar(value=str(current_playercount))
+        playercount_combo = ctk.CTkComboBox(properties_grid, width=100, values=["1", "2", "3", "4"], variable=playercount_var)
+        playercount_combo.grid(row=1, column=1, padx=5, pady=5, sticky="w")
+        
+        # Set up players alternating option
+        alternating_var = ctk.BooleanVar(value=game_data.get('alternating', False))
+        alternating_check = ctk.CTkCheckBox(properties_grid, text="Alternating Play", variable=alternating_var)
+        alternating_check.grid(row=1, column=2, padx=5, pady=5, sticky="w")
+        
+        # Row 2: Buttons and Sticks
+        ctk.CTkLabel(properties_grid, text="Buttons:", width=100).grid(row=2, column=0, padx=5, pady=5, sticky="w")
+        buttons_var = ctk.StringVar(value=current_buttons)
+        buttons_combo = ctk.CTkComboBox(properties_grid, width=100, values=["1", "2", "3", "4", "5", "6", "8"], variable=buttons_var)
+        buttons_combo.grid(row=2, column=1, padx=5, pady=5, sticky="w")
+        
+        ctk.CTkLabel(properties_grid, text="Sticks:", width=100).grid(row=2, column=2, padx=5, pady=5, sticky="w")
+        sticks_var = ctk.StringVar(value=current_sticks)
+        sticks_combo = ctk.CTkComboBox(properties_grid, width=100, values=["0", "1", "2"], variable=sticks_var)
+        sticks_combo.grid(row=2, column=3, padx=5, pady=5, sticky="w")
+        
+        # Set column weights
+        properties_grid.columnconfigure(1, weight=1)
+        properties_grid.columnconfigure(3, weight=1)
+        
+        # Main content frame with scrolling
+        content_frame = ctk.CTkScrollableFrame(editor)
         content_frame.pack(expand=True, fill="both", padx=10, pady=10)
         
-        # Controls
-        players_data = game_data.get('players', [])
-        if not players_data:
-            # Create default structure if none exists
-            players_data = [{'name': 'Player 1', 'labels': []}]
+        # Define standard controller buttons from the mapping dictionary
+        standard_controls = [
+            ('P1_BUTTON1', 'A Button'),
+            ('P1_BUTTON2', 'B Button'),
+            ('P1_BUTTON3', 'X Button'),
+            ('P1_BUTTON4', 'Y Button'),
+            ('P1_BUTTON5', 'Left Bumper (LB)'),
+            ('P1_BUTTON6', 'Right Bumper (RB)'),
+            ('P1_BUTTON7', 'Left Trigger (LT)'),
+            ('P1_BUTTON8', 'Right Trigger (RT)'),
+            ('P1_BUTTON9', 'Left Stick Button (L3)'),
+            ('P1_BUTTON10', 'Right Stick Button (R3)'),
+            ('P1_JOYSTICK_UP', 'Left Stick Up'),
+            ('P1_JOYSTICK_DOWN', 'Left Stick Down'),
+            ('P1_JOYSTICK_LEFT', 'Left Stick Left'),
+            ('P1_JOYSTICK_RIGHT', 'Left Stick Right')
+        ]
         
-        # Dictionary to track all control entries for later saving
+        # Create a dictionary to store all the entry fields
         control_entries = {}
         
-        # Create tabview for players
-        player_tabs = ctk.CTkTabview(content_frame)
-        player_tabs.pack(expand=True, fill="both", padx=10, pady=10)
+        # Helper function to get existing action for a control
+        def get_existing_action(control_name):
+            for player in game_data.get('players', []):
+                for label in player.get('labels', []):
+                    if label.get('name') == control_name:
+                        return label.get('value', '')
+            return ''
         
-        # Dictionary to track controls to be removed
-        controls_to_remove = {}
+        # Header for the controls
+        header_frame = ctk.CTkFrame(content_frame)
+        header_frame.pack(fill="x", pady=5)
         
-        for player_idx, player in enumerate(players_data):
-            player_name = player.get('name', f'Player {player_idx+1}')
+        control_label = ctk.CTkLabel(header_frame, text="Control", width=200, font=("Arial", 14, "bold"))
+        control_label.pack(side=tk.LEFT, padx=5)
+        
+        action_label = ctk.CTkLabel(header_frame, text="Action/Function (leave empty to skip)", width=300, font=("Arial", 14, "bold"))
+        action_label.pack(side=tk.LEFT, padx=5)
+        
+        # Create entry fields for each standard control
+        for control_name, display_name in standard_controls:
+            # Create a frame for each control
+            control_frame = ctk.CTkFrame(content_frame)
+            control_frame.pack(fill="x", pady=5)
             
-            # Create a tab for this player
-            player_tab = player_tabs.add(player_name)
+            # Button/control name display
+            ctk.CTkLabel(control_frame, text=display_name, width=200).pack(side=tk.LEFT, padx=5)
             
-            # Frame for player controls
-            controls_frame = ctk.CTkScrollableFrame(player_tab)
-            controls_frame.pack(expand=True, fill="both", padx=10, pady=10)
+            # Get existing action if available
+            existing_action = get_existing_action(control_name)
             
-            # Set to track controls to remove for this player
-            controls_to_remove[player_idx] = set()
+            # Create entry for action
+            action_entry = ctk.CTkEntry(control_frame, width=400)
+            action_entry.insert(0, existing_action)
+            action_entry.pack(side=tk.LEFT, padx=5, fill="x", expand=True)
             
-            # Header row - use pack instead of grid
-            header_frame = ctk.CTkFrame(controls_frame)
-            header_frame.pack(fill="x", pady=5)
+            # Store the entry widget in our dictionary
+            control_entries[control_name] = action_entry
+        
+        # Add a section for custom controls
+        custom_frame = ctk.CTkFrame(content_frame)
+        custom_frame.pack(fill="x", pady=(20, 5))
+        
+        ctk.CTkLabel(
+            custom_frame, 
+            text="Add Custom Controls (Optional)", 
+            font=("Arial", 14, "bold")
+        ).pack(pady=5)
+        
+        # Frame to hold custom control entries
+        custom_controls_frame = ctk.CTkFrame(content_frame)
+        custom_controls_frame.pack(fill="x", pady=5)
+        
+        # List to track custom controls
+        custom_control_rows = []
+        
+        # Function to add a new custom control row
+        def add_custom_control_row():
+            row_frame = ctk.CTkFrame(custom_controls_frame)
+            row_frame.pack(fill="x", pady=2)
             
-            button_label = ctk.CTkLabel(header_frame, text="Button/Input", width=150, font=("Arial", 12, "bold"))
-            button_label.pack(side=tk.LEFT, padx=5)
+            # Control name entry
+            control_entry = ctk.CTkEntry(row_frame, width=200, placeholder_text="Custom Control (e.g., P1_BUTTON11)")
+            control_entry.pack(side=tk.LEFT, padx=5)
             
-            action_label = ctk.CTkLabel(header_frame, text="Action/Function", width=300, font=("Arial", 12, "bold"))
-            action_label.pack(side=tk.LEFT, padx=5)
+            # Action entry
+            action_entry = ctk.CTkEntry(row_frame, width=400, placeholder_text="Action/Function")
+            action_entry.pack(side=tk.LEFT, padx=5, fill="x", expand=True)
             
-            # Get labels (controls) for this player
-            player_controls = player.get('labels', [])
+            # Remove button
+            def remove_row():
+                row_frame.pack_forget()
+                row_frame.destroy()
+                if row_data in custom_control_rows:
+                    custom_control_rows.remove(row_data)
             
-            # Add existing controls - using pack instead of grid
-            for control_idx, control in enumerate(player_controls):
-                button = control.get('name', '')
-                action = control.get('value', '')
-                
-                # Create a frame for each control row
-                control_frame = ctk.CTkFrame(controls_frame)
-                control_frame.pack(fill="x", pady=2)
-                
-                ctk.CTkLabel(control_frame, text=button, width=150).pack(side=tk.LEFT, padx=5)
-                
-                # Entry for action
-                action_entry = ctk.CTkEntry(control_frame, width=300)
-                action_entry.insert(0, action)
-                action_entry.pack(side=tk.LEFT, padx=5)
-                
-                # Add a remove button
-                def create_remove_callback(p_idx, c_idx, cf, btn_name):
-                    def remove_control():
-                        # Add to the set of controls to remove
-                        controls_to_remove[p_idx].add(c_idx)
-                        # Hide the control frame
-                        cf.pack_forget()
-                        print(f"Marked control {btn_name} for removal")
-                    return remove_control
-                
-                remove_button = ctk.CTkButton(
-                    control_frame,
-                    text="❌",
-                    width=30,
-                    command=create_remove_callback(player_idx, control_idx, control_frame, button)
-                )
-                remove_button.pack(side=tk.LEFT, padx=5)
-                
-                # Track this entry for saving later
-                control_entries[(player_idx, control_idx)] = {
-                    'button': button,
-                    'entry': action_entry,
-                    'removed': False
-                }
+            remove_button = ctk.CTkButton(
+                row_frame,
+                text="❌",
+                width=30,
+                command=remove_row
+            )
+            remove_button.pack(side=tk.LEFT, padx=5)
             
-            # Allow adding new controls for this player
-            add_frame = ctk.CTkFrame(player_tab)
-            add_frame.pack(fill="x", padx=10, pady=10)
+            # Store row data
+            row_data = {'frame': row_frame, 'control': control_entry, 'action': action_entry}
+            custom_control_rows.append(row_data)
             
-            ctk.CTkLabel(add_frame, text="Add new control:").pack(side=tk.LEFT, padx=5)
-            
-            new_button_entry = ctk.CTkEntry(add_frame, width=150, placeholder_text="Button/Input")
-            new_button_entry.pack(side=tk.LEFT, padx=5)
-            
-            new_action_entry = ctk.CTkEntry(add_frame, width=300, placeholder_text="Action/Function")
-            new_action_entry.pack(side=tk.LEFT, padx=5)
-            
-            def add_new_control(p_idx=player_idx, controls_f=controls_frame, btn_entry=new_button_entry, act_entry=new_action_entry, p_controls=player_controls):
-                if not btn_entry.get() or not act_entry.get():
-                    return
-                    
-                # Create a frame for the new control row
-                control_frame = ctk.CTkFrame(controls_f)
-                control_frame.pack(fill="x", pady=2)
-                
-                button_name = btn_entry.get()
-                action_text = act_entry.get()
-                
-                ctk.CTkLabel(control_frame, text=button_name, width=150).pack(side=tk.LEFT, padx=5)
-                
-                # Entry for action
-                action_entry = ctk.CTkEntry(control_frame, width=300)
-                action_entry.insert(0, action_text)
-                action_entry.pack(side=tk.LEFT, padx=5)
-                
-                # Track this entry
-                control_idx = len(p_controls)
-                
-                # Add a remove button for the new control
-                def remove_new_control():
-                    # Mark this control for removal
-                    controls_to_remove[p_idx].add(control_idx)
-                    # Hide the control frame
-                    control_frame.pack_forget()
-                    print(f"Marked new control {button_name} for removal")
-                
-                remove_button = ctk.CTkButton(
-                    control_frame,
-                    text="❌",
-                    width=30,
-                    command=remove_new_control
-                )
-                remove_button.pack(side=tk.LEFT, padx=5)
-                
-                control_entries[(p_idx, control_idx)] = {
-                    'button': button_name,
-                    'entry': action_entry,
-                    'removed': False
-                }
-                
-                # Clear entries
-                btn_entry.delete(0, 'end')
-                act_entry.delete(0, 'end')
-                
-                # Add to player_controls for proper indexing on next add
-                p_controls.append({'name': button_name, 'value': action_text})
-                
-            add_button = ctk.CTkButton(add_frame, text="Add", command=add_new_control)
-            add_button.pack(side=tk.LEFT, padx=5)
+            return row_data
+        
+        # Add first custom row
+        add_custom_control_row()
+        
+        # Add button for additional rows
+        add_custom_button = ctk.CTkButton(
+            custom_controls_frame,
+            text="+ Add Another Custom Control",
+            command=add_custom_control_row
+        )
+        add_custom_button.pack(pady=10)
+        
+        # Instructions
+        instructions_frame = ctk.CTkFrame(editor)
+        instructions_frame.pack(fill="x", padx=10, pady=10)
+        
+        instructions_text = """
+        Instructions:
+        1. Enter the action/function for each standard control you want to include
+        2. Leave fields empty for controls you don't want to add
+        3. Use the custom section to add any non-standard controls
+        4. Click Save to update the game's controls in the database
+        """
+        
+        ctk.CTkLabel(
+            instructions_frame,
+            text=instructions_text,
+            justify="left"
+        ).pack(padx=10, pady=10, anchor="w")
         
         # Buttons frame
         button_frame = ctk.CTkFrame(editor)
         button_frame.pack(fill="x", padx=10, pady=10)
         
         def save_controls():
-            """Save controls directly to gamedata.json"""
+            """Save controls directly to gamedata.json with support for adding missing games"""
             try:
+                # Collect game properties
+                game_description = description_var.get().strip() or game_name or rom_name
+                game_playercount = playercount_var.get()
+                game_buttons = buttons_var.get()
+                game_sticks = sticks_var.get()
+                game_alternating = alternating_var.get()
+                
                 # Load the gamedata.json file using centralized path
                 gamedata_path = self.get_gamedata_path()
                 with open(gamedata_path, 'r', encoding='utf-8') as f:
@@ -1384,22 +1442,27 @@ class MAMEControlConfig(ctk.CTk):
                 # Find where to save the controls (main entry or clone)
                 target_found = False
                 
-                # Process control entries
+                # Process control entries - only include non-empty fields
                 control_updates = {}
                 
-                for (player_idx, control_idx), control_info in control_entries.items():
-                    # Skip if this control was marked for removal
-                    if player_idx in controls_to_remove and control_idx in controls_to_remove[player_idx]:
-                        print(f"Skipping removed control: Player {player_idx}, Control {control_idx}")
-                        continue
+                # Add standard controls with non-empty values
+                for control_name, entry in control_entries.items():
+                    action_value = entry.get().strip()
                     
-                    control_name = control_info['button']
-                    action_value = control_info['entry'].get()
-                    
-                    # Only process buttons with values
-                    if control_name and action_value:
-                        # Store the name attribute to add to the control
+                    # Only add if action is not empty
+                    if action_value:
                         control_updates[control_name] = action_value
+                
+                # Add custom controls with non-empty values
+                for row_data in custom_control_rows:
+                    control_name = row_data['control'].get().strip()
+                    action_value = row_data['action'].get().strip()
+                    
+                    # Only add if both fields are filled
+                    if control_name and action_value:
+                        control_updates[control_name] = action_value
+                
+                print(f"Control updates to save: {len(control_updates)} controls")
                 
                 # Helper function to update controls in a gamedata structure
                 def update_controls_in_data(data):
@@ -1407,13 +1470,13 @@ class MAMEControlConfig(ctk.CTk):
                         data['controls'] = {}
                     
                     # First, check if we need to explicitly remove any controls
-                    # This is for controls that existed in the original data but were removed in the editor
-                    if rom_name in gamedata and 'controls' in gamedata[rom_name]:
-                        existing_controls = set(gamedata[rom_name]['controls'].keys())
+                    # This is for controls that existed in the original data but aren't in our updates
+                    if 'controls' in data:
+                        existing_controls = set(data['controls'].keys())
                         updated_controls = set(control_updates.keys())
                         
                         # Find controls that were in the original data but aren't in our updates
-                        # These are ones that were explicitly removed
+                        # These are ones that were explicitly removed or left blank
                         for removed_control in existing_controls - updated_controls:
                             # Remove from the data structure
                             if removed_control in data['controls']:
@@ -1437,19 +1500,34 @@ class MAMEControlConfig(ctk.CTk):
                 
                 # First check if the ROM has its own controls section
                 if rom_name in gamedata and 'controls' in gamedata[rom_name]:
+                    # Update the game properties too
+                    gamedata[rom_name]['description'] = game_description
+                    gamedata[rom_name]['playercount'] = game_playercount
+                    gamedata[rom_name]['buttons'] = game_buttons
+                    gamedata[rom_name]['sticks'] = game_sticks
+                    gamedata[rom_name]['alternating'] = game_alternating
+                    
                     update_controls_in_data(gamedata[rom_name])
                     target_found = True
                     
                 # If not, check clones
                 elif rom_name in gamedata and 'clones' in gamedata[rom_name]:
+                    # Update the game properties too
+                    gamedata[rom_name]['description'] = game_description
+                    gamedata[rom_name]['playercount'] = game_playercount
+                    gamedata[rom_name]['buttons'] = game_buttons
+                    gamedata[rom_name]['sticks'] = game_sticks
+                    gamedata[rom_name]['alternating'] = game_alternating
+                    
                     # If ROM has no controls but has clones with controls, update the last clone
                     clone_with_controls = None
                     
                     for clone_name in gamedata[rom_name]['clones']:
-                        clone_data = gamedata[rom_name]['clones'][clone_name]
-                        if 'controls' in clone_data:
-                            clone_with_controls = clone_name
-                            
+                        if isinstance(gamedata[rom_name]['clones'], dict) and clone_name in gamedata[rom_name]['clones']:
+                            clone_data = gamedata[rom_name]['clones'][clone_name]
+                            if 'controls' in clone_data:
+                                clone_with_controls = clone_name
+                        
                     if clone_with_controls:
                         update_controls_in_data(gamedata[rom_name]['clones'][clone_with_controls])
                         target_found = True
@@ -1460,22 +1538,54 @@ class MAMEControlConfig(ctk.CTk):
                 
                 # If ROM is a clone, try to find it in its parent's clone list
                 else:
+                    clone_parent_found = False
                     for parent_name, parent_data in gamedata.items():
-                        if 'clones' in parent_data and rom_name in parent_data['clones']:
+                        if 'clones' in parent_data and isinstance(parent_data['clones'], dict) and rom_name in parent_data['clones']:
+                            # Update the clone's properties if supported
+                            if isinstance(parent_data['clones'][rom_name], dict):
+                                parent_data['clones'][rom_name]['description'] = game_description
+                                parent_data['clones'][rom_name]['playercount'] = game_playercount
+                                parent_data['clones'][rom_name]['buttons'] = game_buttons
+                                parent_data['clones'][rom_name]['sticks'] = game_sticks
+                                parent_data['clones'][rom_name]['alternating'] = game_alternating
+                            
                             update_controls_in_data(parent_data['clones'][rom_name])
                             target_found = True
+                            clone_parent_found = True
                             break
+                    
+                    # If it's not in any parent's clone list, it's a new game
+                    if not clone_parent_found:
+                        target_found = False
                 
-                # If no existing control structure was found anywhere
+                # If no existing control structure was found anywhere, create a new entry
                 if not target_found:
-                    messagebox.showerror("Error", f"Could not locate control data for {rom_name} in gamedata.json")
-                    return
+                    print(f"Game {rom_name} not found in gamedata.json - creating new entry")
+                    # Create a new entry for this ROM
+                    gamedata[rom_name] = {
+                        "description": game_description,
+                        "playercount": game_playercount,
+                        "buttons": game_buttons,
+                        "sticks": game_sticks,
+                        "alternating": game_alternating,
+                        "clones": {},
+                        "controls": {}
+                    }
+                    
+                    # Add all the controls to the new entry
+                    update_controls_in_data(gamedata[rom_name])
+                    target_found = True  # Now we have a target
+                    
+                    messagebox.showinfo(
+                        "New Game Added", 
+                        f"Added new game entry for {rom_name} to gamedata.json"
+                    )
                 
                 # Save the updated gamedata back to the file
                 with open(gamedata_path, 'w', encoding='utf-8') as f:
                     json.dump(gamedata, f, indent=2)
                     
-                messagebox.showinfo("Success", f"Controls for {game_name} saved to gamedata.json!")
+                messagebox.showinfo("Success", f"Controls for {game_description} saved to gamedata.json!")
                 
                 # Force a reload of gamedata.json
                 if hasattr(self, 'gamedata_json'):
@@ -1511,21 +1621,116 @@ class MAMEControlConfig(ctk.CTk):
                 import traceback
                 traceback.print_exc()
         
+        # Remove Game button (with confirmation)
+        def remove_game():
+            """Remove this game entirely from the database"""
+            # Confirm with user
+            if not messagebox.askyesno(
+                "Confirm Removal", 
+                f"Are you sure you want to completely remove {rom_name} from the database?\n\nThis action cannot be undone!",
+                icon="warning"
+            ):
+                return
+                
+            try:
+                # Load the gamedata.json file
+                gamedata_path = self.get_gamedata_path()
+                with open(gamedata_path, 'r', encoding='utf-8') as f:
+                    gamedata = json.load(f)
+                
+                removed = False
+                
+                # Check if it's a direct entry
+                if rom_name in gamedata:
+                    # Direct removal
+                    del gamedata[rom_name]
+                    removed = True
+                    print(f"Removed game: {rom_name}")
+                else:
+                    # Check if it's a clone in any parent's clone list
+                    for parent_name, parent_data in gamedata.items():
+                        if 'clones' in parent_data and isinstance(parent_data['clones'], dict):
+                            if rom_name in parent_data['clones']:
+                                # Remove from clone list
+                                del parent_data['clones'][rom_name]
+                                removed = True
+                                print(f"Removed clone game: {rom_name} from parent: {parent_name}")
+                                break
+                
+                if not removed:
+                    messagebox.showerror("Error", f"Could not find {rom_name} in the database.")
+                    return
+                
+                # Save the updated gamedata back to the file
+                with open(gamedata_path, 'w', encoding='utf-8') as f:
+                    json.dump(gamedata, f, indent=2)
+                    
+                # Force a reload of gamedata.json
+                if hasattr(self, 'gamedata_json'):
+                    del self.gamedata_json
+                    self.load_gamedata_json()
+                
+                # Clear the in-memory cache to force reloading data
+                if hasattr(self, 'rom_data_cache'):
+                    self.rom_data_cache = {}
+                    print("Cleared ROM data cache to force refresh")
+                
+                # Rebuild SQLite database if it's being used
+                if hasattr(self, 'db_path') and self.db_path:
+                    print("Rebuilding SQLite database to reflect game removal...")
+                    self.build_gamedata_db()
+                    print("Database rebuild complete")
+                
+                messagebox.showinfo("Success", f"{rom_name} has been removed from the database.")
+                
+                # Close the editor
+                editor.destroy()
+                
+                # Refresh any currently displayed data
+                # Since we removed the current game, we need to select a different game
+                if self.current_game == rom_name:
+                    self.current_game = None
+                    self.game_title.configure(text="Select a game")
+                    # Clear the control frame
+                    for widget in self.control_frame.winfo_children():
+                        widget.destroy()
+                    # Update the game list
+                    self.update_game_list()
+                
+            except Exception as e:
+                messagebox.showerror("Error", f"Failed to remove game: {str(e)}")
+                import traceback
+                traceback.print_exc()
+
+        # Add a distinctive red "Remove Game" button
+        remove_button = ctk.CTkButton(
+            button_frame,
+            text="Remove Game",
+            command=remove_game,
+            font=("Arial", 14),
+            fg_color="#B22222",  # Firebrick red
+            hover_color="#8B0000"  # Darker red on hover
+        )
+        remove_button.pack(side="left", padx=10, pady=5)
+
+        
         # Save button
         save_button = ctk.CTkButton(
             button_frame,
             text="Save Controls",
-            command=save_controls
+            command=save_controls,
+            font=("Arial", 14)
         )
-        save_button.pack(side="left", padx=10)
+        save_button.pack(side="left", padx=10, pady=5)
         
         # Close button
         close_button = ctk.CTkButton(
             button_frame,
             text="Cancel",
-            command=editor.destroy
+            command=editor.destroy,
+            font=("Arial", 14)
         )
-        close_button.pack(side="right", padx=10)
+        close_button.pack(side="right", padx=10, pady=5)
 
     def create_game_list_with_edit(self, parent_frame, game_list, title_text):
         """Helper function to create a consistent list with edit button for games"""
