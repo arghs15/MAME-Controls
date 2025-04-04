@@ -4809,20 +4809,71 @@ class MAMEControlConfig(ctk.CTk):
     
     def create_info_directory(self):
         """Create info directory if it doesn't exist"""
-        info_dir = os.path.join(os.path.dirname(__file__), "preview", "settings", "info")
+        # Use application_path instead of __file__ for PyInstaller compatibility
+        app_path = get_application_path()
+        info_dir = os.path.join(app_path, "preview", "settings", "info")
         if not os.path.exists(info_dir):
             os.makedirs(info_dir)
         return info_dir
 
     def load_default_template(self):
-        """Load the default.conf template"""
-        template_path = os.path.join(os.path.dirname(__file__), "preview", "settings", "info", "default.conf")
+        """Load the default.conf template with improved path handling for PyInstaller"""
+        # Use application_path instead of __file__ for PyInstaller compatibility
+        app_path = get_application_path()
+        template_path = os.path.join(app_path, "preview", "settings", "info", "default.conf")
+        
+        # Debug output to help diagnose path issues
+        print(f"\nLooking for default template at: {template_path}")
+        
         try:
             with open(template_path, 'r', encoding='utf-8') as f:
-                return f.read()
+                template_content = f.read()
+                print(f"Successfully loaded template ({len(template_content)} characters)")
+                return template_content
         except Exception as e:
             print(f"Error loading template: {e}")
-            return None
+            
+            # Try an alternate path for backwards compatibility
+            alt_path = os.path.join(app_path, "preview", "info", "default.conf")
+            print(f"Trying alternate path: {alt_path}")
+            
+            try:
+                with open(alt_path, 'r', encoding='utf-8') as f:
+                    template_content = f.read()
+                    print(f"Successfully loaded template from alternate path ({len(template_content)} characters)")
+                    return template_content
+            except Exception as alt_e:
+                print(f"Error loading from alternate path: {alt_e}")
+                
+                # Last resort: create a default template on the fly
+                print("Creating default template content")
+                default_content = """# MAME Controls Info File
+    # Auto-generated default template
+
+    controller A t = A Button
+    controller B t = B Button
+    controller X t = X Button
+    controller Y t = Y Button
+    controller LB t = Left Bumper
+    controller RB t = Right Bumper
+    controller LT t = Left Trigger
+    controller RT t = Right Trigger
+    controller LSB t = Left Stick Button
+    controller RSB t = Right Stick Button
+    controller L-stick t = Left Stick
+    controller R-stick t = Right Stick
+    controller D-pad t = D-Pad
+    """
+                # Try to save this for future use
+                try:
+                    os.makedirs(os.path.dirname(template_path), exist_ok=True)
+                    with open(template_path, 'w', encoding='utf-8') as f:
+                        f.write(default_content)
+                    print(f"Created new default template at: {template_path}")
+                except Exception as save_e:
+                    print(f"Could not save default template: {save_e}")
+                    
+                return default_content
     
     def generate_game_config(self, game_data: dict) -> str:
         """Generate config file content for a specific game"""
