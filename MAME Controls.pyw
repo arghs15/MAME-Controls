@@ -200,6 +200,16 @@ class MAMEControlConfig(ctk.CTk):
         self.current_game = None
         self.use_xinput = True
         self.show_rom_info = False
+
+        # Button visibility settings
+        # Image Buttons
+        self.show_generate_buttons = False  # Default to showing generate images button
+        self.show_exact_preview_button = False  # Default to showing exact preview button
+        self.show_save_button = False  # Default to showing save button
+        
+        self.show_analyze_button = True    # Default to showing analyze button
+        self.show_generate_info_buttons = False  # Default to showing generate images button
+
         # Logo size settings (as percentages)
         self.logo_width_percentage = 15
         self.logo_height_percentage = 15
@@ -265,13 +275,15 @@ class MAMEControlConfig(ctk.CTk):
             self.add_appearance_settings_button()
         
             # Add the text appearance settings button
-            self.analyze_controls_button = ctk.CTkButton(
+            analyze_button = self.create_button(
                 self.stats_frame,
                 text="Analyze Controls",
                 command=self.analyze_controls,
-                width=150
+                button_id="analyze_controls_button",
+                show=getattr(self, 'show_analyze_button', True)
             )
-            self.analyze_controls_button.grid(row=0, column=5, padx=5, pady=5, sticky="e")
+            if analyze_button:
+                analyze_button.grid(row=0, column=5, padx=5, pady=5, sticky="e")
             
             # Apply the preview update hook to update preview text with settings
             self.apply_preview_update_hook()
@@ -406,97 +418,6 @@ class MAMEControlConfig(ctk.CTk):
         
         return settings_path
     
-    def benchmark_rom_loading(self, rom_name):
-        """
-        Run a benchmark comparing ijson vs regular JSON loading for a specific ROM
-        This will help verify that ijson is actually improving performance
-        """
-        import time
-        import gc
-        import os
-        
-        print("\n=== ROM LOADING BENCHMARK ===")
-        print(f"Testing performance for ROM: {rom_name}")
-        
-        # Get the file size of gamedata.json
-        # Get the file size of gamedata.json
-        json_path = self.get_gamedata_path()
-
-        if json_path and os.path.exists(json_path):
-            file_size_mb = os.path.getsize(json_path) / (1024 * 1024)
-            print(f"gamedata.json size: {file_size_mb:.2f} MB")
-        else:
-            print("gamedata.json not found")
-        
-        # Clear any existing cache
-        if hasattr(self, 'rom_data_cache'):
-            self.rom_data_cache = {}
-        
-        # Force garbage collection
-        gc.collect()
-        
-        # Test 1: Regular JSON loading
-        print("\nTesting regular JSON loading...")
-        start_time = time.time()
-        try:
-            # Temporarily rename the ijson method to force using the regular method
-            if hasattr(self, 'get_game_data_with_ijson'):
-                original_method = self.get_game_data_with_ijson
-                delattr(self, 'get_game_data_with_ijson')
-            
-            # Load the game data using the regular method
-            result = self.get_game_data(rom_name)
-            
-            # Restore the method
-            if 'original_method' in locals():
-                self.get_game_data_with_ijson = original_method
-            
-            regular_time = time.time() - start_time
-            print(f"Regular JSON loading time: {regular_time:.4f} seconds")
-            print(f"Data found: {'Yes' if result else 'No'}")
-        except Exception as e:
-            print(f"Error in regular JSON test: {e}")
-            regular_time = float('inf')
-        
-        # Force cache clear again
-        if hasattr(self, 'rom_data_cache'):
-            self.rom_data_cache = {}
-        
-        # Force garbage collection
-        gc.collect()
-        
-        # Test 2: ijson loading
-        print("\nTesting ijson loading...")
-        start_time = time.time()
-        try:
-            # Make sure the ijson method exists
-            if hasattr(self, 'get_game_data_with_ijson'):
-                # Load the game data using ijson
-                result = self.get_game_data_with_ijson(rom_name)
-                
-                ijson_time = time.time() - start_time
-                print(f"ijson loading time: {ijson_time:.4f} seconds")
-                print(f"Data found: {'Yes' if result else 'No'}")
-                print(f"Source: {result.get('source', 'unknown') if result else 'N/A'}")
-            else:
-                print("ijson method not available")
-                ijson_time = float('inf')
-        except Exception as e:
-            print(f"Error in ijson test: {e}")
-            ijson_time = float('inf')
-        
-        # Calculate improvement
-        if regular_time != float('inf') and ijson_time != float('inf'):
-            improvement = (regular_time - ijson_time) / regular_time * 100
-            print(f"\nPerformance improvement: {improvement:.2f}%")
-            if improvement > 0:
-                print("ijson is faster!")
-            else:
-                print("Regular JSON is faster for this ROM")
-        
-        print("=== BENCHMARK COMPLETE ===\n")
-        return regular_time, ijson_time
-
     def build_gamedata_db(self):
         """Build a SQLite database from gamedata.json with improved handling of game removals"""
         # Find the gamedata.json file
@@ -813,16 +734,55 @@ class MAMEControlConfig(ctk.CTk):
         if not hasattr(self, 'db_path') or not os.path.exists(getattr(self, 'db_path', '')):
             self.build_gamedata_db()
     
+    def create_button(self, parent, text, command, button_id, show=True, width=150, **kwargs):
+        """
+        Create a button with standardized properties and visibility control.
+        
+        Parameters:
+        - parent: Parent widget
+        - text: Button text
+        - command: Function to call when button is clicked
+        - button_id: Unique ID for this button to store reference
+        - show: Whether to show this button (defaults to True)
+        - width: Button width (defaults to 150)
+        - **kwargs: Additional parameters to pass to CTkButton
+        
+        Returns:
+        - Button widget if created, None if not shown
+        """
+        # Check if button should be shown
+        if not show:
+            # Store None for this button ID
+            setattr(self, button_id, None)
+            print(f"Button '{button_id}' is hidden by configuration")
+            return None
+        
+        # Create the button with standard properties
+        button = ctk.CTkButton(
+            parent,
+            text=text,
+            command=command,
+            width=width,
+            **kwargs
+        )
+        
+        # Store reference to the button
+        setattr(self, button_id, button)
+        print(f"Created button '{button_id}': {text}")
+        
+        return button
+    
     def add_appearance_settings_button(self):
-        """Add a button to configure text appearance settings"""
+        """Add a button to configure text appearance settings (using the centralized button system)"""
         # Add to stats frame next to the generate images button
-        self.appearance_button = ctk.CTkButton(
+        appearance_button = self.create_button(
             self.stats_frame,
             text="Text Settings",
             command=self.show_text_appearance_settings,
-            width=150
+            button_id="appearance_button"
         )
-        self.appearance_button.grid(row=0, column=4, padx=5, pady=5, sticky="e")
+        if appearance_button:
+            appearance_button.grid(row=0, column=4, padx=5, pady=5, sticky="e")
 
         # Also add to preview window button row if it exists
         if hasattr(self, 'show_preview'):
@@ -836,13 +796,15 @@ class MAMEControlConfig(ctk.CTk):
                 
                 # Add appearance settings button if button_row1 exists
                 if hasattr(self, 'button_row1') and self.button_row1.winfo_exists():
-                    settings_button = ctk.CTkButton(
+                    settings_button = self.create_button(
                         self.button_row1,
                         text="Text Settings",
                         command=self.show_text_appearance_settings,
+                        button_id="appearance_button",
                         width=90  # Match other buttons
                     )
-                    settings_button.pack(side="left", padx=3)
+                    if settings_button:
+                        settings_button.pack(side="left", padx=3)
                 
                 return result
             
@@ -2240,7 +2202,7 @@ class MAMEControlConfig(ctk.CTk):
             self.control_frame._scrollbar.set(*scroll_pos)
     
     def create_layout(self):
-        """Create the main application layout"""
+        """Create the main application layout with configurable buttons"""
         # Configure grid
         self.grid_columnconfigure(0, weight=0)
         self.grid_columnconfigure(1, weight=3)
@@ -2255,7 +2217,6 @@ class MAMEControlConfig(ctk.CTk):
         # Create stats frame at the top of left panel
         self.stats_frame = ctk.CTkFrame(self.left_panel)
         self.stats_frame.grid(row=0, column=0, padx=5, pady=5, sticky="ew")
-        #self.stats_frame.grid_columnconfigure(1, weight=1)  # Make middle column expandable
         self.stats_frame.grid_columnconfigure(3, weight=0)  # Add column for Generate Images button
 
         # Stats label
@@ -2273,13 +2234,15 @@ class MAMEControlConfig(ctk.CTk):
         #self.unmatched_button.grid(row=0, column=1, padx=5, pady=5, sticky="e")
 
         # Generate configs button
-        self.generate_configs_button = ctk.CTkButton(
+        generate_configs_button = self.create_button(
             self.stats_frame,
             text="Generate Info Files",
             command=self.generate_all_configs,
-            width=150
+            button_id="generate_configs_button",
+            show=getattr(self, 'show_generate_info_buttons', True)
         )
-        self.generate_configs_button.grid(row=0, column=2, padx=5, pady=5, sticky="e")
+        if generate_configs_button:
+            generate_configs_button.grid(row=0, column=2, padx=5, pady=5, sticky="e")
 
         # REPLACED/COMBINED WITH ANALYUZE CONTROLS BUTTON
         #self.generic_controls_button = ctk.CTkButton(
@@ -2318,13 +2281,15 @@ class MAMEControlConfig(ctk.CTk):
         self.game_title.grid(row=0, column=0, padx=5, pady=5)
 
         # Add Preview button next to the game title
-        self.preview_button = ctk.CTkButton(
+        preview_button = self.create_button(
             self.right_panel,
             text="Preview Controls",
             command=self.show_preview,
-            width=150
+            button_id="preview_button",
+            show=getattr(self, 'preview_button', True)
         )
-        self.preview_button.grid(row=0, column=1, padx=5, pady=5, sticky="e")
+        if preview_button:
+            preview_button.grid(row=0, column=1, padx=5, pady=5, sticky="e")
 
         self.hide_buttons_toggle = ctk.CTkSwitch(
             self.right_panel,
@@ -2732,40 +2697,48 @@ class MAMEControlConfig(ctk.CTk):
             
             # Top row buttons (4 buttons)
             # Close button - use the force_quit function to ensure proper termination
-            close_button = ctk.CTkButton(
+            close_button = self.create_button(
                 top_row,
                 text="Close",
-                command=self.close_preview,  # Use quit_application for proper termination
+                command=self.close_preview,
+                button_id="preview_close_button",
                 width=button_width
             )
-            close_button.pack(side="left", padx=button_padx)
+            if close_button:
+                close_button.pack(side="left", padx=button_padx)
 
             # Reset positions button
-            reset_button = ctk.CTkButton(
+            reset_button = self.create_button(
                 top_row,
                 text="Reset",
                 command=self.reset_text_positions,
+                button_id="preview_reset_button",
                 width=button_width
             )
-            reset_button.pack(side="left", padx=button_padx)
+            if reset_button:
+                reset_button.pack(side="left", padx=button_padx)
 
             # Add save buttons
-            global_button = ctk.CTkButton(
+            global_button = self.create_button(
                 top_row,
                 text="Global",
                 command=self.save_global_positions,
+                button_id="preview_global_button",
                 width=button_width
             )
-            global_button.pack(side="left", padx=button_padx)
+            if global_button:
+                global_button.pack(side="left", padx=button_padx)
 
             # ROM button
-            rom_button = ctk.CTkButton(
+            rom_button = self.create_button(
                 top_row,
                 text="ROM",
                 command=self.save_rom_positions,
+                button_id="preview_rom_button",
                 width=button_width
             )
-            rom_button.pack(side="left", padx=button_padx)
+            if rom_button:
+                rom_button.pack(side="left", padx=button_padx)
 
             # Bottom row buttons
             # Set initial state for toggle buttons
@@ -2845,15 +2818,6 @@ class MAMEControlConfig(ctk.CTk):
                 width=button_width
             )
             save_button.pack(side="left", padx=button_padx)
-
-            # Add exact preview button
-            exact_preview_button = ctk.CTkButton(
-                top_row,
-                text="Exact Preview",
-                command=self.show_image_preview,
-                width=button_width
-            )
-            exact_preview_button.pack(side="left", padx=button_padx)
 
              # Add a repeated check to ensure logo appears
             def ping_logo_visibility(attempt=1, max_attempts=5):
@@ -6569,15 +6533,19 @@ class MAMEControlConfig(ctk.CTk):
             print("Added Save Image button to preview")
     
     def add_generate_images_button(self):
-        """Add button to generate preview images for ROMs"""
-        # Add button next to the existing generate configs button
-        self.generate_images_button = ctk.CTkButton(
+        """Add button to generate preview images for ROMs (using the centralized button system)"""
+        # Create the button using the centralized method
+        generate_images_button = self.create_button(
             self.stats_frame,
             text="Generate Images",
             command=self.show_generate_images_dialog,
-            width=150
+            button_id="generate_images_button",
+            show=getattr(self, 'show_generate_buttons', True)
         )
-        self.generate_images_button.grid(row=0, column=3, padx=5, pady=5, sticky="e")
+        
+        # If the button was created (show=True), grid it
+        if generate_images_button:
+            generate_images_button.grid(row=0, column=3, padx=5, pady=5, sticky="e")
 
     def show_generate_images_dialog(self):
         """Show dialog to configure image generation"""
@@ -10544,24 +10512,30 @@ class MAMEControlConfig(ctk.CTk):
                 width=button_width
             )
             text_settings_button.pack(side="left", padx=button_padx)
-            
-            # Add the "Save Image" button
-            save_button = ctk.CTkButton(
+
+           # Add exact preview button
+            save_button = self.create_button(
                 top_row,
                 text="Save Image",
                 command=self.save_current_preview,
-                width=button_width
+                button_id="save_button",
+                width=button_width,
+                show=getattr(self, 'show_save_button', True)
             )
-            save_button.pack(side="left", padx=button_padx)
-
-            # Add exact preview button
-            exact_preview_button = ctk.CTkButton(
+            if save_button:  # Only pack if the button was created (not hidden)
+                save_button.pack(side="left", padx=button_padx)
+           
+           # Add exact preview button
+            exact_preview_button = self.create_button(
                 top_row,
-                text="Exact Image Preview",
+                text="Exact Preview",
                 command=self.show_image_preview,
-                width=button_width
+                button_id="exact_preview_button",
+                width=button_width,
+                show=getattr(self, 'show_exact_preview_button', True)
             )
-            exact_preview_button.pack(side="left", padx=button_padx)
+            if exact_preview_button:  # Only pack if the button was created (not hidden)
+                exact_preview_button.pack(side="left", padx=button_padx)
 
             # Add layer settings button to bottom row
             layer_settings_button = ctk.CTkButton(

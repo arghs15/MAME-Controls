@@ -1,5 +1,8 @@
-In Game Toggle
--forgot what this does...
+Show Hide buttons
+
+Prompt for game data on first run
+
+Create default png on first run
 
 LUA
 -unified plugin does not work, and not sure it will
