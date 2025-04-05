@@ -1,8 +1,5 @@
-Show Hide buttons
-
-Prompt for game data on first run
-
-Create default png on first run
+Default font
+-is set to be arial, but when opening preview an error occurs. fix
 
 LUA
 -unified plugin does not work, and not sure it will

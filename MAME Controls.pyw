@@ -203,12 +203,12 @@ class MAMEControlConfig(ctk.CTk):
 
         # Button visibility settings
         # Image Buttons
-        self.show_generate_buttons = False  # Default to showing generate images button
-        self.show_exact_preview_button = False  # Default to showing exact preview button
-        self.show_save_button = False  # Default to showing save button
+        self.show_generate_buttons = True  # Default to showing generate images button
+        self.show_exact_preview_button = True  # Default to showing exact preview button
+        self.show_save_button = True  # Default to showing save button
         
         self.show_analyze_button = True    # Default to showing analyze button
-        self.show_generate_info_buttons = False  # Default to showing generate images button
+        self.show_generate_info_buttons = True  # Default to showing generate images button
 
         # Logo size settings (as percentages)
         self.logo_width_percentage = 15
@@ -217,21 +217,39 @@ class MAMEControlConfig(ctk.CTk):
         # IMPORTANT: Bind the method only after initializing attributes
         self.get_game_data_with_ijson = self.get_game_data_with_ijson.__get__(self, type(self))
         
-        # Find necessary directories
-        self.mame_dir = self.find_mame_directory()
-        if not self.mame_dir:
-            messagebox.showerror("Error", "Please place this script in the MAME directory!")
-            self.quit()
-            return
+        # Set current directory as default MAME directory before finding the actual one
+        # This ensures mame_dir is never None
+        import os
+        self.mame_dir = os.path.abspath(os.path.dirname(__file__))
+        print(f"Set default MAME directory to current directory: {self.mame_dir}")
         
-        # REMOVE THIS LINE - Initialize the SQLite database
-        # self.initialize_database()
+        # Now try to find the real MAME directory
+        try:
+            mame_dir = self.find_mame_directory()
+            if mame_dir:
+                self.mame_dir = mame_dir
+                print(f"Updated MAME directory to: {self.mame_dir}")
+        except Exception as e:
+            print(f"Error finding MAME directory: {e}")
+            # Keep using the default directory set above
+        
+        # Create preview folder if needed and check for gamedata.json
+        self.ensure_preview_folder_improved()  # Use the improved function that also creates default.png
+        
+        # Check for gamedata.json - this will now run even if the file is not found initially
+        have_gamedata = self.check_and_prompt_for_gamedata()
+        
+        # IMPORTANT: Handle case when user cancels gamedata selection or import fails
+        if not have_gamedata and not preview_only:
+            # Show a warning but continue anyway to allow them to import later
+            messagebox.showwarning(
+                "Limited Functionality", 
+                "Running without gamedata.json - some features may be limited.\n\n" +
+                "You can import this file later using the 'Import Gamedata' button."
+            )
         
         # Initialize the position manager
         self.position_manager = PositionManager(self)
-
-        # REMOVE THIS LINE - Debug font system checks
-        # self.debug_font_system()
 
         # Migrate settings files to new structure if needed
         self.migrate_settings_files()
@@ -265,6 +283,9 @@ class MAMEControlConfig(ctk.CTk):
             # Create the interface
             self.create_layout()
             
+            # IMPORTANT: Now add the import button AFTER create_layout has run
+            self.add_import_gamedata_button()  # Add gamedata import button
+            
             # Load all data
             self.load_all_data()  # Use your existing method to load ROMs and other data
 
@@ -287,7 +308,7 @@ class MAMEControlConfig(ctk.CTk):
             
             # Apply the preview update hook to update preview text with settings
             self.apply_preview_update_hook()
-
+        
         else:
             # For preview-only mode, just initialize minimal attributes
             self.fullscreen = True
@@ -772,6 +793,236 @@ class MAMEControlConfig(ctk.CTk):
         
         return button
     
+    def check_and_prompt_for_gamedata(self):
+        """
+        Check if gamedata.json exists in the preview/settings folder.
+        If not, prompt the user to locate it and copy it to the correct location.
+        Returns True if gamedata.json exists or was successfully imported, False otherwise.
+        """
+        import os
+        import shutil
+        from tkinter import filedialog, messagebox
+        import sys
+        import subprocess
+
+        # Get the path where gamedata.json should be
+        settings_dir = os.path.join(self.mame_dir, "preview", "settings")
+        gamedata_path = os.path.join(settings_dir, "gamedata.json")
+        
+        # Create settings directory if it doesn't exist
+        if not os.path.exists(settings_dir):
+            try:
+                os.makedirs(settings_dir, exist_ok=True)
+                print(f"Created settings directory: {settings_dir}")
+            except Exception as e:
+                print(f"Error creating settings directory: {e}")
+                # Continue anyway to check for existing file
+        
+        # Check if gamedata.json already exists in settings directory
+        if os.path.exists(gamedata_path):
+            print("gamedata.json found at: {gamedata_path}")
+            return True
+        
+        # Check for legacy location (directly in MAME directory)
+        legacy_path = os.path.join(self.mame_dir, "gamedata.json")
+        if os.path.exists(legacy_path):
+            try:
+                # Copy from legacy location to new location
+                shutil.copy2(legacy_path, gamedata_path)
+                print(f"Copied gamedata.json from legacy location: {legacy_path} to {gamedata_path}")
+                return True
+            except Exception as e:
+                print(f"Error copying from legacy location: {e}")
+                # Continue to prompt
+        
+        # If running in preview-only mode, don't show prompt (will be handled by main app)
+        if not hasattr(self, 'game_list'):
+            print("Running in preview-only mode, skipping gamedata prompt")
+            return False
+        
+        # If not found in any location, show prompt asking if the user wants to locate it
+        response = messagebox.askyesno(
+            "Gamedata File Missing",
+            "gamedata.json not found in the expected location.\n\n"
+            "This file is required for game control information.\n"
+            "Would you like to locate and import a gamedata.json file now?",
+            icon="question"
+        )
+        
+        if not response:
+            # User chose not to import, inform them of the limitations
+            messagebox.showinfo(
+                "Limited Functionality",
+                "Without gamedata.json, game control information will be limited.\n"
+                "You can import the file later from the main application."
+            )
+            return False
+        
+        # Open file selection dialog
+        filetypes = [("JSON files", "*.json"), ("All files", "*.*")]
+        selected_file = filedialog.askopenfilename(
+            title="Select gamedata.json file",
+            filetypes=filetypes,
+            initialdir=self.mame_dir  # Start in MAME directory
+        )
+        
+        if not selected_file:
+            # User cancelled the selection
+            print("User cancelled gamedata.json selection")
+            return False
+        
+        try:
+            # Validate the selected file (basic check that it's a valid JSON file)
+            import json
+            with open(selected_file, 'r', encoding='utf-8') as f:
+                try:
+                    # Just try to load it to verify it's valid JSON
+                    data = json.load(f)
+                    # Check if it at least has some expected structure
+                    if not isinstance(data, dict) or len(data) < 10:  # Arbitrary check for a reasonable number of entries
+                        raise ValueError("File doesn't appear to be a valid gamedata.json (too few game entries)")
+                except json.JSONDecodeError:
+                    raise ValueError("Selected file is not valid JSON")
+            
+            # Copy the file to the correct location
+            shutil.copy2(selected_file, gamedata_path)
+            
+            # Show success message
+            restart_response = messagebox.askyesno(
+                "Import Successful",
+                f"Successfully imported gamedata.json.\n\n"
+                f"File copied to: {gamedata_path}\n\n"
+                "The application needs to restart to use the new gamedata file. "
+                "Would you like to restart now?",
+                icon="question"
+            )
+            
+            print(f"Imported gamedata.json from: {selected_file} to: {gamedata_path}")
+            
+            if restart_response:
+                # User chose to restart - use the app's restart method if available
+                print("Restarting application...")
+                if hasattr(self, 'restart_application') and callable(getattr(self, 'restart_application')):
+                    self.restart_application()
+                else:
+                    # Fallback restart method
+                    self.restart_app_fallback()
+                
+                return True  # Return here even though the app is restarting
+                
+            return True
+            
+        except Exception as e:
+            # Show error message if import fails
+            messagebox.showerror(
+                "Import Failed",
+                f"Failed to import gamedata.json: {str(e)}\n\n"
+                "Please make sure you selected a valid gamedata.json file."
+            )
+            print(f"Error importing gamedata.json: {e}")
+            import traceback
+            traceback.print_exc()
+            return False
+    
+    def restart_app_fallback(self):
+        """
+        Fallback method to restart the application if restart_application doesn't exist.
+        This uses a different approach to restart the app.
+        """
+        import sys
+        import os
+        import subprocess
+
+        try:
+            print("Using fallback restart method")
+            
+            # Get current script path
+            if getattr(sys, 'frozen', False):
+                # Running as compiled executable
+                app_path = sys.executable
+                print(f"Restarting executable: {app_path}")
+            else:
+                # Running as script
+                app_path = os.path.abspath(__file__)
+                print(f"Restarting script: {app_path}")
+            
+            # Start a new instance of the application
+            if sys.platform.startswith('win'):
+                # On Windows, use pythonw.exe for .pyw files to avoid console
+                if app_path.lower().endswith('.pyw') and not getattr(sys, 'frozen', False):
+                    python_exe = os.path.join(os.path.dirname(sys.executable), 'pythonw.exe')
+                    subprocess.Popen([python_exe, app_path])
+                else:
+                    subprocess.Popen([app_path])
+            else:
+                # On other platforms
+                if getattr(sys, 'frozen', False):
+                    subprocess.Popen([app_path])
+                else:
+                    subprocess.Popen([sys.executable, app_path])
+            
+            # Exit the current instance
+            print("Exiting current instance")
+            self.quit()
+            
+            # Force exit if quit() doesn't work
+            sys.exit(0)
+            
+        except Exception as e:
+            print(f"Error during restart: {e}")
+            import traceback
+            traceback.print_exc()
+            
+            # Show error message
+            from tkinter import messagebox
+            messagebox.showerror(
+                "Restart Failed",
+                f"Unable to restart the application: {str(e)}\n\n"
+                "Please close and reopen the app manually."
+            )
+    
+    # Function to add an "Import Gamedata" button to the UI
+    def add_import_gamedata_button(self):
+        """
+        Add a button to import gamedata.json from the main interface.
+        Skips button creation if gamedata.json already exists in the expected folder.
+        """
+        # Build the full expected path to gamedata.json
+        gamedata_path = os.path.join(self.mame_dir, "preview", "settings", "gamedata.json")
+
+        # Skip adding the button if gamedata.json already exists
+        if os.path.exists(gamedata_path):
+            print(f"gamedata.json already exists at: {gamedata_path}. Skipping Import button.")
+            return False
+
+        # Check if stats_frame exists
+        if not hasattr(self, 'stats_frame'):
+            print("Warning: stats_frame not found, can't add Import Gamedata button yet")
+            return False
+
+        # Check if stats_frame is a valid widget
+        try:
+            self.stats_frame.winfo_exists()
+        except Exception:
+            print("Warning: stats_frame is not a valid widget, can't add Import Gamedata button")
+            return False
+
+        # Create the button
+        import_button = self.create_button(
+            self.stats_frame,
+            text="Import Gamedata",
+            command=self.check_and_prompt_for_gamedata,
+            button_id="import_gamedata_button"
+        )
+
+        if import_button:
+            import_button.grid(row=0, column=20, padx=5, pady=5, sticky="e")
+            print("Added Import Gamedata button at fixed position (column 20)")
+            return True
+
+        return False
+
+        
     def add_appearance_settings_button(self):
         """Add a button to configure text appearance settings (using the centralized button system)"""
         # Add to stats frame next to the generate images button
@@ -811,8 +1062,8 @@ class MAMEControlConfig(ctk.CTk):
             # Replace the original method with our wrapper
             self.show_preview = show_preview_with_settings_button
     
-    def find_mame_directory(self) -> Optional[str]:
-        """Find the MAME directory containing necessary files"""
+    def find_mame_directory(self) -> str:
+        """Find the MAME directory containing necessary files - with improved handling when gamedata.json not found"""
         # First check in the application directory
         app_dir = get_application_path()
         print(f"\n=== DEBUG: find_mame_directory ===")
@@ -849,29 +1100,184 @@ class MAMEControlConfig(ctk.CTk):
             if os.path.exists(settings_gamedata_path):
                 print(f"FOUND: gamedata.json in common path at: {path}")
                 return path
-                
-        print("ERROR: gamedata.json not found in any known location")
-        return None
+        
+        # *** IMPORTANT CHANGE: If no gamedata.json found, return current directory instead of None ***
+        # This allows the application to start without gamedata.json and then prompt the user to select it
+        print("WARNING: gamedata.json not found in any known location - will use current directory")
+        return current_dir  # Use current directory as MAME directory instead of returning None
     
-    def ensure_preview_folder(self):
-        """Create preview directory if it doesn't exist"""
-        preview_dir = os.path.join(self.mame_dir, "preview")  # Keep as "preview" here
-        if not os.path.exists(preview_dir):
-            print(f"Creating preview directory: {preview_dir}")
-            os.makedirs(preview_dir)
+    def create_transparent_default_image(self, output_dir=None):
+        """
+        Create a default transparent PNG image if none exists.
+        
+        Args:
+            output_dir: Directory to save the image to (defaults to preview dir)
             
-            # Copy any bundled preview images if running as executable
-            if getattr(sys, 'frozen', False):
-                bundled_preview = os.path.join(get_application_path(), "preview2")  # Use "preview2" here
-                if os.path.exists(bundled_preview):
-                    import shutil
-                    for item in os.listdir(bundled_preview):
-                        source = os.path.join(bundled_preview, item)
-                        dest = os.path.join(preview_dir, item)
-                        if os.path.isfile(source):
-                            shutil.copy2(source, dest)
-                            print(f"Copied: {item} to preview folder")
+        Returns:
+            Path to the created image, or None if creation failed
+        """
+        if output_dir is None:
+            output_dir = os.path.join(self.mame_dir, "preview")
+            
+        # Check if default image already exists
+        default_png_path = os.path.join(output_dir, "default.png")
+        
+        if os.path.exists(default_png_path):
+            print(f"Default PNG image already exists at: {default_png_path}")
+            return default_png_path
+        
+        # No default image found, create one
+        try:
+            from PIL import Image, ImageDraw, ImageFont
+            
+            # Create a new transparent image
+            # RGBA mode - A is alpha/transparency channel
+            img = Image.new('RGBA', (1280, 720), color=(0, 0, 0, 0))
+            
+            # Get a drawing context
+            draw = ImageDraw.Draw(img)
+            
+            # Create semi-transparent background rectangle for better text visibility
+            # Define rectangle coordinates (left, top, right, bottom)
+            rect_left = 320
+            rect_top = 260
+            rect_right = 960
+            rect_bottom = 460
+            # Draw with semi-transparent dark background
+            draw.rectangle([rect_left, rect_top, rect_right, rect_bottom], 
+                        fill=(0, 0, 0, 180))  # RGBA with alpha=180 (semi-transparent)
+            
+            # Try to use a font
+            try:
+                font = ImageFont.truetype("arial.ttf", 32)
+                small_font = ImageFont.truetype("arial.ttf", 24)
+            except:
+                # Fall back to default if no font available
+                font = ImageFont.load_default()
+                small_font = ImageFont.load_default()
+            
+            # Draw text on the semi-transparent background
+            # Main title
+            draw.text((640, 300), "MAME Controls Preview", 
+                    fill=(255, 255, 255, 255), anchor="mm", font=font)
+            
+            # Instructions
+            draw.text((640, 360), "Place game screenshots in preview folder", 
+                    fill=(200, 200, 200, 255), anchor="mm", font=small_font)
+            draw.text((640, 400), "with ROM name (e.g., pacman.png)", 
+                    fill=(200, 200, 200, 255), anchor="mm", font=small_font)
+            
+            # Save the image
+            created_path = os.path.join(output_dir, "default.png")
+            img.save(created_path)
+            print(f"Created transparent default image at: {created_path}")
+            
+            return created_path
+        except ImportError:
+            print("PIL not installed, cannot create default image")
+            return None
+        except Exception as e:
+            print(f"Error creating transparent default image: {e}")
+            import traceback
+            traceback.print_exc()
+            return None
+
+    # Improved version of ensure_preview_folder_improved() to create transparent default image
+    def ensure_preview_folder_improved(self):
+        """Create preview directory if it doesn't exist and ensure default image exists"""
+        import os
+        import sys
+        
+        # Make sure mame_dir exists and is a string
+        if not hasattr(self, 'mame_dir') or self.mame_dir is None:
+            # Fallback to current directory if mame_dir is not set
+            self.mame_dir = os.path.abspath(os.path.dirname(__file__))
+            print(f"Warning: mame_dir not set, using current directory: {self.mame_dir}")
+        
+        preview_dir = os.path.join(self.mame_dir, "preview")
+        print(f"Ensuring preview folder at: {preview_dir}")
+        
+        # Create directory if it doesn't exist
+        if not os.path.exists(preview_dir):
+            try:
+                print(f"Creating preview directory: {preview_dir}")
+                os.makedirs(preview_dir, exist_ok=True)
+                
+                # Copy any bundled preview images if running as executable
+                if getattr(sys, 'frozen', False):
+                    bundled_preview = os.path.join(get_application_path(), "preview2")
+                    if os.path.exists(bundled_preview):
+                        import shutil
+                        for item in os.listdir(bundled_preview):
+                            source = os.path.join(bundled_preview, item)
+                            dest = os.path.join(preview_dir, item)
+                            if os.path.isfile(source):
+                                shutil.copy2(source, dest)
+                                print(f"Copied: {item} to preview folder")
+            except Exception as e:
+                print(f"Error creating preview directory: {e}")
+                # Create a fallback directory in the current location
+                try:
+                    current_dir = os.path.abspath(os.path.dirname(__file__))
+                    preview_dir = os.path.join(current_dir, "preview")
+                    os.makedirs(preview_dir, exist_ok=True)
+                    print(f"Created fallback preview directory: {preview_dir}")
+                except Exception as e2:
+                    print(f"Error creating fallback preview directory: {e2}")
+                    # Last resort - use temp directory
+                    import tempfile
+                    preview_dir = os.path.join(tempfile.gettempdir(), "mame_preview")
+                    os.makedirs(preview_dir, exist_ok=True)
+                    print(f"Created last-resort preview directory: {preview_dir}")
+        
+        # Ensure settings directory exists
+        settings_dir = os.path.join(preview_dir, "settings")
+        if not os.path.exists(settings_dir):
+            try:
+                os.makedirs(settings_dir, exist_ok=True)
+                print(f"Created settings directory: {settings_dir}")
+            except Exception as e:
+                print(f"Error creating settings directory: {e}")
+        
+        # Ensure default image exists
+        default_img_path = os.path.join(preview_dir, "default.png")
+        if not os.path.exists(default_img_path):
+            # Create transparent default image
+            try:
+                self.create_transparent_default_image(preview_dir)
+                print(f"Created transparent default image at: {default_img_path}")
+            except Exception as e:
+                print(f"Error creating transparent default image: {e}")
+                # Attempt simplified default image creation as fallback
+                try:
+                    self.create_simple_default_image(preview_dir)
+                    print(f"Created simple default image at: {default_img_path}")
+                except Exception as e2:
+                    print(f"Error creating simple default image: {e2}")
+        
         return preview_dir
+    
+    def create_simple_default_image(self, output_dir):
+        """Create a simple default image (fallback if PIL fails)"""
+        import os
+        
+        default_png_path = os.path.join(output_dir, "default.png")
+        
+        # Create a minimal 1x1 PNG file with raw bytes
+        # This is a valid 1x1 black PNG file in raw bytes
+        png_data = bytearray([
+            0x89, 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A, 0x00, 0x00, 0x00, 0x0D,
+            0x49, 0x48, 0x44, 0x52, 0x00, 0x00, 0x00, 0x01, 0x00, 0x00, 0x00, 0x01,
+            0x08, 0x06, 0x00, 0x00, 0x00, 0x1F, 0x15, 0xC4, 0x89, 0x00, 0x00, 0x00,
+            0x0A, 0x49, 0x44, 0x41, 0x54, 0x78, 0x9C, 0x63, 0x00, 0x01, 0x00, 0x00,
+            0x05, 0x00, 0x01, 0x0D, 0x0A, 0x2D, 0xB4, 0x00, 0x00, 0x00, 0x00, 0x49,
+            0x45, 0x4E, 0x44, 0xAE, 0x42, 0x60, 0x82
+        ])
+        
+        with open(default_png_path, 'wb') as f:
+            f.write(png_data)
+        
+        return default_png_path
     
     def create_default_image(output_dir=None):
         """Create a default image if none exists"""
@@ -2321,7 +2727,7 @@ class MAMEControlConfig(ctk.CTk):
             return
             
         # Create preview directory and handle bundled images if needed
-        preview_dir = self.ensure_preview_folder()
+        preview_dir = self.ensure_preview_folder_improved()
 
         # Check for a ROM-specific image (PNG or JPG)
         image_extensions = [".png", ".jpg", ".jpeg"]
@@ -3373,13 +3779,16 @@ class MAMEControlConfig(ctk.CTk):
             self.preview_canvas.itemconfig(data['shadow'], state=state)
     
     def load_all_data(self):
-        """Modified load_all_data to use SQLite database"""
+        """Modified load_all_data to use improved folder checks"""
         # Display loading status
         if hasattr(self, 'stats_label'):
             self.stats_label.configure(text="Loading settings and ROMs...")
         
         # Load settings first (small and fast)
         self.load_settings()
+        
+        # Ensure preview folder and default image exist
+        self.ensure_preview_folder_improved()
         
         # Begin database building in the background if needed
         build_thread = None
@@ -5813,8 +6222,8 @@ class MAMEControlConfig(ctk.CTk):
             print("Forced logo visibility enabled")
         
         # Ensure preview folder exists
-        if hasattr(self, 'ensure_preview_folder'):
-            preview_dir = self.ensure_preview_folder()
+        if hasattr(self, 'ensure_preview_folder_improved()'):
+            preview_dir = self.ensure_preview_folder_improved()
         else:
             preview_dir = os.path.join(self.mame_dir, "preview")
             if not os.path.exists(preview_dir):
@@ -6236,7 +6645,7 @@ class MAMEControlConfig(ctk.CTk):
             return
                 
         # Ensure preview directory exists
-        preview_dir = self.ensure_preview_folder()
+        preview_dir = self.ensure_preview_folder_improved()
         output_path = os.path.join(preview_dir, f"{self.current_game}.png")
         
         # Ask for confirmation if file exists
@@ -6874,7 +7283,7 @@ class MAMEControlConfig(ctk.CTk):
         import sys
 
         # Ensure preview directory exists
-        preview_dir = self.ensure_preview_folder()
+        preview_dir = self.ensure_preview_folder_improved()
         
         # Load text appearance settings explicitly
         settings = self.get_text_settings()
@@ -7461,7 +7870,7 @@ class MAMEControlConfig(ctk.CTk):
             
             # 2. Load the background image
             background_path = None
-            preview_dir = self.ensure_preview_folder()
+            preview_dir = self.ensure_preview_folder_improved()
             
             for ext in ['.png', '.jpg', '.jpeg']:
                 # First check for ROM-specific background
@@ -9976,7 +10385,7 @@ class MAMEControlConfig(ctk.CTk):
             return
             
         # Create preview directory and handle bundled images if needed
-        preview_dir = self.ensure_preview_folder()
+        preview_dir = self.ensure_preview_folder_improved()
 
         # Check for a ROM-specific image (PNG or JPG)
         image_extensions = [".png", ".jpg", ".jpeg"]
