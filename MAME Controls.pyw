@@ -190,7 +190,8 @@ class PositionManager:
 class MAMEControlConfig(ctk.CTk):
     def __init__(self, preview_only=False):
         super().__init__()
-
+        # At the beginning of the class initialization:
+        self._debug_data_source = False  # Set to True for detailed data source logging     
         # Initialize core attributes needed for both modes
         self.visible_control_types = ["BUTTON", "JOYSTICK"]
         self.default_controls = {}
@@ -554,6 +555,45 @@ class MAMEControlConfig(ctk.CTk):
             traceback.print_exc()
             return False
     
+    def is_database_update_needed(self):
+        """Check if the database needs to be rebuilt by comparing timestamps"""
+        # Get paths
+        db_path = os.path.join(self.mame_dir, "preview", "settings", "gamedata.db")
+        json_path = self.get_gamedata_path()
+        
+        print(f"\n=== Checking if database needs updating ===")
+        print(f"Database path: {db_path}")
+        print(f"JSON path: {json_path}")
+        
+        # If database doesn't exist, it definitely needs to be built
+        if not os.path.exists(db_path):
+            print("Database doesn't exist, rebuild needed")
+            return True
+            
+        # If gamedata.json doesn't exist, we can't build the database
+        if not os.path.exists(json_path):
+            print("gamedata.json doesn't exist, can't build database")
+            return False
+            
+        # Compare modification times
+        db_mtime = os.path.getmtime(db_path)
+        json_mtime = os.path.getmtime(json_path)
+        
+        db_time_str = time.strftime('%Y-%m-%d %H:%M:%S', time.localtime(db_mtime))
+        json_time_str = time.strftime('%Y-%m-%d %H:%M:%S', time.localtime(json_mtime))
+        
+        print(f"Database timestamp: {db_time_str}")
+        print(f"JSON file timestamp: {json_time_str}")
+        
+        # If JSON file is newer than database, we need to rebuild
+        if json_mtime > db_mtime:
+            print(f"gamedata.json is newer than database, rebuild needed")
+            return True
+            
+        print("Database is up to date, no rebuild needed")
+        print("=== Database check complete ===\n")
+        return False
+    
     def get_game_data_from_db(self, romname):
         """Get game data from SQLite database"""
         # Make sure we have a database
@@ -747,13 +787,40 @@ class MAMEControlConfig(ctk.CTk):
 
     def initialize_database(self):
         """Initialize SQLite database and patch methods"""
+        print("\n=== Database Initialization ===")
+        
         # Save original method if needed
         if not hasattr(self, 'orig_get_game_data'):
             self.orig_get_game_data = self.get_game_data
+            print("Original get_game_data method stored")
         
-        # Try to build or load the database
-        if not hasattr(self, 'db_path') or not os.path.exists(getattr(self, 'db_path', '')):
-            self.build_gamedata_db()
+        # Check if database exists and set path
+        db_path = os.path.join(self.mame_dir, "preview", "settings", "gamedata.db")
+        self.db_path = db_path
+        print(f"Database path set to: {db_path}")
+        
+        # Only rebuild the database if needed
+        if self.is_database_update_needed():
+            print("Building database because it needs updating")
+            success = self.build_gamedata_db()
+            if success:
+                print("Database built successfully")
+            else:
+                print("Database build failed")
+        else:
+            print("Using existing database - no rebuild needed")
+        
+        # Initialize debug counters as a dictionary property
+        # Store them in a normal attribute that won't conflict with tkinter
+        self.debug_source_counters = {
+            'cache': 0,
+            'custom': 0,
+            'database': 0,
+            'json': 0,
+            'not_found': 0
+        }
+        
+        print("=== Database Initialization Complete ===\n")
     
     def create_button(self, parent, text, command, button_id, show=True, width=150, **kwargs):
         """
@@ -3790,16 +3857,26 @@ class MAMEControlConfig(ctk.CTk):
         # Ensure preview folder and default image exist
         self.ensure_preview_folder_improved()
         
-        # Begin database building in the background if needed
-        build_thread = None
-        
-        # Check if we need to build or update the database
-        if not hasattr(self, 'db_path') or not os.path.exists(getattr(self, 'db_path', '')):
+        # Initialize database only if needed
+        db_path = os.path.join(self.mame_dir, "preview", "settings", "gamedata.db")
+        if not os.path.exists(db_path) or self.is_database_update_needed():
             # Start a thread to build the database in the background
             import threading
             build_thread = threading.Thread(target=self.build_gamedata_db)
             build_thread.daemon = True
             build_thread.start()
+            
+            # If database building is still running, show status
+            if build_thread.is_alive():
+                if hasattr(self, 'stats_label'):
+                    self.stats_label.configure(text="Building SQLite index (this may take a moment)...")
+                
+                # Wait for the database to be built (UI will freeze temporarily)
+                build_thread.join()
+        else:
+            # Database is up to date, just set the path
+            self.db_path = db_path
+            print(f"Using existing database: {db_path}")
         
         # Scan ROMs directory (with caching for speed)
         self.scan_roms_directory()
@@ -3809,14 +3886,6 @@ class MAMEControlConfig(ctk.CTk):
         
         # Load custom configs (can be slow for many files)
         self.load_custom_configs()
-        
-        # If database building is still running, show status
-        if build_thread and build_thread.is_alive():
-            if hasattr(self, 'stats_label'):
-                self.stats_label.configure(text="Building SQLite index (this may take a moment)...")
-            
-            # Wait for the database to be built (UI will freeze temporarily)
-            build_thread.join()
         
         # Update UI after all data is loaded
         self.update_stats_label()
@@ -4397,23 +4466,40 @@ class MAMEControlConfig(ctk.CTk):
             return self.get_game_data(romname)
 
     def get_game_data(self, romname):
-        """Get game data using SQLite database"""
+        """Get game data using SQLite database with optimized caching"""
         # Prevent recursion
         if hasattr(self, '_in_get_game_data') and self._in_get_game_data:
             return None
         
-        #print(f"\n=== DEBUG: get_game_data for {romname} ===")
-        
         # Set recursion guard
         self._in_get_game_data = True
+        
+        # Initialize debug counters if not already done
+        if not hasattr(self, 'debug_source_counters'):
+            self.debug_source_counters = {
+                'cache': 0,
+                'custom': 0,
+                'database': 0,
+                'json': 0,
+                'not_found': 0
+            }
         
         try:
             # Check cache first for fastest response
             if hasattr(self, 'rom_data_cache') and romname in self.rom_data_cache:
                 self._in_get_game_data = False
+                
+                # Only print debug for the first 5 cache hits
+                if self.debug_source_counters['cache'] < 5:
+                    print(f"Data for {romname} from memory cache")
+                    self.debug_source_counters['cache'] += 1
+                elif self.debug_source_counters['cache'] == 5:
+                    print("Further memory cache lookups will not be logged...")
+                    self.debug_source_counters['cache'] += 1
+                    
                 return self.rom_data_cache[romname]
             
-            # First check for custom controls
+            # Check for custom controls first
             custom_path = os.path.join(self.mame_dir, "custom_controls", f"{romname}.json")
             if os.path.exists(custom_path):
                 try:
@@ -4427,79 +4513,87 @@ class MAMEControlConfig(ctk.CTk):
                             self.rom_data_cache = {}
                         self.rom_data_cache[romname] = custom_data
                         self._in_get_game_data = False
+                        
+                        # Only print debug for the first 5 custom files
+                        if self.debug_source_counters['custom'] < 5:
+                            print(f"Data for {romname} from custom controls file")
+                            self.debug_source_counters['custom'] += 1
+                        elif self.debug_source_counters['custom'] == 5:
+                            print("Further custom control lookups will not be logged...")
+                            self.debug_source_counters['custom'] += 1
+                            
                         return custom_data
                 except Exception as e:
                     print(f"Error loading custom controls: {e}")
             
-            # Lazy-initialize database if needed
+            # Initialize the database path if it's not set yet
             if not hasattr(self, 'db_path') or not self.db_path:
-                # Initialize database on first use
-                self.initialize_database()
+                db_path = os.path.join(self.mame_dir, "preview", "settings", "gamedata.db")
+                if os.path.exists(db_path):
+                    self.db_path = db_path
+                else:
+                    # Database doesn't exist, try to build it
+                    self.initialize_database()
             
-            # Try SQLite database method
-            if hasattr(self, 'db_path') and self.db_path:
+            # Try getting data from the database if it's available
+            if hasattr(self, 'db_path') and self.db_path and os.path.exists(self.db_path):
                 try:
-                    # Connect to the database
-                    conn = sqlite3.connect(self.db_path)
-                    cursor = conn.cursor()
-                    
-                    # First try direct lookup
-                    cursor.execute('SELECT data FROM games WHERE romname = ?', (romname,))
-                    row = cursor.fetchone()
-                    
-                    if row:
-                        # Game found directly
-                        game_data = json.loads(row[0])
-                        result = self.convert_db_game_data(romname, game_data)
-                        conn.close()
-                        
+                    result = self.get_game_data_from_db(romname)
+                    if result:
                         # Cache the result
                         if not hasattr(self, 'rom_data_cache'):
                             self.rom_data_cache = {}
                         self.rom_data_cache[romname] = result
-                        
                         self._in_get_game_data = False
-                        return result
-                    
-                    # If not found directly, check if it's a clone
-                    cursor.execute('SELECT parent FROM clones WHERE clone = ?', (romname,))
-                    clone_row = cursor.fetchone()
-                    
-                    if clone_row:
-                        # It's a clone, get the parent data
-                        parent = clone_row[0]
-                        cursor.execute('SELECT data FROM games WHERE romname = ?', (parent,))
-                        parent_row = cursor.fetchone()
                         
-                        if parent_row:
-                            # Use parent data but update clone-specific fields
-                            parent_data = json.loads(parent_row[0])
-                            result = self.convert_db_game_data(romname, parent_data)
-                            result['gamename'] = f"{romname} (Clone of {parent})"
-                            conn.close()
+                        # Only print debug for the first 5 database hits
+                        if self.debug_source_counters['database'] < 5:
+                            print(f"Data for {romname} from database")
+                            self.debug_source_counters['database'] += 1
+                        elif self.debug_source_counters['database'] == 5:
+                            print("Further database lookups will not be logged...")
+                            self.debug_source_counters['database'] += 1
                             
-                            # Cache the result
-                            if not hasattr(self, 'rom_data_cache'):
-                                self.rom_data_cache = {}
-                            self.rom_data_cache[romname] = result
-                            
-                            self._in_get_game_data = False
-                            return result
-                    
-                    # Not found in database, close connection
-                    conn.close()
+                        return result
                 except Exception as e:
-                    print(f"Error with database lookup: {e}")
+                    print(f"Error getting data from database: {e}")
             
-            # Fall back to original method if needed
-            if hasattr(self, 'gamedata_json') and romname in self.gamedata_json:
-                return self.orig_get_game_data(romname)
+            # Fall back to JSON method if database fails or doesn't exist
+            if hasattr(self, 'gamedata_json') and self.gamedata_json:
+                # Use the original method as fallback
+                result = self.orig_get_game_data(romname)
+                
+                # Cache if found
+                if result:
+                    if not hasattr(self, 'rom_data_cache'):
+                        self.rom_data_cache = {}
+                    self.rom_data_cache[romname] = result
+                    
+                    # Only print debug for the first 5 JSON lookups
+                    if self.debug_source_counters['json'] < 5:
+                        print(f"Data for {romname} from JSON fallback")
+                        self.debug_source_counters['json'] += 1
+                    elif self.debug_source_counters['json'] == 5:
+                        print("Further JSON lookups will not be logged...")
+                        self.debug_source_counters['json'] += 1
+                
+                self._in_get_game_data = False
+                return result
             
             # Not found by any method
-            return None
-        finally:
-            # Clear recursion guard
+            if self.debug_source_counters['not_found'] < 5:
+                print(f"No data found for {romname}")
+                self.debug_source_counters['not_found'] += 1
+            elif self.debug_source_counters['not_found'] == 5:
+                print("Further 'not found' messages will not be logged...")
+                self.debug_source_counters['not_found'] += 1
+                
             self._in_get_game_data = False
+            return None
+        except Exception as e:
+            print(f"Error in get_game_data: {e}")
+            self._in_get_game_data = False
+            return None
 
     def scan_roms_directory(self):
         """Scan the roms directory for available games"""
