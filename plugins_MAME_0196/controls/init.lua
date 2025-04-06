@@ -18,7 +18,7 @@ function exports.startplugin()
         
         if game_name and game_name ~= "" then
             -- Show controls
-            local command = string.format('pythonw "MAME Controls.pyw" --preview-only --game %s --screen 1 --hide-joystick --hide-buttons', game_name)
+            local command = string.format('"MAME Controls.exe" --preview-only --game %s --screen 1 --hide-joystick --hide-buttons', game_name)
             print("Running: " .. command)
             os.execute(command)
             
