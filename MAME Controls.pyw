@@ -10628,29 +10628,6 @@ class MAMEControlConfig(ctk.CTk):
             print("Logo was potentially added (different image returned)")
             
         print("--- LOGO TEST COMPLETE ---\n")
-
-    '''def get_text_settings(self):
-        """Central place for all text appearance settings"""
-        return {
-            "font_name": "ScoutCond-Bold",  # Base filename without extension
-            "font_size": 42,                # Regular text size
-            "title_size": 36,               # Title text size
-            "uppercase": True,              # Whether to use uppercase
-            "bold_strength": 2,             # Shadow effect (0-3)
-            "y_offset": -30                 # Y-position adjustment
-        }
-        
-        # 2. Replace the load_text_appearance_settings method
-        def load_text_appearance_settings(self):
-            """Load fixed text appearance settings"""
-            return {
-                "font_family": "Press Start 2P",
-                "font_size": 28,
-                "title_font_size": 36,
-                "bold_strength": 2,
-                "y_offset": -40,
-                "use_uppercase": True
-            }'''
     
     def get_default_font_settings(self):
         """
@@ -11671,6 +11648,9 @@ class MAMEControlConfig(ctk.CTk):
             
             # Add toggle screen button to bottom row
             def toggle_screen():
+                """Smoothly transition the preview window to a different screen without closing/reopening"""
+                nonlocal screen_button  # Access the button from outer scope
+                
                 # Cycle to the next available monitor
                 current_screen = getattr(self, 'preferred_preview_screen', 2)
                 next_screen = (current_screen % len(monitors)) + 1
@@ -11679,13 +11659,52 @@ class MAMEControlConfig(ctk.CTk):
                 self.preferred_preview_screen = next_screen
                 print(f"Switching to screen {next_screen}")
                 
-                # Close and reopen the preview window
-                self.preview_window.destroy()
-                self.show_preview()
+                # Get the target monitor information
+                target_monitor = None
+                if 0 <= next_screen - 1 < len(monitors):
+                    target_monitor = monitors[next_screen - 1]
+                    print(f"Target monitor: {target_monitor}")
+                else:
+                    # Fall back to first monitor if preferred screen doesn't exist
+                    target_monitor = monitors[0]
+                    print(f"Preferred screen {next_screen} not available, using monitor 1")
+                
+                # Temporarily hide the window during transition
+                self.preview_window.withdraw()
+                
+                # Calculate new position and dimensions
+                window_x = target_monitor['left']
+                window_y = target_monitor['top']
+                window_width = target_monitor['width']
+                window_height = target_monitor['height']
+                
+                # Update window geometry
+                self.preview_window.geometry(f"{window_width}x{window_height}+{window_x}+{window_y}")
+                
+                # Update window title to reflect the new screen
+                self.preview_window.title(f"Control Preview: {self.current_game} (Screen {next_screen})")
+                
+                # Update the button label to show the OTHER screen now
+                # (Shows the screen you would go to next, not the current screen)
+                other_screen = (next_screen % len(monitors)) + 1
+                screen_button.configure(text=f"Screen {other_screen}")
+                
+                # Show the window again
+                self.preview_window.deiconify()
+                self.preview_window.update()
+                
+                # Make sure it stays on top
+                self.preview_window.attributes('-topmost', True)
+                
+                # Ensure it remains fullscreen
+                self.preview_window.overrideredirect(True)
+                
+            # Determine which screen to show on button (the next screen to go to)
+            next_screen = (preferred_screen % len(monitors)) + 1
                 
             screen_button = ctk.CTkButton(
                 bottom_row,
-                text=f"Screen {preferred_screen}",
+                text=f"Screen {next_screen}",
                 command=toggle_screen,
                 width=button_width
             )
