@@ -220,7 +220,6 @@ class MAMEControlConfig(ctk.CTk):
         
         # Set current directory as default MAME directory before finding the actual one
         # This ensures mame_dir is never None
-        import os
         self.mame_dir = os.path.abspath(os.path.dirname(__file__))
         print(f"Set default MAME directory to current directory: {self.mame_dir}")
         
@@ -344,10 +343,24 @@ class MAMEControlConfig(ctk.CTk):
         # Create dialog
         dialog = ctk.CTkToplevel(self)
         dialog.title("ROM Control Analysis")
-        dialog.geometry("800x600")
+        #dialog.geometry("800x600")
         dialog.transient(self)
         dialog.grab_set()
         
+        # Center the dialog on the screen
+        dialog_width = 800
+        dialog_height = 600
+
+        # Get screen width and height
+        screen_width = dialog.winfo_screenwidth()
+        screen_height = dialog.winfo_screenheight()
+
+        # Calculate position x, y
+        x = int((screen_width / 2) - (dialog_width / 2))
+        y = int((screen_height / 2) - (dialog_height / 2))
+
+        dialog.geometry(f"{dialog_width}x{dialog_height}+{x}+{y}")
+
         # Create tabs
         tabview = ctk.CTkTabview(dialog)
         tabview.pack(expand=True, fill="both", padx=10, pady=10)
@@ -595,50 +608,41 @@ class MAMEControlConfig(ctk.CTk):
         return False
     
     def get_game_data_from_db(self, romname):
-        """Get game data from SQLite database"""
-        # Make sure we have a database
-        if not hasattr(self, 'db_path'):
-            if not self.build_gamedata_db():
+        """Get game data from SQLite database with optimized query"""
+        # Make sure we have a database connection
+        if not hasattr(self, 'db_conn'):
+            try:
+                import sqlite3
+                self.db_conn = sqlite3.connect(self.db_path)
+                self.db_conn.row_factory = sqlite3.Row  # This allows accessing columns by name
+                print("Created persistent database connection")
+            except Exception as e:
+                print(f"Error creating database connection: {e}")
                 return None
         
         try:
-            # Connect to the database
-            conn = sqlite3.connect(self.db_path)
-            cursor = conn.cursor()
+            cursor = self.db_conn.cursor()
             
-            # First try direct lookup
-            cursor.execute('SELECT data FROM games WHERE romname = ?', (romname,))
+            # First try direct lookup with a single query that also checks clone status
+            cursor.execute('''
+            SELECT data, NULL as parent FROM games WHERE romname = ?
+            UNION ALL
+            SELECT g.data, c.parent FROM games g 
+            JOIN clones c ON g.romname = c.parent 
+            WHERE c.clone = ? LIMIT 1
+            ''', (romname, romname))
+            
             row = cursor.fetchone()
             
-            if row:
-                # Game found directly
+            if row and row[0]:
+                # Game found directly or as clone parent
                 game_data = json.loads(row[0])
                 result = self.convert_db_game_data(romname, game_data)
-                conn.close()
                 return result
             
-            # If not found directly, check if it's a clone
-            cursor.execute('SELECT parent FROM clones WHERE clone = ?', (romname,))
-            clone_row = cursor.fetchone()
-            
-            if clone_row:
-                # It's a clone, get the parent data
-                parent = clone_row[0]
-                cursor.execute('SELECT data FROM games WHERE romname = ?', (parent,))
-                parent_row = cursor.fetchone()
-                
-                if parent_row:
-                    # Use parent data but update clone-specific fields
-                    parent_data = json.loads(parent_row[0])
-                    result = self.convert_db_game_data(romname, parent_data)
-                    result['gamename'] = f"{romname} (Clone of {parent})"
-                    conn.close()
-                    return result
-            
             # Not found
-            conn.close()
             return None
-        
+            
         except Exception as e:
             print(f"Error getting game data from database: {e}")
             return None
@@ -6256,6 +6260,13 @@ class MAMEControlConfig(ctk.CTk):
     
     def show_preview_standalone(self, rom_name, auto_close=False, force_logo=False, hide_joystick=False):
         """Show the preview for a specific ROM without running the main app - with performance optimizations"""
+        import os
+        import time  # Add this import
+        import json
+        import sqlite3
+        import sys
+        import threading
+        
         print(f"Starting standalone preview for ROM: {rom_name}")
         
         # Find the MAME directory (already in __init__)
@@ -6268,7 +6279,6 @@ class MAMEControlConfig(ctk.CTk):
         print(f"Using MAME directory: {self.mame_dir}")
         
         # Save the requested screen number before loading settings
-        import sys
         requested_screen = None
         for i, arg in enumerate(sys.argv):
             if arg == '--screen' and i+1 < len(sys.argv):
@@ -6316,34 +6326,154 @@ class MAMEControlConfig(ctk.CTk):
             print("Forced logo visibility enabled")
         
         # Ensure preview folder exists
-        if hasattr(self, 'ensure_preview_folder_improved()'):
+        if hasattr(self, 'ensure_preview_folder_improved'):
             preview_dir = self.ensure_preview_folder_improved()
         else:
             preview_dir = os.path.join(self.mame_dir, "preview")
             if not os.path.exists(preview_dir):
                 os.makedirs(preview_dir)
         
-        # Initialize database FIRST - ensure this happens before any game data loading
-        self.initialize_database()
-        print(f"Database initialized, path: {getattr(self, 'db_path', 'Not set')}")
+        # Force database initialization and wait for it to complete before proceeding
+        print("Forcing database initialization for maximum performance")
+        db_path = os.path.join(self.mame_dir, "preview", "settings", "gamedata.db")
+        if not os.path.exists(db_path) or self.is_database_update_needed():
+            print("Building database...")
+            success = self.build_gamedata_db()
+            if success:
+                print("Database built successfully")
+            else:
+                print("Database build failed, will use slower methods")
+        else:
+            self.db_path = db_path
+            print(f"Using existing database: {db_path}")
         
-        # Minimal data loading required for preview
-        if not hasattr(self, 'default_controls') or not self.default_controls:
-            self.load_default_config()
+        # Don't create a persistent connection as it can't be shared across threads
+        # Instead, modify the optimized method to create connections as needed
+
+        # Patch get_game_data to prioritize database access in preview-only mode
+        if not hasattr(self, 'original_get_game_data'):
+            self.original_get_game_data = self.get_game_data
+            
+            def optimized_get_game_data(romname):
+                # Check cache first
+                if hasattr(self, 'rom_data_cache') and romname in self.rom_data_cache:
+                    return self.rom_data_cache[romname]
+                    
+                # Try database first - direct access, bypass standard function
+                if hasattr(self, 'db_path') and self.db_path and os.path.exists(self.db_path):
+                    try:
+                        # Create a new connection each time (required for thread safety)
+                        conn = sqlite3.connect(self.db_path)
+                        cursor = conn.cursor()
+                        
+                        # First try direct lookup
+                        cursor.execute('SELECT data FROM games WHERE romname = ?', (romname,))
+                        row = cursor.fetchone()
+                        
+                        if row:
+                            # Game found directly
+                            game_data = json.loads(row[0])
+                            result = self.convert_db_game_data(romname, game_data)
+                            
+                            # Cache the result
+                            if not hasattr(self, 'rom_data_cache'):
+                                self.rom_data_cache = {}
+                            self.rom_data_cache[romname] = result
+                            
+                            # Clean up connection
+                            conn.close()
+                            
+                            print(f"Got data for {romname} from database (fast path)")
+                            return result
+                        
+                        # If not found directly, check if it's a clone
+                        cursor.execute('SELECT parent FROM clones WHERE clone = ?', (romname,))
+                        clone_row = cursor.fetchone()
+                        
+                        if clone_row:
+                            # It's a clone, get the parent data
+                            parent = clone_row[0]
+                            cursor.execute('SELECT data FROM games WHERE romname = ?', (parent,))
+                            parent_row = cursor.fetchone()
+                            
+                            if parent_row:
+                                # Use parent data but update clone-specific fields
+                                parent_data = json.loads(parent_row[0])
+                                result = self.convert_db_game_data(romname, parent_data)
+                                result['gamename'] = f"{romname} (Clone of {parent})"
+                                
+                                # Cache the result
+                                if not hasattr(self, 'rom_data_cache'):
+                                    self.rom_data_cache = {}
+                                self.rom_data_cache[romname] = result
+                                
+                                # Clean up connection
+                                conn.close()
+                                
+                                print(f"Got data for {romname} from parent {parent} in database (fast path)")
+                                return result
+                        
+                        # Clean up connection if we get here without finding data
+                        conn.close()
+                        
+                    except Exception as e:
+                        print(f"Optimized database access failed: {e}, falling back to original method")
+                        try:
+                            if 'conn' in locals() and conn:
+                                conn.close()
+                        except:
+                            pass
+                
+                # Fall back to original method
+                return self.original_get_game_data(romname)
+            
+            # Replace the method
+            self.get_game_data = optimized_get_game_data
+            print("Installed optimized game data retrieval method")
+        
+        # Function to preload common controls to warm up the cache
+        def preload_common_controls():
+            """Preload the most commonly used controls to warm up the cache"""
+            # Skip if the database isn't available
+            if not hasattr(self, 'db_path') or not os.path.exists(self.db_path):
+                return
+                
+            # List of common arcade games to preload
+            common_roms = ["pacman", "mspacman", "galaga", "dkong", "sf2", "mk", "1942"]
+            
+            print("Preloading common game controls...")
+            for rom in common_roms:
+                if rom != rom_name:  # Don't duplicate the current ROM
+                    try:
+                        self.get_game_data(rom)
+                    except Exception as e:
+                        print(f"Error preloading {rom}: {e}")
+            print("Preloading complete")
+        
+        # Start preloading in a background thread to avoid delaying the UI
+        preload_thread = threading.Thread(target=preload_common_controls)
+        preload_thread.daemon = True
+        preload_thread.start()
         
         # Set the current game
         self.current_game = rom_name
         
-        # First try with the exact ROM name
-        print(f"Attempting to load game data for ROM: {rom_name}")
+        # Get game data with optimized method
+        print(f"Getting game data for ROM: {rom_name}")
+        start_time = time.time()
         game_data = self.get_game_data(rom_name)
+        elapsed = time.time() - start_time
+        print(f"Game data retrieved in {elapsed:.4f} seconds")
+        
+        # Rest of the method follows...
+        
         if game_data:
-            print(f"Found game data for exact ROM name: {rom_name}")
+            print(f"Found game data for: {rom_name}")
         else:
             # Try parent-clone relationship
             try:
                 # Connect to database
-                conn = sqlite3.connect(self.db_path)
+                conn = self.db_conn if hasattr(self, 'db_conn') else sqlite3.connect(self.db_path)
                 cursor = conn.cursor()
                 
                 # 1. Check if it's a clone, and if so, try the parent
@@ -6373,8 +6503,6 @@ class MAMEControlConfig(ctk.CTk):
                                 game_data = clone_data
                                 self.current_game = clone
                                 break
-                
-                conn.close()
             except Exception as e:
                 print(f"Error checking ROM relationships: {e}")
         
@@ -6442,14 +6570,41 @@ class MAMEControlConfig(ctk.CTk):
         # Start MAME process monitoring only if auto_close is enabled
         if auto_close:
             print("Auto-close enabled - preview will close when MAME exits")
-            self.monitor_mame_process(check_interval=0.5)
+            self.monitor_mame_process(check_interval=0.5)  # Faster interval for quicker response
         else:
             print("Auto-close disabled - preview will stay open until manually closed")
         
+        # Warmup the canvas before showing to improve rendering speed
+        def warmup_ui_components():
+            """Create UI components in memory before showing to reduce lag"""
+            try:
+                import tkinter as tk
+                # Create temporary canvas to load resources
+                temp_root = tk.Tk()
+                temp_root.withdraw()
+                temp_canvas = tk.Canvas(temp_root, width=100, height=100)
+                # Create some sample items to warm up the canvas
+                temp_canvas.create_rectangle(10, 10, 90, 90, fill="black")
+                temp_canvas.create_text(50, 50, text="Warmup", fill="white")
+                temp_root.update()
+                temp_root.destroy()
+                print("UI components warmed up")
+            except Exception as e:
+                print(f"Warmup error (non-critical): {e}")
+        
+        # Run UI warmup in a background thread
+        import threading
+        warmup_thread = threading.Thread(target=warmup_ui_components)
+        warmup_thread.daemon = True
+        warmup_thread.start()
+        
         # Show the preview window
         try:
+            # Use a timer to measure preview window creation time
+            start_time = time.time()
             self.show_preview()
-            print("Preview window displayed successfully")
+            elapsed = time.time() - start_time
+            print(f"Preview window displayed in {elapsed:.4f} seconds")
             
             # Force the window to take focus
             if hasattr(self, 'preview_window') and self.preview_window.winfo_exists():
@@ -6471,6 +6626,20 @@ class MAMEControlConfig(ctk.CTk):
             messagebox.showerror("Error", f"Failed to show preview: {str(e)}")
             return
         
+        # Clean up database connection when the application closes
+        def cleanup_db_connection():
+            if hasattr(self, 'db_conn'):
+                try:
+                    self.db_conn.close()
+                    print("Database connection closed")
+                except Exception as e:
+                    print(f"Error closing database connection: {e}")
+        
+        # Register cleanup handler for window close
+        if hasattr(self, 'preview_window') and self.preview_window.winfo_exists():
+            self.preview_window.after(100, lambda: self.preview_window.protocol("WM_DELETE_WINDOW", 
+                                                                        lambda: [cleanup_db_connection(), self.close_preview()]))
+        
         # Start mainloop for just this window
         try:
             self.mainloop()
@@ -6478,6 +6647,9 @@ class MAMEControlConfig(ctk.CTk):
             print(f"Error in mainloop: {str(e)}")
             import traceback
             traceback.print_exc()
+        finally:
+            # Make sure to clean up database connection
+            cleanup_db_connection()
 
     def start_xinput_polling(self):
         """Start polling for controller input with improved detection"""
@@ -8597,10 +8769,24 @@ class MAMEControlConfig(ctk.CTk):
         # Create dialog
         dialog = ctk.CTkToplevel(self)
         dialog.title("Text Appearance Settings")
-        dialog.geometry("500x600")  # Shorter without system fonts option
+        #dialog.geometry("500x600")  # Shorter without system fonts option
         dialog.transient(self)
         dialog.grab_set()
         
+        # Center the dialog on the screen
+        dialog_width = 500
+        dialog_height = 600
+
+        # Get screen width and height
+        screen_width = dialog.winfo_screenwidth()
+        screen_height = dialog.winfo_screenheight()
+
+        # Calculate position x, y
+        x = int((screen_width / 2) - (dialog_width / 2))
+        y = int((screen_height / 2) - (dialog_height / 2))
+
+        dialog.geometry(f"{dialog_width}x{dialog_height}+{x}+{y}")
+
         # Main frame with scrolling
         main_frame = ctk.CTkScrollableFrame(dialog)
         main_frame.pack(expand=True, fill="both", padx=10, pady=10)
@@ -10082,7 +10268,7 @@ class MAMEControlConfig(ctk.CTk):
             if os.path.exists(settings_path):
                 try:
                     with open(settings_path, 'r') as f:
-                        loaded_settings = json.load(f)
+                        loaded_settings = json.load(f) 
                         # Update with loaded values but keep defaults for missing keys
                         self._text_settings_cache.update(loaded_settings)
                     print(f"Loaded text appearance settings from: {settings_path}")
