@@ -20,19 +20,45 @@ def get_application_path():
     """Get the base path for the application (handles PyInstaller bundling)"""
     import sys
     import os
+    
+    # First get the directory where the script/executable is located
     if getattr(sys, 'frozen', False):
         # Running as compiled executable
-        # Since we're now in the preview folder, we need to go up one level for MAME root
-        exe_dir = os.path.dirname(sys.executable)
-        mame_root = os.path.dirname(exe_dir)  # Go up one level from preview folder
+        app_dir = os.path.dirname(sys.executable)
+    else:
+        # Running as script
+        app_dir = os.path.dirname(os.path.abspath(__file__))
+    
+    # Now check if we're in the preview folder
+    is_in_preview = os.path.basename(app_dir) == "preview"
+    
+    # Print detailed debug info
+    print(f"DEBUG: Application directory: {app_dir}")
+    print(f"DEBUG: In preview folder? {is_in_preview}")
+    
+    if is_in_preview:
+        # We're in the preview folder, return parent directory as MAME root
+        mame_root = os.path.dirname(app_dir)
+        print(f"DEBUG: Returning MAME root (parent of preview): {mame_root}")
         return mame_root
     else:
-        # Running as script, check if we're in preview folder
-        script_dir = os.path.dirname(os.path.abspath(__file__))
-        if os.path.basename(script_dir) == "preview":
-            return os.path.dirname(script_dir)  # Go up one level
-        else:
-            return script_dir  # Assume we're already in MAME root
+        # We're already at MAME root
+        print(f"DEBUG: Returning directory as MAME root: {app_dir}")
+        return app_dir
+        
+def debug_paths():
+    print(f"Executable path: {sys.executable}")
+    print(f"Working directory: {os.getcwd()}")
+    exe_dir = os.path.dirname(sys.executable)
+    print(f"Executable directory: {exe_dir}")
+    print(f"Parent directory: {os.path.dirname(exe_dir)}")
+    print(f"Is in preview folder: {os.path.basename(exe_dir) == 'preview'}")
+    
+    # Test path resolution
+    test_path = get_application_path()
+    print(f"get_application_path() returns: {test_path}")
+
+debug_paths()
 
 # Function to handle paths relative to the application
 def get_relative_path(subpath):
@@ -1193,60 +1219,92 @@ class MAMEControlConfig(ctk.CTk):
         # First determine our location - are we in preview folder or MAME root?
         app_dir = get_application_path()
         print(f"\n=== DEBUG: find_mame_directory ===")
-        print(f"Application directory: {app_dir}")
+        print(f"Application directory from get_application_path(): {app_dir}")
         
-        # Check if we're in preview folder
+        # Check if current directory is preview folder
         current_dir = os.path.dirname(os.path.abspath(__file__))
-        in_preview_folder = os.path.basename(current_dir) == "preview"
+        current_basename = os.path.basename(current_dir)
+        is_preview_dir = current_basename == "preview"
+        print(f"Current directory: {current_dir}, basename: {current_basename}")
+        print(f"In preview folder? {is_preview_dir}")
         
-        # Look for the settings directory path
-        if in_preview_folder:
-            # If we're in preview folder, settings should be in preview/settings
-            settings_path = os.path.join(current_dir, "settings")
-            settings_gamedata = os.path.join(settings_path, "gamedata.json")
-        else:
-            # Standard path for settings from MAME root
-            settings_path = os.path.join(app_dir, "preview", "settings")
-            settings_gamedata = os.path.join(settings_path, "gamedata.json")
+        # If we're in preview folder, MAME root is parent directory
+        if is_preview_dir:
+            mame_dir = os.path.dirname(current_dir)
+            print(f"We're in preview folder, MAME root is parent: {mame_dir}")
+            return mame_dir
         
-        print(f"Checking for gamedata.json at: {settings_gamedata}")
-        if os.path.exists(settings_gamedata):
-            print(f"FOUND: gamedata.json in settings folder")
+        # Check for gamedata.json in application directory
+        app_gamedata = os.path.join(app_dir, "gamedata.json")
+        if os.path.exists(app_gamedata):
+            print(f"Found gamedata.json in app directory: {app_dir}")
             return app_dir
         
-        # Check common MAME paths with new structure
+        # Check for gamedata.json in settings directory within app dir
+        settings_gamedata = os.path.join(app_dir, "preview", "settings", "gamedata.json")
+        if os.path.exists(settings_gamedata):
+            print(f"Found gamedata.json in settings folder: {app_dir}")
+            return app_dir
+            
+        # Check in the current directory and common locations
+        current_dir = os.path.abspath(os.path.dirname(__file__))
+        
+        # Look for gamedata.json in various locations
+        gamedata_paths = [
+            os.path.join(current_dir, "gamedata.json"),
+            os.path.join(current_dir, "preview", "settings", "gamedata.json"),
+            os.path.join(current_dir, "metadata", "gamedata.json"),
+            os.path.join(current_dir, "data", "gamedata.json")
+        ]
+        
+        for path in gamedata_paths:
+            if os.path.exists(path):
+                print(f"Found MAME directory via gamedata.json: {current_dir}")
+                return current_dir
+            
+        # Then check common MAME paths
         common_paths = [
             os.path.join(os.environ.get('PROGRAMFILES', 'C:\\Program Files'), "MAME"),
             os.path.join(os.environ.get('PROGRAMFILES(X86)', 'C:\\Program Files (x86)'), "MAME"),
             "C:\\MAME",
-            "D:\\MAME",
-            # Add path one level up if we're in preview
-            os.path.dirname(current_dir) if in_preview_folder else None
+            "D:\\MAME"
         ]
         
-        # Remove None values
-        common_paths = [p for p in common_paths if p]
-        
         for path in common_paths:
-            settings_gamedata_path = os.path.join(path, "preview", "settings", "gamedata.json")
-            print(f"Checking common path: {settings_gamedata_path}")
-            if os.path.exists(settings_gamedata_path):
-                print(f"FOUND: gamedata.json in common path at: {path}")
+            # Check both direct and settings paths
+            if os.path.exists(os.path.join(path, "gamedata.json")) or \
+            os.path.exists(os.path.join(path, "preview", "settings", "gamedata.json")):
+                print(f"Found MAME directory in common location: {path}")
                 return path
-        
-        # If we're in preview folder, return the parent directory
-        if in_preview_folder:
-            mame_dir = os.path.dirname(current_dir)
-            print(f"Using parent directory as MAME directory: {mame_dir}")
-            return mame_dir
+                
+        # If we're in a PyInstaller environment, try different path resolutions
+        if getattr(sys, 'frozen', False):
+            exe_dir = os.path.dirname(sys.executable)
+            print(f"PyInstaller executable directory: {exe_dir}")
             
-        # Return current directory as a last resort
-        print("WARNING: gamedata.json not found in any known location - will use current directory")
-        if in_preview_folder:
-            return os.path.dirname(current_dir)  # Use parent of preview
-        else:
-            return current_dir  # Use current directory
-    
+            # If exe is in preview folder, return parent
+            if os.path.basename(exe_dir) == "preview":
+                mame_dir = os.path.dirname(exe_dir)
+                print(f"Executable is in preview folder, MAME root is: {mame_dir}")
+                return mame_dir
+                
+            # Try exe directory itself
+            if os.path.exists(os.path.join(exe_dir, "gamedata.json")) or \
+            os.path.exists(os.path.join(exe_dir, "preview", "settings", "gamedata.json")):
+                print(f"Found MAME directory at executable location: {exe_dir}")
+                return exe_dir
+                
+            # Try parent of exe directory
+            parent_dir = os.path.dirname(exe_dir)
+            if os.path.exists(os.path.join(parent_dir, "gamedata.json")) or \
+            os.path.exists(os.path.join(parent_dir, "preview", "settings", "gamedata.json")):
+                print(f"Found MAME directory at parent of executable: {parent_dir}")
+                return parent_dir
+        
+        # If all else fails, use current directory
+        print(f"Warning: Could not find MAME directory with gamedata.json, using current directory: {current_dir}")
+        return current_dir
+
     def create_transparent_default_image(self, output_dir=None):
         """
         Create a default transparent PNG image if none exists.
@@ -1276,7 +1334,7 @@ class MAMEControlConfig(ctk.CTk):
             img = Image.new('RGBA', (1280, 720), color=(0, 0, 0, 0))
             
             # Get a drawing context
-            draw = ImageDraw.Draw(img)
+            '''draw = ImageDraw.Draw(img)
             
             # Create semi-transparent background rectangle for better text visibility
             # Define rectangle coordinates (left, top, right, bottom)
@@ -1284,6 +1342,7 @@ class MAMEControlConfig(ctk.CTk):
             rect_top = 260
             rect_right = 960
             rect_bottom = 460
+            
             # Draw with semi-transparent dark background
             draw.rectangle([rect_left, rect_top, rect_right, rect_bottom], 
                         fill=(0, 0, 0, 180))  # RGBA with alpha=180 (semi-transparent)
@@ -1307,7 +1366,7 @@ class MAMEControlConfig(ctk.CTk):
                     fill=(200, 200, 200, 255), anchor="mm", font=small_font)
             draw.text((640, 400), "with ROM name (e.g., pacman.png)", 
                     fill=(200, 200, 200, 255), anchor="mm", font=small_font)
-            
+            '''
             # Save the image
             created_path = os.path.join(output_dir, "default.png")
             img.save(created_path)
@@ -1329,25 +1388,49 @@ class MAMEControlConfig(ctk.CTk):
         import os
         import sys
         
-        # Determine our location
+        # Determine our location with detailed logging
         current_dir = os.path.dirname(os.path.abspath(__file__))
         in_preview_folder = os.path.basename(current_dir) == "preview"
         
-        # Set up base paths based on location
-        if in_preview_folder:
-            # We're already in preview folder
-            self.mame_dir = os.path.dirname(current_dir)  # MAME directory is parent
-            preview_dir = current_dir  # We're already in preview
-        else:
-            # We're in MAME root or elsewhere
-            if not hasattr(self, 'mame_dir') or self.mame_dir is None:
-                self.mame_dir = os.path.abspath(os.path.dirname(__file__))
-            preview_dir = os.path.join(self.mame_dir, "preview")
+        print(f"DEBUG: ensure_preview_folder_improved - Current dir: {current_dir}")
+        print(f"DEBUG: In preview folder? {in_preview_folder}")
         
-        print(f"Ensuring preview folder structure at: {preview_dir}")
+        # For PyInstaller, check if executable is in preview folder
+        if getattr(sys, 'frozen', False):
+            exe_dir = os.path.dirname(sys.executable)
+            exe_in_preview = os.path.basename(exe_dir) == "preview"
+            print(f"DEBUG: Executable directory: {exe_dir}")
+            print(f"DEBUG: Executable in preview folder? {exe_in_preview}")
+            
+            if exe_in_preview:
+                # We're running the exe from inside preview folder
+                self.mame_dir = os.path.dirname(exe_dir)  # MAME directory is parent
+                preview_dir = exe_dir  # Preview dir is where the exe is
+                print(f"DEBUG: Executable in preview folder. MAME dir: {self.mame_dir}, Preview dir: {preview_dir}")
+            else:
+                # We're running the exe from elsewhere (likely MAME root)
+                if not hasattr(self, 'mame_dir') or self.mame_dir is None:
+                    self.mame_dir = exe_dir
+                preview_dir = os.path.join(self.mame_dir, "preview")
+                print(f"DEBUG: Executable not in preview folder. MAME dir: {self.mame_dir}, Preview dir: {preview_dir}")
+        else:
+            # Not running from exe, use normal script path detection
+            if in_preview_folder:
+                # We're already in preview folder
+                self.mame_dir = os.path.dirname(current_dir)  # MAME directory is parent
+                preview_dir = current_dir  # We're already in preview
+                print(f"DEBUG: Script in preview folder. MAME dir: {self.mame_dir}, Preview dir: {preview_dir}")
+            else:
+                # We're in MAME root or elsewhere
+                if not hasattr(self, 'mame_dir') or self.mame_dir is None:
+                    self.mame_dir = current_dir
+                    print(f"DEBUG: Script not in preview, no mame_dir, using current dir: {self.mame_dir}")
+                
+                preview_dir = os.path.join(self.mame_dir, "preview")
+                print(f"DEBUG: Script not in preview folder. MAME dir: {self.mame_dir}, Preview dir: {preview_dir}")
         
         # Create preview directory if it doesn't exist (only needed if not in preview)
-        if not in_preview_folder and not os.path.exists(preview_dir):
+        if not os.path.exists(preview_dir):
             try:
                 print(f"Creating preview directory: {preview_dir}")
                 os.makedirs(preview_dir, exist_ok=True)
@@ -1394,7 +1477,7 @@ class MAMEControlConfig(ctk.CTk):
                     print(f"Error creating simple default image: {e2}")
         
         return preview_dir
-    
+
     def create_simple_default_image(self, output_dir):
         """Create a simple default image (fallback if PIL fails)"""
         import os
@@ -1494,7 +1577,7 @@ class MAMEControlConfig(ctk.CTk):
         self.preferred_preview_screen = 2  # Default to second screen
         self.visible_control_types = ["BUTTON"]  # Default to just buttons
         self.hide_preview_buttons = False
-        self.show_button_names = True
+        self.show_button_names = False
         
         if os.path.exists(settings_path):
             try:
@@ -3445,7 +3528,6 @@ class MAMEControlConfig(ctk.CTk):
         # Define scaling factors for fonts that tend to appear small
         scaling_factors = {
             "Times New Roman": 1.5,
-            "Press Start 2P": 0.8,
             "Times": 1.5,
             "Georgia": 1.4,
             "Garamond": 1.7,
@@ -9092,7 +9174,6 @@ class MAMEControlConfig(ctk.CTk):
         display_name = display_name.replace('-', ' ').replace('_', ' ')
         
         # Clean up common naming patterns
-        # Convert camelCase to spaces (e.g., PressStart2P -> Press Start 2P)
         display_name = re.sub(r'([a-z])([A-Z0-9])', r'\1 \2', display_name)
         
         # Insert space before numbers
@@ -9107,7 +9188,7 @@ class MAMEControlConfig(ctk.CTk):
     def get_system_fonts(self):
         """Get only the fonts available in our fonts directory"""
         # Default fallback fonts
-        fallback_fonts = ["Arial", "Press Start 2P"]
+        fallback_fonts = ["Consolas", "Arial"]
         
         # Get fonts from the fonts directory
         fonts_dir = os.path.join(self.mame_dir, "preview", "settings", "fonts")
@@ -9217,9 +9298,9 @@ class MAMEControlConfig(ctk.CTk):
         available_fonts = self.scan_fonts_directory()
         directory_font_names = [display_name for _, display_name in available_fonts]
         
-        # Add "Press Start 2P" if not in the list (our default)
-        if "Press Start 2P" not in directory_font_names:
-            directory_font_names.insert(0, "Press Start 2P")
+        # Add "Consolas" if not in the list (our default)
+        if "Consolas" not in directory_font_names:
+            directory_font_names.insert(0, "Consolas")
         
         # Create font variable
         font_var = ctk.StringVar(value=current_font)
@@ -9704,7 +9785,7 @@ class MAMEControlConfig(ctk.CTk):
                 print(f"Error creating fonts directory: {e}")
         
         # Check for the selected font
-        target = settings.get('font_family', 'Press Start 2P')
+        target = settings.get('font_family', 'Consolas')
         print(f"\nSearching for font: {target}")
         found = False
         
@@ -10597,8 +10678,8 @@ class MAMEControlConfig(ctk.CTk):
         
         # Default settings - explicitly set logo_visible to True by default
         self.logo_visible = True  # Set it directly first
-        self.logo_position = 'top-left'  # Default position
-        self.logo_y_offset = 0  # Default Y offset (no adjustment)
+        self.logo_position = 'top-center'  # Default position
+        self.logo_y_offset = 100  # Default Y offset (no adjustment)
         
         try:
             if os.path.exists(settings_path):
@@ -10756,10 +10837,10 @@ class MAMEControlConfig(ctk.CTk):
         Returns default font settings - single source of truth for font defaults
         """
         return {
-            "font_family": "Arial",  # The font family name for display
-            "font_size": 28,              # Regular font size
-            "title_size": 36,             # Title text size
-            "title_font_size": 36,  # Duplicate for compatibility
+            "font_family": "Consolas",  # The font family name for display
+            "font_size": 42,              # Regular font size
+            "title_size": 50,             # Title text size
+            "title_font_size": 50,  # Duplicate for compatibility
             "uppercase": True,            # Whether to use uppercase text
             "use_uppercase": True,        # Duplicate for compatibility
             "bold_strength": 2,           # Shadow effect (0-3)
@@ -10784,7 +10865,15 @@ class MAMEControlConfig(ctk.CTk):
                     print(f"Loaded text appearance settings from: {settings_path}")
                 except Exception as e:
                     print(f"Error loading text settings: {e}")
-                        
+            else:
+                # Create the file with defaults if it doesn't exist
+                try:
+                    with open(settings_path, 'w') as f:
+                        json.dump(self._text_settings_cache, f)
+                    print(f"Created default text appearance settings at: {settings_path}")
+                except Exception as e:
+                    print(f"Error creating default text settings: {e}")
+                            
         return self._text_settings_cache
 
     # 7. ensure_font_available - Fix for font directory when in preview folder
