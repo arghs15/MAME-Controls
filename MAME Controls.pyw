@@ -10696,8 +10696,8 @@ class MAMEControlConfig(ctk.CTk):
                 # If no settings file exists, create one with defaults
                 settings = {
                     'logo_visible': True,
-                    'logo_position': 'top-left',
-                    'logo_y_offset': 0
+                    'logo_position': 'top-center',
+                    'logo_y_offset': 100
                 }
                 with open(settings_path, 'w') as f:
                     json.dump(settings, f)
@@ -10705,8 +10705,8 @@ class MAMEControlConfig(ctk.CTk):
             print(f"Error loading logo settings: {e}")
             # Ensure defaults are set even on error
             self.logo_visible = True
-            self.logo_position = 'top-left'
-            self.logo_y_offset = 0
+            self.logo_position = 'top-center'
+            self.logo_y_offset = 100
         
         print(f"Loaded logo settings: visible={self.logo_visible}, position={self.logo_position}, y_offset={self.logo_y_offset}")
         return {'logo_visible': self.logo_visible, 'logo_position': self.logo_position, 'logo_y_offset': self.logo_y_offset}
