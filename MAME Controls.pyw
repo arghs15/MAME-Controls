@@ -19,12 +19,30 @@ import sqlite3
 def get_application_path():
     """Get the base path for the application (handles PyInstaller bundling)"""
     import sys
+    import os
     if getattr(sys, 'frozen', False):
         # Running as compiled executable
-        return os.path.dirname(sys.executable)
+        # Since we're now in the preview folder, we need to go up one level for MAME root
+        exe_dir = os.path.dirname(sys.executable)
+        mame_root = os.path.dirname(exe_dir)  # Go up one level from preview folder
+        return mame_root
     else:
-        # Running as script
-        return os.path.dirname(os.path.abspath(__file__))
+        # Running as script, check if we're in preview folder
+        script_dir = os.path.dirname(os.path.abspath(__file__))
+        if os.path.basename(script_dir) == "preview":
+            return os.path.dirname(script_dir)  # Go up one level
+        else:
+            return script_dir  # Assume we're already in MAME root
+
+# Function to handle paths relative to the application
+def get_relative_path(subpath):
+    """Get a path relative to the MAME base directory"""
+    return os.path.join(get_application_path(), subpath)
+
+def is_running_from_preview(self):
+    """Check if the application is running from the preview folder"""
+    current_dir = os.path.dirname(os.path.abspath(__file__))
+    return os.path.basename(current_dir) == "preview"
         
 # ======================================================
 # POSITION MANAGEMENT SYSTEM
@@ -232,8 +250,10 @@ class MAMEControlConfig(ctk.CTk):
         except Exception as e:
             print(f"Error finding MAME directory: {e}")
             # Keep using the default directory set above
+            # Keep using the default directory set above
         
         # Create preview folder if needed and check for gamedata.json
+        # ADD THIS LINE - It was missing in your code:
         self.ensure_preview_folder_improved()  # Use the improved function that also creates default.png
         
         # Check for gamedata.json - this will now run even if the file is not found initially
@@ -443,26 +463,50 @@ class MAMEControlConfig(ctk.CTk):
         # Select Summary tab by default
         tabview.set("Summary")
     
+    # Updated get_gamedata_path method to work when exe is in preview folder
     def get_gamedata_path(self):
         """Get the path to the gamedata.json file without checking legacy paths"""
-        # Primary location in settings directory
-        settings_path = os.path.join(self.mame_dir, "preview", "settings", "gamedata.json")
+        import os
+        
+        # Determine if we're in preview folder
+        current_dir = os.path.dirname(os.path.abspath(__file__))
+        in_preview_folder = os.path.basename(current_dir) == "preview"
+        
+        if in_preview_folder:
+            # If we're in preview folder, settings are in preview/settings
+            settings_path = os.path.join(current_dir, "settings", "gamedata.json")
+        else:
+            # Normal path relative to mame_dir
+            settings_path = os.path.join(self.mame_dir, "preview", "settings", "gamedata.json")
         
         # Create directory if it doesn't exist
         os.makedirs(os.path.dirname(settings_path), exist_ok=True)
         
         return settings_path
     
+    # 10. build_gamedata_db - Adjust path handling for database creation
     def build_gamedata_db(self):
-        """Build a SQLite database from gamedata.json with improved handling of game removals"""
-        # Find the gamedata.json file
+        """Build a SQLite database from gamedata.json with adjusted paths for preview folder"""
+        import os
+        import sqlite3
+        import time
+        import json
+        
+        # Find the gamedata.json file with adjusted paths
         gamedata_path = self.get_gamedata_path()
         if not os.path.exists(gamedata_path):
             print("Error: gamedata.json not found")
             return False
         
-        # Set up database path
-        db_path = os.path.join(self.mame_dir, "preview", "settings", "gamedata.db")
+        # Set up database path with adjusted paths
+        current_dir = os.path.dirname(os.path.abspath(__file__))
+        in_preview_folder = os.path.basename(current_dir) == "preview"
+        
+        if in_preview_folder:
+            db_path = os.path.join(current_dir, "settings", "gamedata.db")
+        else:
+            db_path = os.path.join(self.mame_dir, "preview", "settings", "gamedata.db")
+        
         os.makedirs(os.path.dirname(db_path), exist_ok=True)
         
         print(f"Building SQLite database from {gamedata_path}...")
@@ -568,11 +612,21 @@ class MAMEControlConfig(ctk.CTk):
             traceback.print_exc()
             return False
     
+    # 9. is_database_update_needed - Adjust to find files correctly
     def is_database_update_needed(self):
-        """Check if the database needs to be rebuilt by comparing timestamps"""
-        # Get paths
-        db_path = os.path.join(self.mame_dir, "preview", "settings", "gamedata.db")
-        json_path = self.get_gamedata_path()
+        """Check if the database needs to be rebuilt by comparing timestamps with adjusted paths"""
+        import os
+        
+        # Get paths with location adjustment
+        current_dir = os.path.dirname(os.path.abspath(__file__))
+        in_preview_folder = os.path.basename(current_dir) == "preview"
+        
+        if in_preview_folder:
+            db_path = os.path.join(current_dir, "settings", "gamedata.db")
+            json_path = os.path.join(current_dir, "settings", "gamedata.json")
+        else:
+            db_path = os.path.join(self.mame_dir, "preview", "settings", "gamedata.db")
+            json_path = self.get_gamedata_path()
         
         print(f"\n=== Checking if database needs updating ===")
         print(f"Database path: {db_path}")
@@ -1133,37 +1187,45 @@ class MAMEControlConfig(ctk.CTk):
             # Replace the original method with our wrapper
             self.show_preview = show_preview_with_settings_button
     
+    # Find MAME directory with modified logic to account for preview folder location
     def find_mame_directory(self) -> str:
-        """Find the MAME directory containing necessary files - with improved handling when gamedata.json not found"""
-        # First check in the application directory
+        """Find the MAME directory containing necessary files"""
+        # First determine our location - are we in preview folder or MAME root?
         app_dir = get_application_path()
         print(f"\n=== DEBUG: find_mame_directory ===")
         print(f"Application directory: {app_dir}")
         
+        # Check if we're in preview folder
+        current_dir = os.path.dirname(os.path.abspath(__file__))
+        in_preview_folder = os.path.basename(current_dir) == "preview"
+        
         # Look for the settings directory path
-        settings_gamedata = os.path.join(app_dir, "preview", "settings", "gamedata.json")
+        if in_preview_folder:
+            # If we're in preview folder, settings should be in preview/settings
+            settings_path = os.path.join(current_dir, "settings")
+            settings_gamedata = os.path.join(settings_path, "gamedata.json")
+        else:
+            # Standard path for settings from MAME root
+            settings_path = os.path.join(app_dir, "preview", "settings")
+            settings_gamedata = os.path.join(settings_path, "gamedata.json")
+        
         print(f"Checking for gamedata.json at: {settings_gamedata}")
         if os.path.exists(settings_gamedata):
-            print(f"FOUND: gamedata.json in settings folder at: {app_dir}")
+            print(f"FOUND: gamedata.json in settings folder")
             return app_dir
-        
-        # Also check current directory with new path structure
-        current_dir = os.path.abspath(os.path.dirname(__file__))
-        print(f"Current directory: {current_dir}")
-        current_settings_gamedata = os.path.join(current_dir, "preview", "settings", "gamedata.json")
-        print(f"Checking for gamedata.json at: {current_settings_gamedata}")
-        
-        if os.path.exists(current_settings_gamedata):
-            print(f"FOUND: gamedata.json in current directory at: {current_dir}")
-            return current_dir
         
         # Check common MAME paths with new structure
         common_paths = [
             os.path.join(os.environ.get('PROGRAMFILES', 'C:\\Program Files'), "MAME"),
             os.path.join(os.environ.get('PROGRAMFILES(X86)', 'C:\\Program Files (x86)'), "MAME"),
             "C:\\MAME",
-            "D:\\MAME"
+            "D:\\MAME",
+            # Add path one level up if we're in preview
+            os.path.dirname(current_dir) if in_preview_folder else None
         ]
+        
+        # Remove None values
+        common_paths = [p for p in common_paths if p]
         
         for path in common_paths:
             settings_gamedata_path = os.path.join(path, "preview", "settings", "gamedata.json")
@@ -1172,10 +1234,18 @@ class MAMEControlConfig(ctk.CTk):
                 print(f"FOUND: gamedata.json in common path at: {path}")
                 return path
         
-        # *** IMPORTANT CHANGE: If no gamedata.json found, return current directory instead of None ***
-        # This allows the application to start without gamedata.json and then prompt the user to select it
+        # If we're in preview folder, return the parent directory
+        if in_preview_folder:
+            mame_dir = os.path.dirname(current_dir)
+            print(f"Using parent directory as MAME directory: {mame_dir}")
+            return mame_dir
+            
+        # Return current directory as a last resort
         print("WARNING: gamedata.json not found in any known location - will use current directory")
-        return current_dir  # Use current directory as MAME directory instead of returning None
+        if in_preview_folder:
+            return os.path.dirname(current_dir)  # Use parent of preview
+        else:
+            return current_dir  # Use current directory
     
     def create_transparent_default_image(self, output_dir=None):
         """
@@ -1253,55 +1323,41 @@ class MAMEControlConfig(ctk.CTk):
             traceback.print_exc()
             return None
 
-    # Improved version of ensure_preview_folder_improved() to create transparent default image
+    # Updated ensure_preview_folder method to work correctly
     def ensure_preview_folder_improved(self):
-        """Create preview directory if it doesn't exist and ensure default image exists"""
+        """Create preview directory structure with settings folders"""
         import os
         import sys
         
-        # Make sure mame_dir exists and is a string
-        if not hasattr(self, 'mame_dir') or self.mame_dir is None:
-            # Fallback to current directory if mame_dir is not set
-            self.mame_dir = os.path.abspath(os.path.dirname(__file__))
-            print(f"Warning: mame_dir not set, using current directory: {self.mame_dir}")
+        # Determine our location
+        current_dir = os.path.dirname(os.path.abspath(__file__))
+        in_preview_folder = os.path.basename(current_dir) == "preview"
         
-        preview_dir = os.path.join(self.mame_dir, "preview")
-        print(f"Ensuring preview folder at: {preview_dir}")
+        # Set up base paths based on location
+        if in_preview_folder:
+            # We're already in preview folder
+            self.mame_dir = os.path.dirname(current_dir)  # MAME directory is parent
+            preview_dir = current_dir  # We're already in preview
+        else:
+            # We're in MAME root or elsewhere
+            if not hasattr(self, 'mame_dir') or self.mame_dir is None:
+                self.mame_dir = os.path.abspath(os.path.dirname(__file__))
+            preview_dir = os.path.join(self.mame_dir, "preview")
         
-        # Create directory if it doesn't exist
-        if not os.path.exists(preview_dir):
+        print(f"Ensuring preview folder structure at: {preview_dir}")
+        
+        # Create preview directory if it doesn't exist (only needed if not in preview)
+        if not in_preview_folder and not os.path.exists(preview_dir):
             try:
                 print(f"Creating preview directory: {preview_dir}")
                 os.makedirs(preview_dir, exist_ok=True)
-                
-                # Copy any bundled preview images if running as executable
-                if getattr(sys, 'frozen', False):
-                    bundled_preview = os.path.join(get_application_path(), "preview2")
-                    if os.path.exists(bundled_preview):
-                        import shutil
-                        for item in os.listdir(bundled_preview):
-                            source = os.path.join(bundled_preview, item)
-                            dest = os.path.join(preview_dir, item)
-                            if os.path.isfile(source):
-                                shutil.copy2(source, dest)
-                                print(f"Copied: {item} to preview folder")
             except Exception as e:
                 print(f"Error creating preview directory: {e}")
-                # Create a fallback directory in the current location
-                try:
-                    current_dir = os.path.abspath(os.path.dirname(__file__))
-                    preview_dir = os.path.join(current_dir, "preview")
-                    os.makedirs(preview_dir, exist_ok=True)
-                    print(f"Created fallback preview directory: {preview_dir}")
-                except Exception as e2:
-                    print(f"Error creating fallback preview directory: {e2}")
-                    # Last resort - use temp directory
-                    import tempfile
-                    preview_dir = os.path.join(tempfile.gettempdir(), "mame_preview")
-                    os.makedirs(preview_dir, exist_ok=True)
-                    print(f"Created last-resort preview directory: {preview_dir}")
+                # Fall back to current location if creation fails
+                preview_dir = current_dir
+                print(f"Using fallback location: {preview_dir}")
         
-        # Ensure settings directory exists
+        # Create settings directory
         settings_dir = os.path.join(preview_dir, "settings")
         if not os.path.exists(settings_dir):
             try:
@@ -1309,6 +1365,17 @@ class MAMEControlConfig(ctk.CTk):
                 print(f"Created settings directory: {settings_dir}")
             except Exception as e:
                 print(f"Error creating settings directory: {e}")
+        
+        # Create subdirectories for various settings
+        subdirs = ["fonts", "positions", "custom_controls"]
+        for subdir in subdirs:
+            subdir_path = os.path.join(settings_dir, subdir)
+            if not os.path.exists(subdir_path):
+                try:
+                    os.makedirs(subdir_path, exist_ok=True)
+                    print(f"Created {subdir} directory: {subdir_path}")
+                except Exception as e:
+                    print(f"Error creating {subdir} directory: {e}")
         
         # Ensure default image exists
         default_img_path = os.path.join(preview_dir, "default.png")
@@ -3849,8 +3916,9 @@ class MAMEControlConfig(ctk.CTk):
             self.preview_canvas.itemconfig(data['text'], state=state)
             self.preview_canvas.itemconfig(data['shadow'], state=state)
     
+    # 3. load_all_data method - ensure consistency with database paths
     def load_all_data(self):
-        """Modified load_all_data to use improved folder checks"""
+        """Modified load_all_data to use improved folder checks and handle preview folder"""
         # Display loading status
         if hasattr(self, 'stats_label'):
             self.stats_label.configure(text="Loading settings and ROMs...")
@@ -3861,8 +3929,16 @@ class MAMEControlConfig(ctk.CTk):
         # Ensure preview folder and default image exist
         self.ensure_preview_folder_improved()
         
+        # Determine database path appropriate for our location
+        current_dir = os.path.dirname(os.path.abspath(__file__))
+        in_preview_folder = os.path.basename(current_dir) == "preview"
+        
+        if in_preview_folder:
+            db_path = os.path.join(current_dir, "settings", "gamedata.db")
+        else:
+            db_path = os.path.join(self.mame_dir, "preview", "settings", "gamedata.db")
+        
         # Initialize database only if needed
-        db_path = os.path.join(self.mame_dir, "preview", "settings", "gamedata.db")
         if not os.path.exists(db_path) or self.is_database_update_needed():
             # Start a thread to build the database in the background
             import threading
@@ -4599,8 +4675,10 @@ class MAMEControlConfig(ctk.CTk):
             self._in_get_game_data = False
             return None
 
+    # Updated scan_roms_directory method to look for ROMs one level up
     def scan_roms_directory(self):
         """Scan the roms directory for available games"""
+        # If we're in preview folder, roms should be in ../roms
         roms_dir = os.path.join(self.mame_dir, "roms")
         print(f"\n=== DEBUG: scan_roms_directory ===")
         print(f"Scanning ROMs directory: {roms_dir}")
@@ -4633,13 +4711,23 @@ class MAMEControlConfig(ctk.CTk):
         else:
             print("WARNING: No ROMs were found!")
 
+    # 5. load_custom_configs - Update to find cfg files with adjusted paths
     def load_custom_configs(self):
-        """Load custom configurations from cfg directory"""
-        cfg_dir = os.path.join(self.mame_dir, "cfg")
+        """Load custom configurations from cfg directory with adjusted paths"""
+        import os
+        
+        # Determine if we're in preview folder
+        current_dir = os.path.dirname(os.path.abspath(__file__))
+        in_preview_folder = os.path.basename(current_dir) == "preview"
+        mame_root = os.path.dirname(current_dir) if in_preview_folder else self.mame_dir
+        
+        cfg_dir = os.path.join(mame_root, "cfg")
         if not os.path.exists(cfg_dir):
             print(f"Config directory not found: {cfg_dir}")
             return
 
+        self.custom_configs = {}
+        
         for filename in os.listdir(cfg_dir):
             if filename.endswith(".cfg"):
                 game_name = filename[:-4]
@@ -4925,10 +5013,18 @@ class MAMEControlConfig(ctk.CTk):
                 
         return controls
 
+    # 4. load_default_config - Update to look for cfg files in the right location
     def load_default_config(self):
-        """Load the default MAME control configuration"""
+        """Load the default MAME control configuration with adjusted paths"""
+        import os
+        
+        # Determine if we're in preview folder
+        current_dir = os.path.dirname(os.path.abspath(__file__))
+        in_preview_folder = os.path.basename(current_dir) == "preview"
+        mame_root = os.path.dirname(current_dir) if in_preview_folder else self.mame_dir
+        
         # Look in the cfg directory
-        cfg_dir = os.path.join(self.mame_dir, "cfg")
+        cfg_dir = os.path.join(mame_root, "cfg")
         default_cfg_path = os.path.join(cfg_dir, "default.cfg")
         
         print(f"Looking for default.cfg at: {default_cfg_path}")
@@ -7310,19 +7406,28 @@ class MAMEControlConfig(ctk.CTk):
     
     # Update save_current_preview method to respect show_rom_info flag
     # Let's completely rewrite the save_current_preview method to ensure proper layering:
+    # 6. save_current_preview - Path adjustments for saving images
     def save_current_preview(self):
-        """Save the current preview state as an image using settings"""
+        """Save the current preview state as an image using adjusted paths"""
         import os
         from tkinter import messagebox
-        from PIL import Image, ImageDraw, ImageFont, ImageChops
+        from PIL import Image, ImageDraw, ImageFont
         import traceback
         
         if not hasattr(self, 'current_game') or not self.current_game:
             messagebox.showerror("Error", "No game is currently selected")
             return
-                
-        # Ensure preview directory exists
-        preview_dir = self.ensure_preview_folder_improved()
+                    
+        # Ensure preview directory exists with adjusted paths
+        current_dir = os.path.dirname(os.path.abspath(__file__))
+        in_preview_folder = os.path.basename(current_dir) == "preview"
+        
+        if in_preview_folder:
+            # We're already in preview directory
+            preview_dir = current_dir
+        else:
+            preview_dir = self.ensure_preview_folder_improved()
+        
         output_path = os.path.join(preview_dir, f"{self.current_game}.png")
         
         # Ask for confirmation if file exists
@@ -9870,26 +9975,32 @@ class MAMEControlConfig(ctk.CTk):
             print(f"Error loading layer settings: {e}")
             self.layer_order = default_order
     
+    # 1. get_bezel_path method - needs to handle preview folder location
     def get_bezel_path(self, rom_name):
         """Find bezel path for a given ROM with custom path priority"""
         import os
         
+        # Get MAME root directory (one level up if we're in preview)
+        current_dir = os.path.dirname(os.path.abspath(__file__))
+        in_preview_folder = os.path.basename(current_dir) == "preview"
+        mame_root = os.path.dirname(current_dir) if in_preview_folder else self.mame_dir
+        
         # Define potential bezel locations with new priority order
         bezel_paths = [
             # Primary path in autochanger/BezelNight directory
-            os.path.join(self.mame_dir, "..", "..", "autochanger", "BezelNight", rom_name, "Bezel.png"),
+            os.path.join(mame_root, "..", "..", "autochanger", "BezelNight", rom_name, "Bezel.png"),
             
             # Fallbacks in artwork directory
-            os.path.join(self.mame_dir, "artwork", rom_name, "Bezel.png"),
-            os.path.join(self.mame_dir, "artwork", rom_name, "bezel.png"),
+            os.path.join(mame_root, "artwork", rom_name, "Bezel.png"),
+            os.path.join(mame_root, "artwork", rom_name, "bezel.png"),
             
             # Secondary paths
-            os.path.join(self.mame_dir, "bezels", f"{rom_name}.png"),
-            os.path.join(self.mame_dir, "preview", "bezels", f"{rom_name}.png"),
+            os.path.join(mame_root, "bezels", f"{rom_name}.png"),
+            os.path.join(mame_root, "preview", "bezels", f"{rom_name}.png"),
             
             # Default fallback bezel
-            os.path.join(self.mame_dir, "artwork", "default", "Bezel.png"),
-            os.path.join(self.mame_dir, "bezels", "default.png")
+            os.path.join(mame_root, "artwork", "default", "Bezel.png"),
+            os.path.join(mame_root, "bezels", "default.png")
         ]
         
         print(f"Looking for bezel for {rom_name}")
@@ -10161,28 +10272,39 @@ class MAMEControlConfig(ctk.CTk):
             traceback.print_exc()
             return image  # Return original on error
     
+    # 2. get_logo_path method - needs to handle preview folder location
     def get_logo_path(self, rom_name):
         """Find logo path for a given ROM with support for relative and external paths"""
         import os
         
+        # Determine if we're in preview folder
+        current_dir = os.path.dirname(os.path.abspath(__file__))
+        in_preview_folder = os.path.basename(current_dir) == "preview"
+        mame_root = os.path.dirname(current_dir) if in_preview_folder else self.mame_dir
+        
         # First try the local directories
         local_paths = [
-            os.path.join(self.mame_dir, "logos"),
-            os.path.join(self.mame_dir, "preview", "logos"),
-            os.path.join(self.mame_dir, "artwork", "logos"),
-            os.path.join(os.path.dirname(os.path.abspath(__file__)), "logos")
+            os.path.join(mame_root, "logos"),
+            os.path.join(mame_root, "preview", "logos"),
+            os.path.join(mame_root, "artwork", "logos"),
         ]
+        
+        # Special case if we're already in preview folder
+        if in_preview_folder:
+            local_paths.append(os.path.join(current_dir, "logos"))
+        else:
+            local_paths.append(os.path.join(os.path.dirname(os.path.abspath(__file__)), "logos"))
         
         # Then try your specific path structure
         # Handle relative paths from MAME directory
-        relative_path = os.path.join(self.mame_dir, "..", "..", "collections", "Arcades", "medium_artwork", "logo")
+        relative_path = os.path.join(mame_root, "..", "..", "collections", "Arcades", "medium_artwork", "logo")
         absolute_path = os.path.abspath(relative_path)
         
         # Add your specific paths to the search list
         specific_paths = [
             absolute_path,  # Try the normalized absolute path first
             "..\\..\\collections\\Arcades\\medium_artwork\\logo",  # Raw relative path with backslashes
-            os.path.join(self.mame_dir, "..\\..\\collections\\Arcades\\medium_artwork\\logo")  # Combined with MAME dir
+            os.path.join(mame_root, "..\\..\\collections\\Arcades\\medium_artwork\\logo")  # Combined with MAME dir
         ]
         
         # Combine all paths, with preference to local paths first
@@ -10665,16 +10787,25 @@ class MAMEControlConfig(ctk.CTk):
                         
         return self._text_settings_cache
 
+    # 7. ensure_font_available - Fix for font directory when in preview folder
     def ensure_font_available(self):
-        """Ensure font is available in the application directory"""
+        """Ensure font is available in the application directory with adjusted paths"""
         import os
         
         # Get font settings
         settings = self.get_text_settings()
         font_family = settings.get("font_family")
         
-        # Check for the font file
-        font_dir = os.path.join(self.mame_dir, "preview", "settings", "fonts")
+        # Determine if we're in preview folder
+        current_dir = os.path.dirname(os.path.abspath(__file__))
+        in_preview_folder = os.path.basename(current_dir) == "preview"
+        
+        # Check for the font file with adjusted path
+        if in_preview_folder:
+            font_dir = os.path.join(current_dir, "settings", "fonts")
+        else:
+            font_dir = os.path.join(self.mame_dir, "preview", "settings", "fonts")
+        
         os.makedirs(font_dir, exist_ok=True)
         
         # Look for the font file with the exact name
@@ -10707,6 +10838,27 @@ class MAMEControlConfig(ctk.CTk):
         
         return False
         
+    # 8. Helper function to resolve paths consistently across different locations
+    def resolve_app_path(self, subpath):
+        """Resolve a path relative to the application location, adjusting for preview folder"""
+        import os
+        
+        # Determine if we're in preview folder
+        current_dir = os.path.dirname(os.path.abspath(__file__))
+        in_preview_folder = os.path.basename(current_dir) == "preview"
+        
+        if in_preview_folder:
+            # We're in preview folder, resolve relative to parent directory
+            mame_root = os.path.dirname(current_dir)
+        else:
+            # We're already in the MAME root directory
+            mame_root = self.mame_dir
+        
+        # Join with the requested subpath
+        full_path = os.path.join(mame_root, subpath)
+        
+        return os.path.normpath(full_path)
+    
     def is_system_font(self, font_name):
         """Check if a font exists in our fonts directory"""
         fonts_dir = os.path.join(self.mame_dir, "preview", "settings", "fonts")
@@ -10787,14 +10939,24 @@ class MAMEControlConfig(ctk.CTk):
         
         return text_item, shadow
     
+    # Modified get_settings_path to handle the new location
     def get_settings_path(self, file_type, rom_name=None, create_dirs=True):
         """
-        Centralized function to handle settings file paths without legacy checks
+        Centralized function to handle settings file paths when exe is in preview folder
         """
         import os
         
+        # Determine if we're in preview folder
+        current_dir = os.path.dirname(os.path.abspath(__file__))
+        in_preview_folder = os.path.basename(current_dir) == "preview"
+        
         # Base directory for all settings
-        settings_base = os.path.join(self.mame_dir, "preview", "settings")
+        if in_preview_folder:
+            # If we're in preview folder, settings are in preview/settings
+            settings_base = os.path.join(current_dir, "settings")
+        else:
+            # Normal path relative to mame_dir
+            settings_base = os.path.join(self.mame_dir, "preview", "settings")
         
         # Create base settings directory if it doesn't exist
         if create_dirs and not os.path.exists(settings_base):
@@ -10850,31 +11012,6 @@ class MAMEControlConfig(ctk.CTk):
         
         # You can add more types as needed
         return None
-        
-        # Legacy path fallback (for compatibility with existing installations)
-        # This allows a smooth transition by checking old locations if file doesn't exist in new location
-        def get_legacy_path():
-            if file_type == "general":
-                return os.path.join(self.mame_dir, "control_config_settings.json")
-            elif file_type == "text":
-                return os.path.join(self.mame_dir, "text_appearance_settings.json")
-            elif file_type.startswith("positions"):
-                suffix = file_type.replace("positions", "")
-                if rom_name:
-                    return os.path.join(self.mame_dir, "preview", f"{rom_name}_positions{suffix}.json")
-                else:
-                    return os.path.join(self.mame_dir, "preview", f"global_positions{suffix}.json")
-            elif file_type == "logo":
-                return os.path.join(self.mame_dir, "logo_settings.json")
-            elif file_type == "bezel":
-                return os.path.join(self.mame_dir, "bezel_settings.json")
-            elif file_type == "layer":
-                return os.path.join(self.mame_dir, "layer_settings.json")
-            elif file_type == "custom_controls" and rom_name:
-                return os.path.join(self.mame_dir, "custom_controls", f"{rom_name}.json")
-            return None
-        
-        return get_legacy_path() if not os.path.exists(settings_base) else None
     
     def migrate_settings_files(self):
         """
