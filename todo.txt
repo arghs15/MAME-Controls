@@ -1,12 +1,12 @@
-Default font
--is set to be arial, but when opening exact preview an error occurs. Could not load font: cannot open resource. fix
-
-LUA
--unified plugin does not work, and not sure it will
--one boot lua for all mame versions, hence why plugin doesn't work. If I load it in isolation it works, but then other plugins don't load. best to leave CC Mame as is, and only work with 0.196
--update both mame lua to use newly created params
+Info Files
+-odd spaces after = that's not consistent. Need to fix def save_game_config(self, romname: str): and 
+    def generate_game_config(self, game_data: dict) -> str:
 
 Hotkey
 -hotkey to move preview screen to second screen, and/or hide so you can navigate tab menu
 
+Build as potable exe
 pyinstaller --onefile --windowed --icon=MAME.ico "MAME Controls.pyw"
+
+Build with one dir. faster but needs added _internal fodler alongside exe
+pyinstaller --onedir --windowed --icon=MAME.ico "MAME Controls.pyw"
