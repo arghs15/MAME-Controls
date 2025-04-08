@@ -3503,25 +3503,33 @@ class MAMEControlConfig(ctk.CTk):
             traceback.print_exc()
 
     def get_tkfont(self, settings=None):
-        """Get a tkinter font object based on settings"""
+        """Get a tkinter font object based on settings, only using fonts from the fonts directory"""
         import tkinter.font as tkfont
+        import os
         
         if settings is None:
-            settings = self.get_text_settings()
+            settings = self.get_text_settings(refresh=True)
         
         font_family = settings.get("font_family", "Arial")
         font_size = settings.get("font_size", 28)
         
         # Apply scaling factor for certain fonts
-        scale = self.apply_font_scaling(font_family, font_size)
-        adjusted_size = int(scale)
+        adjusted_size = self.apply_font_scaling(font_family, font_size)
         
-        # Create and return the font object
+        # Check if font is available in our fonts directory
+        font_available, font_path = self.ensure_font_available()
+        
+        if not font_available:
+            # No fonts available, don't try to use system fonts
+            return None
+        
+        # Try to create the font, but only use the actual font file
         try:
+            # Use the font family name from our font file
             return tkfont.Font(family=font_family, size=adjusted_size, weight="bold")
         except Exception as e:
             print(f"Error creating font: {e}")
-            return tkfont.Font(family="Arial", size=28, weight="bold")  # Fallback font
+            return None
     
     def apply_font_scaling(self, font_family, font_size):
         """Apply scaling factor for certain fonts that appear smaller than expected"""
@@ -7499,7 +7507,17 @@ class MAMEControlConfig(ctk.CTk):
         if not hasattr(self, 'current_game') or not self.current_game:
             messagebox.showerror("Error", "No game is currently selected")
             return
-                    
+
+        # Check for font availability
+        font_available, font_path = self.ensure_font_available()
+        if not font_available:
+            messagebox.showwarning(
+                "Missing Fonts",
+                "No font files found. Text cannot be added to the image.\n\n"
+                "Please add at least one font file to the fonts directory."
+            )
+            # Continue anyway to save the image without text
+
         # Ensure preview directory exists with adjusted paths
         current_dir = os.path.dirname(os.path.abspath(__file__))
         in_preview_folder = os.path.basename(current_dir) == "preview"
@@ -8146,6 +8164,16 @@ class MAMEControlConfig(ctk.CTk):
         import traceback
         import sys
 
+        # Check for font availability
+        font_available, font_path = self.ensure_font_available()
+        if not font_available:
+            messagebox.showwarning(
+                "Missing Fonts",
+                "No font files found. Text cannot be added to the preview.\n\n"
+                "Please add at least one font file to the fonts directory."
+            )
+            return  # Don't proceed without fonts
+
         # Ensure preview directory exists
         preview_dir = self.ensure_preview_folder_improved()
         
@@ -8559,9 +8587,10 @@ class MAMEControlConfig(ctk.CTk):
     
     # 2. Update get_fonts_from_settings to only use font files, not system fonts
     def get_fonts_from_settings(self, settings=None):
-        """Get font objects based on settings using only font files (no system fonts)"""
+        """Get PIL font objects based on settings using only font files (no system fonts)"""
         import os
         from PIL import ImageFont
+        from tkinter import messagebox
         
         # Default to our fixed settings if none provided
         if settings is None:
@@ -8571,42 +8600,27 @@ class MAMEControlConfig(ctk.CTk):
         font_size = settings.get("font_size", 28)
         title_font_size = settings.get("title_size", 36)
         
-        # Look for the font file in the fonts directory
-        font_dir = os.path.join(self.mame_dir, "preview", "settings", "fonts")
-        font_path = None
+        # Check if any font is available
+        font_available, font_path = self.ensure_font_available()
         
-        # Check exact name match
-        for ext in ['.ttf', '.otf']:
-            test_path = os.path.join(font_dir, f"{font_family}{ext}")
-            if os.path.exists(test_path):
-                font_path = test_path
-                break
+        if not font_available:
+            # No fonts available, return None for both
+            return None, None
         
-        # If not found, look for partial name matches
-        if not font_path and os.path.exists(font_dir):
-            font_name_lower = font_family.lower().replace(' ', '')
-            for filename in os.listdir(font_dir):
-                if filename.lower().startswith(font_name_lower) and filename.lower().endswith(('.ttf', '.otf')):
-                    font_path = os.path.join(font_dir, filename)
-                    break
-        
-        # If font path found, load using direct file path
-        if font_path:
-            try:
-                # Load using direct file path
-                font = ImageFont.truetype(font_path, font_size)
-                title_font = ImageFont.truetype(font_path, title_font_size)
-                print(f"Loaded font from path: {font_path}")
-                return font, title_font
-            except Exception as e:
-                print(f"Error loading font from {font_path}: {e}")
-        
-        # Last resort - use default PIL font
-        print(f"Font '{font_family}' not found in fonts directory, using default")
-        font = ImageFont.load_default()
-        title_font = ImageFont.load_default()
-        
-        return font, title_font
+        try:
+            # Load the fonts directly from the file path
+            font = ImageFont.truetype(font_path, font_size)
+            title_font = ImageFont.truetype(font_path, title_font_size)
+            print(f"Loaded font from path: {font_path}")
+            return font, title_font
+        except Exception as e:
+            print(f"Error loading font from {font_path}: {e}")
+            messagebox.showwarning(
+                "Font Loading Error", 
+                f"Error loading font: {e}\n\n"
+                f"Please ensure the font file is valid."
+            )
+            return None, None
 
     def show_preview_original(self):
         """Store the original show_preview method to be called from the modified version"""
@@ -8662,6 +8676,16 @@ class MAMEControlConfig(ctk.CTk):
         from tkinter import messagebox
         from PIL import Image, ImageDraw, ImageTk, ImageFont
         import traceback
+
+        # Check for font availability
+        font_available, font_path = self.ensure_font_available()
+        if not font_available:
+            messagebox.showwarning(
+                "Missing Fonts",
+                "No font files found. Text cannot be added to the preview.\n\n"
+                "Please add at least one font file to the fonts directory."
+            )
+            return  # Don't proceed without fonts
 
         # Check for and close any existing exact preview windows
         if hasattr(self, 'exact_preview_window') and self.exact_preview_window.winfo_exists():
@@ -9084,11 +9108,10 @@ class MAMEControlConfig(ctk.CTk):
 
     def scan_fonts_directory(self):
         """
-        Scan the fonts directory and return a list of available fonts with their display names
+        Scan the fonts directory and return a list of available fonts with their display names.
+        Only includes fonts physically found in the directory.
         """
         import os
-        from PIL import ImageFont, Image
-        import re
         
         # Define the fonts directory
         fonts_dir = os.path.join(self.mame_dir, "preview", "settings", "fonts")
@@ -9096,53 +9119,28 @@ class MAMEControlConfig(ctk.CTk):
             os.makedirs(fonts_dir, exist_ok=True)
             print(f"Created fonts directory: {fonts_dir}")
             return []
-        
+
         # List to store font information: (filename, display_name)
         available_fonts = []
-        
-        # Only scan for fonts in the custom font directory
-        fonts_found = False
-        
+
         # Scan all font files in the directory
         for filename in os.listdir(fonts_dir):
             if filename.lower().endswith(('.ttf', '.otf')):
                 # Full path to the font file
                 font_path = os.path.join(fonts_dir, filename)
-                
+
                 # Get proper display name
                 display_name = self.get_font_display_name(font_path, filename)
-                
+
                 # Add to available fonts
                 available_fonts.append((filename, display_name))
-                fonts_found = True
                 print(f"Found font: {display_name} ({filename})")
-        
-        # Add fallback font only if no fonts were found
-        if not fonts_found:
-            fallback_font = ("Arial.ttf", "Arial (Default)")
-            available_fonts.append(fallback_font)
-            print(f"No fonts found in directory, added fallback option: {fallback_font[1]}")
-        
-        # Simply sort all fonts alphabetically by display name
-        # If we have the fallback Arial option, keep it at the top
-        fallback_fonts = []
-        other_fonts = []
-        
-        for font in available_fonts:
-            if "Arial (Default)" in font[1]:
-                fallback_fonts.append(font)
-            else:
-                other_fonts.append(font)
-        
-        # Sort the other fonts alphabetically
-        other_fonts.sort(key=lambda x: x[1].lower())
-        
-        # Combine lists with fallback at the beginning
-        result = []
-        result.extend(fallback_fonts)
-        result.extend(other_fonts)
-        
-        return result
+
+        # Sort fonts alphabetically by display name
+        available_fonts.sort(key=lambda x: x[1].lower())
+
+        return available_fonts
+
     
     def get_font_display_name(self, font_path, filename):
         """
@@ -9187,8 +9185,6 @@ class MAMEControlConfig(ctk.CTk):
     # Modification to show_text_appearance_settings to improve font selection
     def get_system_fonts(self):
         """Get only the fonts available in our fonts directory"""
-        # Default fallback fonts
-        fallback_fonts = ["Consolas", "Arial"]
         
         # Get fonts from the fonts directory
         fonts_dir = os.path.join(self.mame_dir, "preview", "settings", "fonts")
@@ -9203,7 +9199,7 @@ class MAMEControlConfig(ctk.CTk):
             if font_list:
                 return font_list
         
-        return fallback_fonts
+        return
 
     def is_system_font(self, font_name):
         """Check if a font exists in our fonts directory"""
@@ -9299,8 +9295,8 @@ class MAMEControlConfig(ctk.CTk):
         directory_font_names = [display_name for _, display_name in available_fonts]
         
         # Add "Consolas" if not in the list (our default)
-        if "Consolas" not in directory_font_names:
-            directory_font_names.insert(0, "Consolas")
+        #if "Consolas" not in directory_font_names:
+           # directory_font_names.insert(0, "Consolas")
         
         # Create font variable
         font_var = ctk.StringVar(value=current_font)
@@ -9512,10 +9508,9 @@ class MAMEControlConfig(ctk.CTk):
         preview_label = ctk.CTkLabel(
             preview_frame,
             text="AaBbCcXxYyZz 123",
-            font=("Arial", 18)
+            font=(current_font, 18)
         )
-        preview_label.pack(pady=10)
-        
+ 
         # Function to update preview
         def update_font_preview(*args):
             selected_font = font_var.get()
@@ -9756,63 +9751,6 @@ class MAMEControlConfig(ctk.CTk):
         )
         reset_button.pack(side="left", padx=10)
 
-    def debug_font_system(self):
-        """Debug the font system and print information about available fonts in the fonts directory"""
-        import os
-        
-        print("\n=== FONT DEBUG ===")
-        
-        # Check settings
-        settings = self.get_text_settings(refresh=True)
-        print(f"Font Family: {settings.get('font_family', 'Not set')}")
-        print(f"Font Name: {settings.get('font_name', 'Not set')}")
-        
-        # Check fonts directory
-        font_dir = os.path.join(self.mame_dir, "preview", "settings", "fonts")
-        print(f"\nFonts Directory: {font_dir}")
-        if os.path.exists(font_dir):
-            print("Directory exists")
-            font_files = [f for f in os.listdir(font_dir) if f.lower().endswith(('.ttf', '.otf'))]
-            print(f"Font files found: {len(font_files)}")
-            for file in font_files:
-                print(f"  - {file}")
-        else:
-            print("Directory does not exist")
-            try:
-                os.makedirs(font_dir, exist_ok=True)
-                print(f"Created fonts directory: {font_dir}")
-            except Exception as e:
-                print(f"Error creating fonts directory: {e}")
-        
-        # Check for the selected font
-        target = settings.get('font_family', 'Consolas')
-        print(f"\nSearching for font: {target}")
-        found = False
-        
-        # Look for exact match
-        for ext in ['.ttf', '.otf']:
-            path = os.path.join(font_dir, f"{target}{ext}")
-            if os.path.exists(path):
-                print(f"Found exact match: {path}")
-                found = True
-                break
-        
-        # Look for partial match if not found
-        if not found and os.path.exists(font_dir):
-            target_lower = target.lower().replace(' ', '')
-            for filename in os.listdir(font_dir):
-                if filename.lower().startswith(target_lower) and filename.lower().endswith(('.ttf', '.otf')):
-                    print(f"Found partial match: {filename}")
-                    found = True
-                    break
-        
-        if not found:
-            print(f"Font '{target}' not found in fonts directory")
-            print(f"Please add the font file to: {font_dir}")
-        
-        print("=== END FONT DEBUG ===\n")
-        return True
-    
     def apply_layering(self):
         """Apply proper z-order layering to all canvas elements based on settings"""
         if not hasattr(self, 'preview_canvas') or not self.preview_canvas.winfo_exists():
@@ -10837,7 +10775,7 @@ class MAMEControlConfig(ctk.CTk):
         Returns default font settings - single source of truth for font defaults
         """
         return {
-            "font_family": "Consolas",  # The font family name for display
+            "font_family": "",  # The font family name for display
             "font_size": 42,              # Regular font size
             "title_size": 50,             # Title text size
             "title_font_size": 50,  # Duplicate for compatibility
@@ -10880,6 +10818,7 @@ class MAMEControlConfig(ctk.CTk):
     def ensure_font_available(self):
         """Ensure font is available in the application directory with adjusted paths"""
         import os
+        from tkinter import messagebox
         
         # Get font settings
         settings = self.get_text_settings()
@@ -10902,31 +10841,36 @@ class MAMEControlConfig(ctk.CTk):
             font_path = os.path.join(font_dir, f"{font_family}{ext}")
             if os.path.exists(font_path):
                 print(f"Font file found: {font_path}")
-                return True
+                return True, font_path
         
         # Look for font files that start with the font name (ignoring case)
         font_name_lower = font_family.lower().replace(' ', '')
         for filename in os.listdir(font_dir):
             if filename.lower().startswith(font_name_lower) and filename.lower().endswith(('.ttf', '.otf')):
+                font_path = os.path.join(font_dir, filename)
                 print(f"Found font file with partial match: {filename}")
-                return True
+                return True, font_path
         
-        print(f"Font '{font_family}' not found")
-        print(f"The application will attempt to use a system font.")
-        
-        # Check if we have any fonts at all in the folder - just log, don't warn
-        fonts_found = False
+        # Check if ANY font files exist in the directory
+        any_font_found = False
         for filename in os.listdir(font_dir):
             if filename.lower().endswith(('.ttf', '.otf')):
-                fonts_found = True
-                break
-                
-        if not fonts_found:
-            # No fonts found, just log it without showing any warning dialog
-            print(f"No font files found in fonts directory: {font_dir}")
+                font_path = os.path.join(font_dir, filename)
+                print(f"Using alternate font file: {filename}")
+                return True, font_path
         
-        return False
+        # No fonts found at all - show warning
+        print(f"No font files found in fonts directory: {font_dir}")
+        messagebox.showwarning(
+            "Missing Fonts", 
+            f"No font files found in the fonts directory.\n\n"
+            f"Please add at least one .ttf or .otf font file to:\n"
+            f"{font_dir}\n\n"
+            f"Text labels will not appear until a font is available."
+        )
         
+        return False, None
+      
     # 8. Helper function to resolve paths consistently across different locations
     def resolve_app_path(self, subpath):
         """Resolve a path relative to the application location, adjusting for preview folder"""
@@ -10989,7 +10933,23 @@ class MAMEControlConfig(ctk.CTk):
         return False
     
     def create_text_with_shadow(self, canvas, x, y, text, font=None, shadow_offset=2, anchor="nw"):
-        """Create text with shadow effect for better visibility"""
+        """Create text with shadow effect for better visibility, only if font is available"""
+        # Check if a font was provided and it's valid
+        if font is None:
+            # Try to get a font - but first check if any fonts are available
+            font_available, _ = self.ensure_font_available()
+            
+            if not font_available:
+                # No font available, don't create any text
+                print("Cannot create text - no font available")
+                return None, None
+            
+            # Get a font since one wasn't provided
+            font = self.get_tkfont()
+            if font is None:
+                print("Cannot create text - tkfont creation failed")
+                return None, None
+        
         # Get shadow offset from bold strength if available
         if hasattr(self, 'get_text_settings'):
             settings = self.get_text_settings()
@@ -11003,7 +10963,7 @@ class MAMEControlConfig(ctk.CTk):
                 text=text, 
                 font=font, 
                 fill="white",
-                anchor=anchor  # Use the provided anchor parameter
+                anchor=anchor
             )
             return text_item, None
         
@@ -11014,7 +10974,7 @@ class MAMEControlConfig(ctk.CTk):
             text=text, 
             font=font, 
             fill="black",
-            anchor=anchor  # Use the provided anchor parameter
+            anchor=anchor
         )
         
         # Create main text
@@ -11023,7 +10983,7 @@ class MAMEControlConfig(ctk.CTk):
             text=text, 
             font=font, 
             fill="white",
-            anchor=anchor  # Use the provided anchor parameter
+            anchor=anchor
         )
         
         return text_item, shadow
@@ -11277,7 +11237,13 @@ class MAMEControlConfig(ctk.CTk):
         if not self.current_game:
             messagebox.showinfo("No Game Selected", "Please select a game first")
             return
-            
+        
+        # Check if any fonts are available in the fonts directory
+        font_available, font_path = self.ensure_font_available()
+        if not font_available:
+            # Return immediately if no fonts are available (user has already been warned)
+            return
+        
         # Create preview directory and handle bundled images if needed
         preview_dir = self.ensure_preview_folder_improved()
 
@@ -11537,12 +11503,25 @@ class MAMEControlConfig(ctk.CTk):
             adjusted_font_size = self.apply_font_scaling(font_family, font_size)
             
             # Create font with correct size and family
-            try:
-                import tkinter.font as tkfont
-                text_font = tkfont.Font(family=font_family, size=adjusted_font_size, weight="bold")
-            except Exception as e:
-                print(f"Error creating font: {e}")
-                text_font = (font_family, adjusted_font_size, "bold")
+            # Create font with correct size and family - but only if fonts are available
+            text_font = None
+            if font_available:
+                try:
+                    import tkinter.font as tkfont
+                    text_font = tkfont.Font(family=font_family, size=adjusted_font_size, weight="bold")
+                except Exception as e:
+                    print(f"Error creating font: {e}")
+                    # Don't fall back to system fonts - just don't show text
+                    messagebox.showwarning(
+                        "Font Error",
+                        f"Error loading font: {e}\n\nText will not be displayed in preview."
+                    )
+                    return
+
+            # If we have no font, don't try to create any text
+            if text_font is None:
+                print("No font available, skipping text creation")
+                return
             
             # Get custom controls if they exist
             cfg_controls = {}
