@@ -2,6 +2,13 @@ Info Files
 -odd spaces after = that's not consistent. Need to fix def save_game_config(self, romname: str): and 
     def generate_game_config(self, game_data: dict) -> str:
 
+Info Files
+-Fix info files spacing 
+
+LedBlinky File Support
+
+Center all popups 
+
 Hotkey
 -hotkey to move preview screen to second screen, and/or hide so you can navigate tab menu
 
