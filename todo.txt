@@ -1,3 +1,6 @@
+Restart after Font
+-pyinstaller onefile has an error regarding deleting temp dir. Need to fix. Otherwise good - a little slow for standalone. 
+
 Info Files
 -odd spaces after = that's not consistent. Need to fix def save_game_config(self, romname: str): and 
     def generate_game_config(self, game_data: dict) -> str:
