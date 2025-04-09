@@ -23,7 +23,7 @@ import argparse
 try:
     from PyQt5.QtWidgets import QApplication
     from PyQt5.QtGui import QPalette, QColor
-    from PyQt5.QtCore import Qt
+    from PyQt5.QtCore import Qt, QTimer
 except ImportError:
     print("PyQt5 is not installed. Please install it with: pip install PyQt5")
     sys.exit(1)
@@ -54,6 +54,22 @@ def main():
     args = parser.parse_args()
     print("Arguments parsed.")
     
+    # Check for preview-only mode
+    if args.preview_only and args.game:
+        # Initialize QApplication for preview only
+        app = QApplication(sys.argv)
+        app.setApplicationName("MAME Control Preview")
+        set_dark_theme(app)
+        
+        # Create MAMEControlConfig in preview mode
+        config = MAMEControlConfig(preview_only=True)
+        
+        # Show preview for specified game
+        config.show_preview_standalone(args.game, args.auto_close)
+        
+        # Run app
+        sys.exit(app.exec_())
+    
     # Initialize QApplication
     print("Creating QApplication...")
     app = QApplication(sys.argv)
@@ -70,10 +86,14 @@ def main():
     
     print("Creating main window...")
     try:
+        # Create window but don't show it yet
         window = MAMEControlConfig()
         print("Main window created.")
-        window.show()
-        print("Window shown.")
+        
+        # First maximize, then show - this sequence works better on most systems
+        window.showMaximized()
+        print("Window maximized.")
+        
     except Exception as e:
         print(f"Error creating window: {e}")
         import traceback

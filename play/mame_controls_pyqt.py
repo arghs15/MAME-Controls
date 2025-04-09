@@ -113,22 +113,23 @@ class MAMEControlConfig(QMainWindow):
         self.custom_configs = {}
         self.current_game = None
         self.use_xinput = True
+        self.preview_window = None  # Track preview window
         
         # Logo size settings (as percentages)
         self.logo_width_percentage = 15
         self.logo_height_percentage = 15
+        
+        # Find necessary directories - needed for both modes
+        self.mame_dir = self.find_mame_directory()
+        if not self.mame_dir:
+            QMessageBox.critical(self, "Error", "Please place this script in the MAME directory!")
+            sys.exit(1)
         
         # Skip main window setup if in preview-only mode
         if not preview_only:
             # Configure the window
             self.setWindowTitle("MAME Control Configuration Checker")
             self.resize(1024, 768)
-            
-            # Find necessary directories
-            self.mame_dir = self.find_mame_directory()
-            if not self.mame_dir:
-                QMessageBox.critical(self, "Error", "Please place this script in the MAME directory!")
-                sys.exit(1)
                 
             # Create the interface
             self.create_layout()
@@ -136,11 +137,12 @@ class MAMEControlConfig(QMainWindow):
             # Load all data
             self.load_all_data()
             
-            # Set window to maximized state
-            self.showMaximized()
+            # We will maximize in the calling function
         else:
             # For preview-only mode, just initialize minimal attributes
-            self.hide()
+            self.load_settings()  # Still need settings for preview
+            self.load_gamedata_json()  # Need game data for preview
+            self.hide()  # Hide the main window
     
     def get_application_path(self):
         """Get the base path for the application (handles PyInstaller bundling)"""
@@ -471,6 +473,57 @@ class MAMEControlConfig(QMainWindow):
         self.hide_preview_buttons = self.hide_buttons_toggle.isChecked()
         print(f"Hide preview buttons set to: {self.hide_preview_buttons}")
     
+    """
+    This file contains fixes for the preview functionality in the MAME Controls application.
+    Add this to mame_controls_pyqt.py to fix the preview window issues.
+    """
+
+    # These changes should be applied to the MAMEControlConfig class in mame_controls_pyqt.py
+
+    # Replace the __init__ method of MAMEControlConfig with this:
+    def __init__(self, preview_only=False):
+        super().__init__()
+        
+        # Initialize core attributes needed for both modes
+        self.visible_control_types = ["BUTTON", "JOYSTICK"]
+        self.default_controls = {}
+        self.gamedata_json = {}
+        self.available_roms = set()
+        self.custom_configs = {}
+        self.current_game = None
+        self.use_xinput = True
+        self.preview_window = None  # Track preview window
+        
+        # Logo size settings (as percentages)
+        self.logo_width_percentage = 15
+        self.logo_height_percentage = 15
+        
+        # Find necessary directories - needed for both modes
+        self.mame_dir = self.find_mame_directory()
+        if not self.mame_dir:
+            QMessageBox.critical(self, "Error", "Please place this script in the MAME directory!")
+            sys.exit(1)
+        
+        # Skip main window setup if in preview-only mode
+        if not preview_only:
+            # Configure the window
+            self.setWindowTitle("MAME Control Configuration Checker")
+            self.resize(1024, 768)
+                
+            # Create the interface
+            self.create_layout()
+            
+            # Load all data
+            self.load_all_data()
+            
+            # We will maximize in the calling function
+        else:
+            # For preview-only mode, just initialize minimal attributes
+            self.load_settings()  # Still need settings for preview
+            self.load_gamedata_json()  # Need game data for preview
+            self.hide()  # Hide the main window
+
+    # Replace the show_preview method with this:
     def show_preview(self):
         """Show a preview of the control layout for the current game"""
         if not self.current_game:
@@ -485,17 +538,40 @@ class MAMEControlConfig(QMainWindow):
         
         try:
             # Import the preview window module
-            from mame_controls_preview import PreviewWindow
+            print(f"Attempting to import preview module from: {self.mame_dir}")
+            # Make sure we can find the module
+            script_dir = os.path.dirname(os.path.abspath(__file__))
+            if script_dir not in sys.path:
+                sys.path.append(script_dir)
+                print(f"Added {script_dir} to sys.path")
             
-            # Create and show the preview window
+            # Import from current directory
+            from mame_controls_preview import PreviewWindow
+            print("Successfully imported PreviewWindow")
+            
+            # Create preview window as a modal dialog to ensure it appears on top
+            print(f"Creating preview window for {self.current_game}")
             self.preview_window = PreviewWindow(self.current_game, game_data, self.mame_dir, self)
-            self.preview_window.showFullScreen()
+            
+            # Make preview window modal
+            print("Setting preview window as modal")
+            self.preview_window.setWindowModality(Qt.ApplicationModal)
+            
+            # Show the window as a modal dialog
+            print("Showing preview window")
+            self.preview_window.show()
+            self.preview_window.activateWindow()  # Force window to front
+            self.preview_window.raise_()  # Raise window to the top
+            print("Preview window displayed")
             
         except ImportError as e:
             QMessageBox.critical(self, "Error", f"Could not import preview module: {str(e)}")
             print(f"Import error: {e}")
+            import traceback
+            traceback.print_exc()
         except Exception as e:
             QMessageBox.critical(self, "Error", f"Error showing preview: {str(e)}")
+            print(f"General error in preview: {e}")
             import traceback
             traceback.print_exc()
     
