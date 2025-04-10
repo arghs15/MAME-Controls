@@ -1,0 +1,8 @@
+Logo
+- has black within the canvas around the image - need to remove and make transparent
+
+Bezel
+-doesn't save with image
+
+Default image
+-quality bad - why?
