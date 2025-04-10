@@ -729,6 +729,8 @@ class PreviewWindow(QMainWindow):
             self.toggle_texts_button.setStyleSheet(button_style)
             self.bottom_row.addWidget(self.toggle_texts_button)
             
+            self.add_xinput_controls_button()
+            
             # Add logo controls
             self.logo_visible = self.logo_settings.get("logo_visible", True)
             logo_text = "Hide Logo" if self.logo_visible else "Show Logo"
@@ -785,7 +787,13 @@ class PreviewWindow(QMainWindow):
             self.layering_for_bezel()
             self.integrate_bezel_support()
             self.canvas.resizeEvent = self.on_canvas_resize_with_background
+    
+            # Add this line to initialize bezel state after a short delay
+            QTimer.singleShot(500, self.ensure_bezel_state)
+            
             print("PreviewWindow initialization complete")
+            
+            QTimer.singleShot(600, self.apply_joystick_visibility)
             
         except Exception as e:
             print(f"Error in PreviewWindow initialization: {e}")
@@ -793,7 +801,22 @@ class PreviewWindow(QMainWindow):
             traceback.print_exc()
             QMessageBox.critical(self, "Error", f"Error initializing preview: {e}")
             self.close()
+    
+    # Add this to the PreviewWindow class
+    def ensure_bezel_state(self):
+        """Ensure bezel visibility state matches settings"""
+        if not hasattr(self, 'has_bezel') or not self.has_bezel:
+            return
             
+        # Make sure bezel is shown if it should be based on settings
+        if self.bezel_visible and (not hasattr(self, 'bezel_label') or not self.bezel_label or not self.bezel_label.isVisible()):
+            self.show_bezel_with_background()
+            print("Ensuring bezel is visible based on settings")
+            
+        # Update button text
+        if hasattr(self, 'bezel_button'):
+            self.bezel_button.setText("Hide Bezel" if self.bezel_visible else "Show Bezel")
+    
     # Add bezel-related attributes and initial setup to __init__
     def add_bezel_support_to_init(self):
         """Initialize bezel-related attributes"""
@@ -842,6 +865,35 @@ class PreviewWindow(QMainWindow):
         else:
             self.bezel_button.setToolTip(f"Toggle bezel visibility: {bezel_path}")
 
+    # Replace toggle_bezel_improved to always save global settings
+    def toggle_bezel_improved(self):
+        """Toggle bezel visibility and save the setting globally"""
+        if not self.has_bezel:
+            print("No bezel available to toggle")
+            return
+        
+        # Toggle visibility flag
+        self.bezel_visible = not self.bezel_visible
+        
+        # Update button text
+        self.bezel_button.setText("Hide Bezel" if self.bezel_visible else "Show Bezel")
+        
+        # Show or hide bezel
+        if self.bezel_visible:
+            self.show_bezel_with_background()
+            print(f"Bezel visibility is now: {self.bezel_visible}")
+        else:
+            if hasattr(self, 'bezel_label') and self.bezel_label:
+                self.bezel_label.hide()
+                print("Bezel hidden")
+        
+        # Always raise controls to top
+        self.raise_controls_above_bezel()
+        
+        # ALWAYS save as global settings
+        self.save_bezel_settings(is_global=True)
+        print(f"Saved bezel visibility ({self.bezel_visible}) to GLOBAL settings")
+    
     # Add method to find bezel path
     def find_bezel_path(self, rom_name):
         """Find bezel image path for a ROM name"""
@@ -869,98 +921,165 @@ class PreviewWindow(QMainWindow):
         print(f"No bezel found for {rom_name}")
         return None
 
-    # Better toggle method
-    def toggle_bezel_improved(self):
-        """Toggle bezel visibility with better layering"""
-        if not self.has_bezel:
-            print("No bezel available to toggle")
-            return
+    # Replace the toggle_bezel_improved method to ensure the bezel is properly shown
+    # Replace toggle_bezel_improved to save settings when toggled
+    def add_global_bezel_button(self):
+        """Add a button to save current bezel state as global default"""
+        # Button style (reuse existing style)
+        button_style = """
+            QPushButton {
+                background-color: #3d3d3d;
+                color: white;
+                border: 1px solid #5a5a5a;
+                border-radius: 4px;
+                padding: 6px 12px;
+                font-weight: bold;
+                min-width: 90px;
+            }
+            QPushButton:hover {
+                background-color: #4a4a4a;
+            }
+            QPushButton:pressed {
+                background-color: #2a2a2a;
+            }
+        """
         
-        # Toggle visibility flag
-        self.bezel_visible = not self.bezel_visible
+        # Create button
+        self.global_bezel_button = QPushButton("Global Bezel")
+        self.global_bezel_button.clicked.connect(lambda: self.save_bezel_settings(is_global=True))
+        self.global_bezel_button.setStyleSheet(button_style)
+        self.global_bezel_button.setToolTip("Save current bezel visibility as global default")
         
-        # Update button text
-        self.bezel_button.setText("Hide Bezel" if self.bezel_visible else "Show Bezel")
-        
-        # Show or hide bezel
-        if self.bezel_visible:
-            self.show_bezel_with_background()
-        else:
-            if hasattr(self, 'bezel_label') and self.bezel_label:
-                self.bezel_label.hide()
-                print("Bezel hidden")
-        
-        # Always raise controls to top
-        self.raise_controls_above_bezel()
+        # Add to bottom row if it exists
+        if hasattr(self, 'bottom_row'):
+            self.bottom_row.addWidget(self.global_bezel_button)
 
-    # Improved bezel display that preserves background
+    # Replace the show_bezel_with_background method for better bezel display
     def show_bezel_with_background(self):
-        """Display bezel while preserving background"""
+        """Display bezel while preserving background with proper layering"""
         # Find bezel path
         bezel_path = self.find_bezel_path(self.rom_name)
         if not bezel_path:
             print("Cannot show bezel: no bezel image found")
             return
         
-        # Create or recreate bezel label
-        if hasattr(self, 'bezel_label') and self.bezel_label:
-            self.bezel_label.deleteLater()
-        
-        # Create a fresh bezel label on the canvas
-        self.bezel_label = QLabel(self.canvas)
-        
-        # Load bezel image
-        bezel_pixmap = QPixmap(bezel_path)
-        if bezel_pixmap.isNull():
-            print(f"Error loading bezel image from {bezel_path}")
-            return
-        
-        # Set up the bezel label
-        self.bezel_label.setPixmap(bezel_pixmap)
-        self.bezel_label.setScaledContents(True)
-        self.bezel_label.setGeometry(0, 0, self.canvas.width(), self.canvas.height())
-        
-        # CRITICAL: Set the bezel to be ABOVE background but BELOW controls
-        if hasattr(self, 'bg_label') and self.bg_label:
-            # Insert bezel above background in widget stack
-            self.bezel_label.stackUnder(self.bg_label)
-            # Then raise it above background
-            self.bezel_label.raise_()
-            print("Positioned bezel between background and controls")
-        
-        # Make sure the bezel is visible but doesn't block the background
-        self.bezel_label.setStyleSheet("background-color: transparent;")
-        
-        # Show the bezel
-        self.bezel_label.show()
-        
-        # Now raise all controls above bezel
-        self.raise_controls_above_bezel()
-        
-        print(f"Bezel displayed with background visible: {self.bezel_label.width()}x{self.bezel_label.height()}")
-
+        try:
+            print("\n--- Showing bezel with proper layering ---")
+            
+            # Create or recreate bezel label
+            if hasattr(self, 'bezel_label') and self.bezel_label:
+                self.bezel_label.deleteLater()
+            
+            # Create a fresh bezel label on the canvas
+            self.bezel_label = QLabel(self.canvas)
+            
+            # Load bezel image
+            self.original_bezel_pixmap = QPixmap(bezel_path)
+            if self.original_bezel_pixmap.isNull():
+                print(f"Error loading bezel image from {bezel_path}")
+                self.bezel_visible = False
+                return
+            
+            # Resize bezel to match window while preserving aspect ratio
+            window_width = self.canvas.width()
+            window_height = self.canvas.height()
+            
+            # Scale with high quality
+            bezel_pixmap = self.original_bezel_pixmap.scaled(
+                window_width,
+                window_height,
+                Qt.KeepAspectRatio,  # Keep aspect ratio
+                Qt.SmoothTransformation  # High quality scaling
+            )
+            
+            # Store this for saving to image later
+            self.bezel_pixmap = bezel_pixmap
+            
+            # Set up the bezel label
+            self.bezel_label.setPixmap(bezel_pixmap)
+            
+            # Position bezel in center
+            x = (window_width - bezel_pixmap.width()) // 2
+            y = (window_height - bezel_pixmap.height()) // 2
+            self.bezel_label.setGeometry(x, y, bezel_pixmap.width(), bezel_pixmap.height())
+            
+            # CRITICAL: Make bezel transparent
+            self.bezel_label.setStyleSheet("background-color: transparent;")
+            
+            # CRITICAL LAYERING FIX: First lower the bezel behind everything
+            self.bezel_label.lower()
+            
+            # Then, if we have a background, make sure bezel is ABOVE background but BELOW other controls
+            if hasattr(self, 'bg_label') and self.bg_label:
+                # Print current widget stacking info
+                print(f"Background exists: {self.bg_label.isVisible()}")
+                
+                # First lower background to bottom
+                self.bg_label.lower()
+                
+                # Then raise bezel above background
+                self.bezel_label.stackUnder(self.bg_label)
+                self.bezel_label.raise_()
+                
+                print("Fixed layering: Background -> Bezel -> Other elements")
+            
+            # Make sure the bezel is visible
+            self.bezel_label.show()
+            self.bezel_visible = True
+            
+            # Now raise all controls above bezel
+            self.raise_controls_above_bezel()
+            
+            print(f"Bezel displayed: {bezel_pixmap.width()}x{bezel_pixmap.height()} at ({x},{y})")
+            print(f"Bezel visibility is set to: {self.bezel_visible}")
+            
+        except Exception as e:
+            print(f"Error showing bezel: {e}")
+            import traceback
+            traceback.print_exc()
+            self.bezel_visible = False
+            
     # Improved method to raise controls above bezel
     def raise_controls_above_bezel(self):
-        """Ensure all controls are above the bezel"""
+        """Ensure all controls are above the bezel with proper debug info"""
+        print("\n--- Applying proper stacking order ---")
+        
         if not hasattr(self, 'bezel_label') or not self.bezel_label:
+            print("No bezel label exists to stack controls above")
             return
         
-        # Raise all shadow labels first
+        # First make sure background is at the bottom
+        if hasattr(self, 'bg_label') and self.bg_label:
+            self.bg_label.lower()
+            print("Lowered background to bottom layer")
+        
+        # Then place bezel above background
+        self.bezel_label.lower()  # First lower it all the way down
+        if hasattr(self, 'bg_label') and self.bg_label:
+            self.bezel_label.stackUnder(self.bg_label)  # Then stack under background
+            self.bezel_label.raise_()  # Then raise above background
+            print("Positioned bezel above background")
+        
+        # Raise all shadow labels above bezel but below real labels
         if hasattr(self, 'shadow_labels'):
             for shadow_label in self.shadow_labels.values():
-                shadow_label.raise_()
+                if shadow_label.isVisible():
+                    shadow_label.raise_()
+            print(f"Raised {len(self.shadow_labels)} shadow labels above bezel")
         
-        # Raise all control labels
+        # Raise all control labels to the top
         if hasattr(self, 'control_labels'):
             for control_data in self.control_labels.values():
-                if 'label' in control_data and control_data['label']:
+                if 'label' in control_data and control_data['label'] and control_data['label'].isVisible():
                     control_data['label'].raise_()
+            print(f"Raised {len(self.control_labels)} control labels to top")
         
-        # Raise logo if it exists
-        if hasattr(self, 'logo_label') and self.logo_label:
+        # Raise logo if it exists (should be on top of bezel but below controls)
+        if hasattr(self, 'logo_label') and self.logo_label and self.logo_label.isVisible():
             self.logo_label.raise_()
+            print("Raised logo above bezel")
         
-        print("All controls raised above bezel")
+        print("Final stack order: Background -> Bezel -> Shadows/Logo -> Controls")
     
     # Make sure the bezel is properly layered in window setup
     def layering_for_bezel(self):
@@ -985,15 +1104,22 @@ class PreviewWindow(QMainWindow):
             
             print("Layering setup for bezel display")
     
-    # Add method to properly integrate bezel support
+    # Replace integrate_bezel_support to load from settings
+    # Update integrate_bezel_support to initialize joystick visibility
     def integrate_bezel_support(self):
-        """Add bezel support to the preview window"""
-        # Add bezel attributes
-        self.bezel_visible = False
+        """Add bezel support with joystick visibility settings"""
+        # Initialize with defaults
         self.bezel_label = None
         self.has_bezel = False
         
-        # Add a button for toggling bezel visibility
+        # Load bezel and joystick settings
+        bezel_settings = self.load_bezel_settings()
+        self.bezel_visible = bezel_settings.get("bezel_visible", False)
+        self.joystick_visible = bezel_settings.get("joystick_visible", True)  # Default to visible
+        print(f"Loaded bezel visibility: {self.bezel_visible}, joystick visibility: {self.joystick_visible}")
+        
+        # [Rest of the original method]
+        # Add button style (reuse existing style)
         button_style = """
             QPushButton {
                 background-color: #3d3d3d;
@@ -1017,7 +1143,7 @@ class PreviewWindow(QMainWindow):
         self.bezel_button.clicked.connect(self.toggle_bezel_improved)
         self.bezel_button.setStyleSheet(button_style)
         
-        # Add to the button layout
+        # Add to the bottom row
         if hasattr(self, 'bottom_row'):
             self.bottom_row.addWidget(self.bezel_button)
         elif hasattr(self, 'button_layout'):
@@ -1029,12 +1155,288 @@ class PreviewWindow(QMainWindow):
         
         # Update button state
         self.bezel_button.setEnabled(self.has_bezel)
+        
         if not self.has_bezel:
             self.bezel_button.setText("No Bezel")
             self.bezel_button.setToolTip(f"No bezel found for {self.rom_name}")
         else:
+            # Set initial button text based on visibility setting
+            self.bezel_button.setText("Hide Bezel" if self.bezel_visible else "Show Bezel")
             self.bezel_button.setToolTip(f"Toggle bezel visibility: {bezel_path}")
             print(f"Bezel available at: {bezel_path}")
+            
+            # If bezel should be visible based on settings, show it
+            if self.bezel_visible:
+                # Use a small delay to ensure the canvas is fully initialized
+                QTimer.singleShot(100, self.show_bezel_with_background)
+                print("Bezel initialized as visible based on settings")
+    
+    # Improved show_all_xinput_controls method that avoids duplicates
+    def show_all_xinput_controls(self):
+        """Show all possible P1 XInput controls for global positioning without duplicates"""
+        # Standard XInput controls for positioning - P1 ONLY
+        xinput_controls = {
+            "P1_JOYSTICK_UP": "Left Stick Up",
+            "P1_JOYSTICK_DOWN": "Left Stick Down",
+            "P1_JOYSTICK_LEFT": "Left Stick Left",
+            "P1_JOYSTICK_RIGHT": "Left Stick Right",
+            "P1_JOYSTICK2_UP": "Right Stick Up",
+            "P1_JOYSTICK2_DOWN": "Right Stick Down",
+            "P1_JOYSTICK2_LEFT": "Right Stick Left",
+            "P1_JOYSTICK2_RIGHT": "Right Stick Right",
+            "P1_BUTTON1": "A Button",
+            "P1_BUTTON2": "B Button",
+            "P1_BUTTON3": "X Button",
+            "P1_BUTTON4": "Y Button",
+            "P1_BUTTON5": "Left Bumper",
+            "P1_BUTTON6": "Right Bumper",
+            "P1_BUTTON7": "Left Trigger",
+            "P1_BUTTON8": "Right Trigger",
+            "P1_BUTTON9": "Left Stick Button",
+            "P1_BUTTON10": "Right Stick Button",
+            "P1_START": "Start Button",
+            "P1_SELECT": "Back Button",
+            # All P2 controls removed
+        }
+        
+        try:
+            print("\n--- Showing all P1 XInput controls for positioning ---")
+            
+            # Save existing control positions
+            if not hasattr(self, 'original_controls_backup'):
+                self.original_controls_backup = {}
+                for control_name, control_data in self.control_labels.items():
+                    self.original_controls_backup[control_name] = {
+                        'action': control_data['action'],
+                        'position': control_data['label'].pos(),
+                        'original_pos': control_data.get('original_pos', QPoint(0, 0))
+                    }
+                print(f"Backed up {len(self.original_controls_backup)} original controls")
+            
+            # Get canvas dimensions for positioning
+            canvas_width = self.canvas.width()
+            canvas_height = self.canvas.height()
+            
+            # Clear ALL existing controls first
+            for control_name in list(self.control_labels.keys()):
+                # Remove the control from the canvas
+                if control_name in self.control_labels:
+                    self.control_labels[control_name]['label'].deleteLater()
+                    del self.control_labels[control_name]
+                if control_name in self.shadow_labels:
+                    self.shadow_labels[control_name].deleteLater()
+                    del self.shadow_labels[control_name]
+            
+            # Clear collections
+            self.control_labels = {}
+            self.shadow_labels = {}
+            print("Cleared all existing controls")
+            
+            # Default grid layout
+            grid_x, grid_y = 0, 0
+            
+            # Apply text settings
+            y_offset = self.text_settings.get("y_offset", -40)
+            
+            # Create all P1 XInput controls
+            for control_name, action_text in xinput_controls.items():
+                # Apply text settings - uppercase if enabled
+                if self.text_settings.get("use_uppercase", False):
+                    action_text = action_text.upper()
+                
+                # Check if we have a saved position for this control
+                saved_position = None
+                if control_name in self.original_controls_backup:
+                    saved_position = self.original_controls_backup[control_name]['position']
+                
+                # Create a draggable label with current text settings
+                label = DraggableLabel(action_text, self.canvas, settings=self.text_settings)
+                
+                # Create shadow effect for better visibility
+                shadow_label = QLabel(action_text, self.canvas)
+                shadow_label.setStyleSheet("color: black; background-color: transparent; border: none;")
+                
+                # Copy font settings from main label
+                shadow_label.setFont(label.font())
+                
+                if saved_position:
+                    # Use the saved position
+                    x, y = saved_position.x(), saved_position.y()
+                    # Use original position without offset for reset
+                    original_pos = self.original_controls_backup[control_name]['original_pos']
+                else:
+                    # Use default grid position
+                    x = 100 + (grid_x * 150)
+                    y = 100 + (grid_y * 40)
+                    
+                    # Apply y-offset from text settings
+                    y += y_offset
+                    
+                    # Store original position without offset
+                    original_pos = QPoint(x, y - y_offset)
+                    
+                    # Update grid position
+                    grid_x = (grid_x + 1) % 5
+                    if grid_x == 0:
+                        grid_y += 1
+                
+                # Position the labels - shadow goes behind
+                shadow_label.move(x + 2, y + 2)  # Shadow offset
+                label.move(x, y)
+                
+                # Make shadow label go behind the main label
+                shadow_label.lower()
+                
+                # Store the labels
+                self.control_labels[control_name] = {
+                    'label': label,
+                    'shadow': shadow_label,
+                    'action': action_text,
+                    'original_pos': original_pos  # Store without offset for reset
+                }
+                
+                # Store shadow label separately for convenience
+                self.shadow_labels[control_name] = shadow_label
+                
+                # Connect position update for shadow
+                original_mouseMoveEvent = label.mouseMoveEvent
+                label.mouseMoveEvent = lambda event, label=label, shadow=shadow_label, orig_func=original_mouseMoveEvent: self.on_label_move(event, label, shadow, orig_func)
+                
+                # Show control (respect joystick visibility)
+                is_visible = True
+                if "JOYSTICK" in control_name and hasattr(self, 'joystick_visible'):
+                    is_visible = self.joystick_visible
+                
+                label.setVisible(is_visible)
+                shadow_label.setVisible(is_visible)
+            
+            # Update button to allow going back to regular mode
+            if hasattr(self, 'xinput_controls_button'):
+                self.xinput_controls_button.setText("Normal Controls")
+            
+            # Set flag to indicate we're in XInput mode
+            self.showing_all_xinput_controls = True
+            
+            print(f"Created and displayed {len(xinput_controls)} P1 XInput controls for positioning")
+            return True
+            
+        except Exception as e:
+            print(f"Error showing XInput controls: {e}")
+            import traceback
+            traceback.print_exc()
+            return False
+
+    # Improved toggle_xinput_controls method that restores original controls properly
+    def toggle_xinput_controls(self):
+        """Toggle between normal game controls and all XInput controls"""
+        # Check if already showing all XInput controls
+        if hasattr(self, 'showing_all_xinput_controls') and self.showing_all_xinput_controls:
+            # Switch back to normal game controls
+            self.showing_all_xinput_controls = False
+            
+            # CRITICAL FIX: Clear all current controls
+            for control_name in list(self.control_labels.keys()):
+                # Remove the control from the canvas
+                if control_name in self.control_labels:
+                    self.control_labels[control_name]['label'].deleteLater()
+                    del self.control_labels[control_name]
+                if control_name in self.shadow_labels:
+                    self.shadow_labels[control_name].deleteLater()
+                    del self.shadow_labels[control_name]
+            
+            # Clear collections
+            self.control_labels = {}
+            self.shadow_labels = {}
+            
+            # Update button text
+            if hasattr(self, 'xinput_controls_button'):
+                self.xinput_controls_button.setText("Show All XInput")
+            
+            # Reload the current game controls from scratch
+            self.create_control_labels()
+            
+            print("Switched back to normal game controls")
+        else:
+            # Switch to showing all XInput controls
+            self.show_all_xinput_controls()
+
+    # New method to force apply joystick visibility
+    def apply_joystick_visibility(self):
+        """Force apply joystick visibility settings to all controls"""
+        controls_updated = 0
+        
+        for control_name, control_data in self.control_labels.items():
+            if "JOYSTICK" in control_name:
+                is_visible = self.texts_visible and self.joystick_visible
+                
+                # Only update if needed
+                if control_data['label'].isVisible() != is_visible:
+                    control_data['label'].setVisible(is_visible)
+                    self.shadow_labels[control_name].setVisible(is_visible)
+                    controls_updated += 1
+        
+        print(f"Applied joystick visibility ({self.joystick_visible}) to {controls_updated} controls")
+        return controls_updated
+
+    # Call this at the end of PreviewWindow.__init__
+    def init_joystick_delayed(self):
+        """Set up a delayed joystick visibility initialization"""
+        # After UI is fully initialized, apply joystick visibility
+        QTimer.singleShot(600, self.apply_joystick_visibility)
+        print("Scheduled delayed joystick visibility application")
+    
+    # Add method to initialize joystick visibility during startup
+    def initialize_joystick_visibility(self):
+        """Apply joystick visibility setting to controls"""
+        # Make sure joystick_visible is initialized
+        if not hasattr(self, 'joystick_visible'):
+            # Try to load from settings
+            bezel_settings = self.load_bezel_settings()
+            self.joystick_visible = bezel_settings.get("joystick_visible", True)
+        
+        # Update joystick button text if it exists
+        if hasattr(self, 'joystick_button'):
+            self.joystick_button.setText("Show Joystick" if not self.joystick_visible else "Hide Joystick")
+        
+        # Apply visibility to joystick controls
+        for control_name, control_data in self.control_labels.items():
+            if "JOYSTICK" in control_name:
+                is_visible = self.texts_visible and self.joystick_visible
+                control_data['label'].setVisible(is_visible)
+                self.shadow_labels[control_name].setVisible(is_visible)
+        
+        print(f"Initialized joystick visibility to: {self.joystick_visible}")
+
+    # Add this to the button_frame creation in __init__
+    def add_xinput_controls_button(self):
+        """Add a button to show all XInput controls"""
+        button_style = """
+            QPushButton {
+                background-color: #3d3d3d;
+                color: white;
+                border: 1px solid #5a5a5a;
+                border-radius: 4px;
+                padding: 6px 12px;
+                font-weight: bold;
+                min-width: 90px;
+            }
+            QPushButton:hover {
+                background-color: #4a4a4a;
+            }
+            QPushButton:pressed {
+                background-color: #2a2a2a;
+            }
+        """
+        
+        # Create button for XInput controls toggle
+        self.xinput_controls_button = QPushButton("Show All XInput")
+        self.xinput_controls_button.clicked.connect(self.toggle_xinput_controls)
+        self.xinput_controls_button.setStyleSheet(button_style)
+        self.xinput_controls_button.setToolTip("Show all XInput controls for positioning")
+        
+        # Add to bottom row if it exists
+        if hasattr(self, 'bottom_row'):
+            self.bottom_row.addWidget(self.xinput_controls_button)
     
     # Add method to hide bezel
     def hide_bezel(self):
@@ -1155,6 +1557,84 @@ class PreviewWindow(QMainWindow):
         # Add to bottom row if it exists
         if hasattr(self, 'bottom_row'):
             self.bottom_row.addWidget(self.global_text_button)
+    
+    # Add a new method to load bezel settings
+    # Update load_bezel_settings to prioritize global settings
+    # Update load_bezel_settings to include joystick visibility
+    def load_bezel_settings(self):
+        """Load bezel and joystick visibility settings from file"""
+        settings = {
+            "bezel_visible": False,  # Default to hidden
+            "joystick_visible": True  # Default to visible
+        }
+        
+        try:
+            # Check for GLOBAL settings first
+            preview_dir = os.path.join(self.mame_dir, "preview")
+            os.makedirs(preview_dir, exist_ok=True)
+            
+            global_settings_file = os.path.join(preview_dir, "global_bezel.json")
+            rom_settings_file = os.path.join(preview_dir, f"{self.rom_name}_bezel.json")
+            
+            # FIRST check for global settings (priority)
+            if os.path.exists(global_settings_file):
+                with open(global_settings_file, 'r') as f:
+                    loaded_settings = json.load(f)
+                    settings.update(loaded_settings)
+                    print(f"Loaded global bezel/joystick settings: {settings}")
+            
+            # OPTIONALLY fall back to ROM-specific (if you want to keep this behavior)
+            elif os.path.exists(rom_settings_file):
+                with open(rom_settings_file, 'r') as f:
+                    loaded_settings = json.load(f)
+                    settings.update(loaded_settings)
+                    print(f"Loaded ROM-specific bezel/joystick settings for {self.rom_name}: {settings}")
+        except Exception as e:
+            print(f"Error loading bezel/joystick settings: {e}")
+        
+        return settings
+
+    # Add method to save bezel settings
+    def save_bezel_settings(self, is_global=True):
+        """Save bezel and joystick visibility settings to file"""
+        try:
+            # Create preview directory if it doesn't exist
+            preview_dir = os.path.join(self.mame_dir, "preview")
+            os.makedirs(preview_dir, exist_ok=True)
+            
+            # Determine file path based on global flag
+            if is_global:
+                settings_file = os.path.join(preview_dir, "global_bezel.json")
+            else:
+                settings_file = os.path.join(preview_dir, f"{self.rom_name}_bezel.json")
+            
+            # Create settings object
+            settings = {
+                "bezel_visible": self.bezel_visible,
+                "joystick_visible": getattr(self, 'joystick_visible', True)  # Default to True if not set
+            }
+            
+            # Save settings
+            with open(settings_file, 'w') as f:
+                json.dump(settings, f)
+                
+            # Show message if global
+            if is_global:
+                print(f"Saved GLOBAL bezel/joystick settings to {settings_file}: {settings}")
+                QMessageBox.information(
+                    self,
+                    "Global Settings Saved",
+                    f"Visibility settings saved as global default."
+                )
+            else:
+                print(f"Saved ROM-specific bezel/joystick settings to {settings_file}: {settings}")
+                
+            return True
+        except Exception as e:
+            print(f"Error saving bezel/joystick settings: {e}")
+            import traceback
+            traceback.print_exc()
+            return False
     
     # Ensure the load_logo_settings method properly loads custom position
     def load_logo_settings(self):
@@ -1948,9 +2428,9 @@ class PreviewWindow(QMainWindow):
         self.bottom_row.addWidget(self.shadow_button)
     
     # Fix for the save_image method
-    # Replace the original save_image method with this fixed version
+    # Completely rewritten save_image method with explicit bezel handling
     def save_image(self):
-        """Save current preview as an image with better error handling"""
+        """Save current preview as an image with robust bezel support"""
         try:
             # Create preview directory if it doesn't exist
             preview_dir = os.path.join(self.mame_dir, "preview")
@@ -1970,9 +2450,15 @@ class PreviewWindow(QMainWindow):
                 ) != QMessageBox.Yes:
                     return False
             
+            # Debug info about current state
+            print("\n--- Starting image save process ---")
+            print(f"Canvas size: {self.canvas.width()}x{self.canvas.height()}")
+            print(f"Bezel visible: {getattr(self, 'bezel_visible', False)}")
+            
             # Create a new image with the same size as the canvas
             image = QImage(
-                self.canvas.size(),
+                self.canvas.width(),
+                self.canvas.height(),
                 QImage.Format_ARGB32
             )
             # Fill with black background
@@ -1984,22 +2470,79 @@ class PreviewWindow(QMainWindow):
             painter.setRenderHint(QPainter.TextAntialiasing)
             painter.setRenderHint(QPainter.SmoothPixmapTransform)
             
-            # Draw the background image if available (fix direct attribute access)
-            if hasattr(self, 'bg_label') and self.bg_label and self.bg_label.pixmap():
+            # LAYER 1: Draw the background image
+            if hasattr(self, 'background_pixmap') and self.background_pixmap and not self.background_pixmap.isNull():
+                bg_pixmap = self.background_pixmap
+                
+                # Calculate position to center the pixmap
+                x = (self.canvas.width() - bg_pixmap.width()) // 2
+                y = (self.canvas.height() - bg_pixmap.height()) // 2
+                
+                # Draw the pixmap
+                painter.drawPixmap(x, y, bg_pixmap)
+                print(f"Background drawn at {x},{y}, size {bg_pixmap.width()}x{bg_pixmap.height()}")
+            elif hasattr(self, 'bg_label') and self.bg_label and self.bg_label.pixmap():
+                # Fallback to current bg_label pixmap if needed
                 bg_pixmap = self.bg_label.pixmap()
                 painter.drawPixmap(self.bg_label.pos(), bg_pixmap)
-                print(f"Background drawn at {self.bg_label.pos()}, size {bg_pixmap.width()}x{bg_pixmap.height()}")
+                print(f"Background drawn via bg_label at {self.bg_label.pos()}, size {bg_pixmap.width()}x{bg_pixmap.height()}")
             else:
                 print("No background image available to draw")
             
-            # Draw the logo if visible
+            # LAYER 2: Draw the bezel if it's visible - with extra checks
+            bezel_drawn = False
+            if hasattr(self, 'bezel_visible') and self.bezel_visible:
+                print("Bezel is marked as visible, attempting to draw it")
+                
+                # First try the bezel label's pixmap
+                if hasattr(self, 'bezel_label') and self.bezel_label and self.bezel_label.isVisible():
+                    bezel_pixmap = self.bezel_label.pixmap()
+                    if bezel_pixmap and not bezel_pixmap.isNull():
+                        # Draw centered on canvas
+                        x = (self.canvas.width() - bezel_pixmap.width()) // 2
+                        y = (self.canvas.height() - bezel_pixmap.height()) // 2
+                        painter.drawPixmap(x, y, bezel_pixmap)
+                        print(f"Bezel drawn from label at {x},{y}, size {bezel_pixmap.width()}x{bezel_pixmap.height()}")
+                        bezel_drawn = True
+                
+                # If that didn't work, try the stored bezel pixmap
+                if not bezel_drawn and hasattr(self, 'bezel_pixmap') and not self.bezel_pixmap.isNull():
+                    bezel_pixmap = self.bezel_pixmap
+                    x = (self.canvas.width() - bezel_pixmap.width()) // 2
+                    y = (self.canvas.height() - bezel_pixmap.height()) // 2
+                    painter.drawPixmap(x, y, bezel_pixmap)
+                    print(f"Bezel drawn from stored pixmap at {x},{y}, size {bezel_pixmap.width()}x{bezel_pixmap.height()}")
+                    bezel_drawn = True
+                    
+                # If both methods failed, try to reload the bezel
+                if not bezel_drawn:
+                    bezel_path = self.find_bezel_path(self.rom_name)
+                    if bezel_path and os.path.exists(bezel_path):
+                        direct_bezel = QPixmap(bezel_path)
+                        if not direct_bezel.isNull():
+                            direct_bezel = direct_bezel.scaled(
+                                self.canvas.width(),
+                                self.canvas.height(),
+                                Qt.KeepAspectRatio,
+                                Qt.SmoothTransformation
+                            )
+                            x = (self.canvas.width() - direct_bezel.width()) // 2
+                            y = (self.canvas.height() - direct_bezel.height()) // 2
+                            painter.drawPixmap(x, y, direct_bezel)
+                            print(f"Bezel drawn directly from file at {x},{y}, size {direct_bezel.width()}x{direct_bezel.height()}")
+                            bezel_drawn = True
+            
+            if not bezel_drawn and getattr(self, 'bezel_visible', False):
+                print("Warning: Bezel is marked as visible but could not be drawn")
+            
+            # LAYER 3: Draw the logo if visible
             if hasattr(self, 'logo_label') and self.logo_label and self.logo_label.isVisible():
                 logo_pixmap = self.logo_label.pixmap()
                 if logo_pixmap and not logo_pixmap.isNull():
                     painter.drawPixmap(self.logo_label.pos(), logo_pixmap)
                     print(f"Logo drawn at {self.logo_label.pos()}, size {logo_pixmap.width()}x{logo_pixmap.height()}")
             
-            # Draw control labels
+            # LAYER 4: Draw control labels
             if hasattr(self, 'control_labels'):
                 for control_name, control_data in self.control_labels.items():
                     label = control_data['label']
@@ -2062,6 +2605,60 @@ class PreviewWindow(QMainWindow):
                 "Error",
                 f"Failed to save image: {str(e)}"
             )
+            return False
+
+    # Add this method to properly force bezel rendering (useful when troubleshooting)
+    def force_bezel_render(self):
+        """Force bezel to render - useful for debugging"""
+        if not hasattr(self, 'bezel_visible') or not self.bezel_visible:
+            print("Bezel is not marked as visible, cannot force render")
+            return False
+        
+        bezel_path = self.find_bezel_path(self.rom_name)
+        if not bezel_path:
+            print("No bezel path found for this ROM")
+            return False
+        
+        try:
+            # Load the bezel image directly
+            bezel_pixmap = QPixmap(bezel_path)
+            if bezel_pixmap.isNull():
+                print(f"Failed to load bezel from {bezel_path}")
+                return False
+                
+            # Scale with high quality
+            window_width = self.canvas.width()
+            window_height = self.canvas.height()
+            
+            # Scale with high quality
+            scaled_bezel = bezel_pixmap.scaled(
+                window_width,
+                window_height,
+                Qt.KeepAspectRatio,
+                Qt.SmoothTransformation
+            )
+            
+            # Store for later use in saving
+            self.bezel_pixmap = scaled_bezel
+            
+            # Update the bezel label if it exists
+            if hasattr(self, 'bezel_label') and self.bezel_label:
+                self.bezel_label.setPixmap(scaled_bezel)
+                
+                # Position centered
+                x = (window_width - scaled_bezel.width()) // 2
+                y = (window_height - scaled_bezel.height()) // 2
+                self.bezel_label.move(x, y)
+                
+                # Make sure it's visible
+                self.bezel_label.show()
+                print(f"Forced bezel rendering: {scaled_bezel.width()}x{scaled_bezel.height()} at ({x},{y})")
+                return True
+            else:
+                print("No bezel label exists to update")
+                return False
+        except Exception as e:
+            print(f"Error in force_bezel_render: {e}")
             return False
         
     def handle_key_press(self, event):
@@ -2238,8 +2835,9 @@ class PreviewWindow(QMainWindow):
         print("All controls raised above bezel")
     
     # Revised background loading method
+    # Replace the load_background_image_fullscreen method in mame_controls_preview.py
     def load_background_image_fullscreen(self):
-        """Load the background image for the game"""
+        """Load the background image for the game with improved quality"""
         try:
             # Check for game-specific image
             preview_dir = os.path.join(self.mame_dir, "preview")
@@ -2269,34 +2867,57 @@ class PreviewWindow(QMainWindow):
             if image_path:
                 # Create background label with image
                 self.bg_label = QLabel(self.canvas)
-                pixmap = QPixmap(image_path)
                 
-                if pixmap.isNull():
+                # Load the original pixmap without scaling yet
+                original_pixmap = QPixmap(image_path)
+                
+                if original_pixmap.isNull():
                     print(f"Error: Could not load image from {image_path}")
                     self.bg_label.setText("Error loading background image")
                     self.bg_label.setStyleSheet("color: red; font-size: 18px;")
                     self.bg_label.setAlignment(Qt.AlignCenter)
                     return
                 
-                # Store pixmap for saving later
-                self.background_pixmap = pixmap
+                # Store the original pixmap for high-quality saving later
+                self.original_background_pixmap = original_pixmap
                 
-                # Resize pixmap to fill the canvas while ignoring aspect ratio
-                self.bg_label.setPixmap(pixmap.scaled(
-                    self.canvas.width(), 
-                    self.canvas.height(), 
-                    Qt.IgnoreAspectRatio,  # Stretch to fill canvas without preserving aspect ratio
-                    Qt.SmoothTransformation
-                ))
+                # Create a high-quality scaled version to display
+                # Calculate aspect ratio preserving fit
+                canvas_w = self.canvas.width()
+                canvas_h = self.canvas.height()
+                img_w = original_pixmap.width()
+                img_h = original_pixmap.height()
                 
-                # Ensure the label covers the whole canvas
-                self.bg_label.setGeometry(0, 0, self.canvas.width(), self.canvas.height())
+                # Calculate the scaled size that fills the canvas while preserving aspect ratio
+                scaled_pixmap = original_pixmap.scaled(
+                    canvas_w, 
+                    canvas_h, 
+                    Qt.KeepAspectRatio,  # Preserve aspect ratio
+                    Qt.SmoothTransformation  # High quality scaling
+                )
                 
-                # Center the background image (this is more for non-stretching images)
-                self.center_background()
+                # Store the properly scaled pixmap
+                self.background_pixmap = scaled_pixmap
+                
+                # Set it on the label
+                self.bg_label.setPixmap(scaled_pixmap)
+                
+                # Position the background image in the center
+                x = (canvas_w - scaled_pixmap.width()) // 2
+                y = (canvas_h - scaled_pixmap.height()) // 2
+                self.bg_label.setGeometry(x, y, scaled_pixmap.width(), scaled_pixmap.height())
+                
+                # Store the background position for control positioning
+                self.bg_pos = (x, y)
+                self.bg_size = (scaled_pixmap.width(), scaled_pixmap.height())
+                
+                # Make sure the background is below everything
+                self.bg_label.lower()
+                
+                print(f"Background loaded: {scaled_pixmap.width()}x{scaled_pixmap.height()}, positioned at ({x},{y})")
                 
                 # Update when window resizes
-                self.canvas.resizeEvent = self.on_canvas_resize
+                self.canvas.resizeEvent = self.on_canvas_resize_with_background
             else:
                 # Handle no image found
                 print("No preview image found")
@@ -2304,9 +2925,9 @@ class PreviewWindow(QMainWindow):
                 self.bg_label.setAlignment(Qt.AlignCenter)
                 self.bg_label.setStyleSheet("color: white; font-size: 24px;")
                 self.bg_label.setGeometry(0, 0, self.canvas.width(), self.canvas.height())
-                print(f"Background label geometry: {self.bg_label.geometry()}")
         except Exception as e:
             print(f"Error loading background image: {e}")
+            import traceback
             traceback.print_exc()
             # Handle error by showing message on canvas
             if hasattr(self, 'bg_label') and self.bg_label:
@@ -2319,30 +2940,134 @@ class PreviewWindow(QMainWindow):
                 self.bg_label.setAlignment(Qt.AlignCenter)
                 self.bg_label.setGeometry(0, 0, self.canvas.width(), self.canvas.height())
 
-
-    # Add this method to force background recalculation when window size changes
+    # Replace the on_canvas_resize_with_background method
     def on_canvas_resize_with_background(self, event):
-        """Handle canvas resize to update background image to fill screen"""
+        """Handle canvas resize while maintaining proper layer stacking"""
         try:
-            # Resize the background to fill the entire canvas
-            if hasattr(self, 'bg_label') and self.bg_label:
-                self.bg_label.setGeometry(0, 0, self.canvas.width(), self.canvas.height())
-                print(f"Resized background to fill canvas: {self.canvas.width()}x{self.canvas.height()}")
+            print("\n--- Canvas resize with bezel handling ---")
             
-            # Continue with other resize handling
-            if hasattr(self, 'on_canvas_resize_original'):
-                self.on_canvas_resize_original(event)
+            # Recalculate the background image position and scaling
+            if hasattr(self, 'original_background_pixmap') and not self.original_background_pixmap.isNull():
+                # Get the original unscaled pixmap
+                original_pixmap = self.original_background_pixmap
+                
+                # Create a high-quality scaled version to fill the canvas
+                canvas_w = self.canvas.width()
+                canvas_h = self.canvas.height()
+                
+                # Scale with high quality while preserving aspect ratio
+                scaled_pixmap = original_pixmap.scaled(
+                    canvas_w, 
+                    canvas_h, 
+                    Qt.KeepAspectRatio,  # Preserve aspect ratio
+                    Qt.SmoothTransformation  # High quality scaling
+                )
+                
+                # Update the stored pixmap
+                self.background_pixmap = scaled_pixmap
+                
+                # Update the bg_label with the newly scaled pixmap
+                if hasattr(self, 'bg_label') and self.bg_label:
+                    self.bg_label.setPixmap(scaled_pixmap)
+                    
+                    # Center the background
+                    x = (canvas_w - scaled_pixmap.width()) // 2
+                    y = (canvas_h - scaled_pixmap.height()) // 2
+                    self.bg_label.setGeometry(x, y, scaled_pixmap.width(), scaled_pixmap.height())
+                    
+                    # Store the background position for control positioning
+                    self.bg_pos = (x, y)
+                    self.bg_size = (scaled_pixmap.width(), scaled_pixmap.height())
+                    
+                    # Make sure the background is below everything
+                    self.bg_label.lower()
+                    
+                    print(f"Background resized: {scaled_pixmap.width()}x{scaled_pixmap.height()}, positioned at ({x},{y})")
             
             # Also update bezel if it's visible
             if hasattr(self, 'bezel_visible') and self.bezel_visible and hasattr(self, 'bezel_label') and self.bezel_label:
-                self.bezel_label.setGeometry(0, 0, self.canvas.width(), self.canvas.height())
-                print(f"Resized bezel to fill canvas: {self.canvas.width()}x{self.canvas.height()}")
+                # Resize the bezel to match the new canvas size
+                if hasattr(self, 'original_bezel_pixmap') and not self.original_bezel_pixmap.isNull():
+                    canvas_w = self.canvas.width()
+                    canvas_h = self.canvas.height()
+                    
+                    bezel_pixmap = self.original_bezel_pixmap.scaled(
+                        canvas_w,
+                        canvas_h,
+                        Qt.KeepAspectRatio,
+                        Qt.SmoothTransformation
+                    )
+                    
+                    self.bezel_pixmap = bezel_pixmap
+                    self.bezel_label.setPixmap(bezel_pixmap)
+                    
+                    # Position bezel in center
+                    x = (canvas_w - bezel_pixmap.width()) // 2
+                    y = (canvas_h - bezel_pixmap.height()) // 2
+                    self.bezel_label.setGeometry(x, y, bezel_pixmap.width(), bezel_pixmap.height())
+                    
+                    print(f"Bezel resized: {bezel_pixmap.width()}x{bezel_pixmap.height()}, positioned at ({x},{y})")
+                    
+                    # Fix layering again after resize
+                    self.raise_controls_above_bezel()
+            
+            # Call the original resize handler if it exists
+            if hasattr(self, 'on_canvas_resize_original'):
+                self.on_canvas_resize_original(event)
                 
         except Exception as e:
             print(f"Error in canvas resize: {e}")
             import traceback
             traceback.print_exc()
 
+    def check_layer_visibility(self):
+        """Print diagnostic information about layer visibility"""
+        print("\n----- LAYER VISIBILITY CHECK -----")
+        
+        # Check background
+        if hasattr(self, 'bg_label') and self.bg_label:
+            print(f"Background: {'VISIBLE' if self.bg_label.isVisible() else 'HIDDEN'}")
+            if self.bg_label.pixmap():
+                print(f"  Size: {self.bg_label.pixmap().width()}x{self.bg_label.pixmap().height()}")
+            else:
+                print("  No pixmap loaded")
+        else:
+            print("Background: NOT CREATED")
+        
+        # Check bezel
+        if hasattr(self, 'bezel_label') and self.bezel_label:
+            print(f"Bezel: {'VISIBLE' if self.bezel_label.isVisible() else 'HIDDEN'}")
+            if self.bezel_label.pixmap():
+                print(f"  Size: {self.bezel_label.pixmap().width()}x{self.bezel_label.pixmap().height()}")
+            else:
+                print("  No pixmap loaded")
+        else:
+            print("Bezel: NOT CREATED")
+        
+        # Check logo
+        if hasattr(self, 'logo_label') and self.logo_label:
+            print(f"Logo: {'VISIBLE' if self.logo_label.isVisible() else 'HIDDEN'}")
+            if self.logo_label.pixmap():
+                print(f"  Size: {self.logo_label.pixmap().width()}x{self.logo_label.pixmap().height()}")
+            else:
+                print("  No pixmap loaded")
+        else:
+            print("Logo: NOT CREATED")
+        
+        # Check controls (sample)
+        if hasattr(self, 'control_labels') and self.control_labels:
+            visible_controls = sum(1 for c in self.control_labels.values() 
+                                if 'label' in c and c['label'] and c['label'].isVisible())
+            print(f"Controls: {visible_controls} visible out of {len(self.control_labels)} total")
+        else:
+            print("Controls: NOT CREATED")
+        
+        print("--------------------------------")
+
+    # Add this to toggle_bezel_improved
+    # Add this call at the end of toggle_bezel_improved
+        self.check_layer_visibility()
+    
     # Force background to update on demand
     def force_background_fullscreen(self):
         """Force background to update to fullscreen"""
@@ -2471,15 +3196,23 @@ class PreviewWindow(QMainWindow):
 
     
     # Enhance the create_control_labels method to load saved positions
+    # Improved create_control_labels method that respects joystick visibility
     def create_control_labels(self):
-        """Create draggable labels for each control with saved positions"""
+        """Create draggable labels for each control with joystick visibility support"""
         if not self.game_data or 'players' not in self.game_data:
             return
         
         # First load saved positions (ROM-specific or global)
         saved_positions = self.load_saved_positions()
         print(f"Loaded positions: {len(saved_positions)} control positions found")
-            
+        
+        # Make sure joystick_visible is initialized
+        if not hasattr(self, 'joystick_visible'):
+            # Try to load from settings
+            bezel_settings = self.load_bezel_settings()
+            self.joystick_visible = bezel_settings.get("joystick_visible", True)
+            print(f"Loaded joystick_visible from settings: {self.joystick_visible}")
+        
         # Get Player 1 controls
         for player in self.game_data.get('players', []):
             if player['number'] != 1:  # Only show Player 1 controls for now
@@ -2555,6 +3288,19 @@ class PreviewWindow(QMainWindow):
                 # Connect position update for shadow
                 original_mouseMoveEvent = label.mouseMoveEvent
                 label.mouseMoveEvent = lambda event, label=label, shadow=shadow_label, orig_func=original_mouseMoveEvent: self.on_label_move(event, label, shadow, orig_func)
+                
+                # CRITICAL FIX: Check if this is a joystick control and apply visibility
+                if "JOYSTICK" in control_name:
+                    # Initially hide joystick controls if joystick_visible is False
+                    if not self.joystick_visible:
+                        label.setVisible(False)
+                        shadow_label.setVisible(False)
+                        print(f"Initially hiding joystick control: {control_name}")
+        
+        # Update joystick button text if it exists
+        if hasattr(self, 'joystick_button'):
+            self.joystick_button.setText("Show Joystick" if not self.joystick_visible else "Hide Joystick")
+            print(f"Updated joystick button text for visibility: {self.joystick_visible}")
 
     # Add or update a method to load saved positions
     def load_saved_positions(self):
@@ -2629,9 +3375,13 @@ class PreviewWindow(QMainWindow):
             control_data['label'].setVisible(self.texts_visible)
             self.shadow_labels[control_name].setVisible(self.texts_visible)
     
+    # Update toggle_joystick_controls to save settings
     def toggle_joystick_controls(self):
-        """Toggle visibility of joystick controls"""
+        """Toggle visibility of joystick controls and save setting"""
         self.joystick_visible = not self.joystick_visible
+        
+        # Update button text
+        self.joystick_button.setText("Show Joystick" if not self.joystick_visible else "Hide Joystick")
         
         # Toggle visibility for joystick controls
         for control_name, control_data in self.control_labels.items():
@@ -2639,6 +3389,10 @@ class PreviewWindow(QMainWindow):
                 is_visible = self.texts_visible and self.joystick_visible
                 control_data['label'].setVisible(is_visible)
                 self.shadow_labels[control_name].setVisible(is_visible)
+        
+        # Save the joystick visibility setting (globally)
+        self.save_bezel_settings(is_global=True)
+        print(f"Joystick visibility set to {self.joystick_visible} and saved to settings")
     
     # Update the reset_positions method to better handle saved positions
     def reset_positions(self):
@@ -3101,16 +3855,16 @@ class LogoSettingsDialog(QDialog):
             self.save_logo_settings()
     
     # Add this simple save_image implementation if you don't have the SaveUtility
+    # Replace the save_image method to properly include bezel
     def save_image(self):
-        """Save current preview as an image"""
+        """Save current preview as an image with bezel support and better quality"""
         try:
             # Create preview directory if it doesn't exist
             preview_dir = os.path.join(self.mame_dir, "preview")
-            if not os.path.exists(preview_dir):
-                os.makedirs(preview_dir)
-                
+            os.makedirs(preview_dir, exist_ok=True)
+            
             # Define the output path
-            output_path = os.path.join(preview_dir, f"{self.rom_name}_controls.png")
+            output_path = os.path.join(preview_dir, f"{self.rom_name}.png")
             
             # Check if file already exists
             if os.path.exists(output_path):
@@ -3121,47 +3875,118 @@ class LogoSettingsDialog(QDialog):
                     f"Image already exists for {self.rom_name}. Overwrite?",
                     QMessageBox.Yes | QMessageBox.No
                 ) != QMessageBox.Yes:
-                    return
+                    return False
             
             # Create a new image with the same size as the canvas
             image = QImage(
                 self.canvas.size(),
                 QImage.Format_ARGB32
             )
+            # Fill with black background
             image.fill(Qt.black)
             
             # Create painter for the image
             painter = QPainter(image)
+            painter.setRenderHint(QPainter.Antialiasing)
+            painter.setRenderHint(QPainter.TextAntialiasing)
+            painter.setRenderHint(QPainter.SmoothPixmapTransform)
             
-            # Render the canvas to the image
-            self.canvas.render(painter)
+            # Draw the background image if available (using the saved high-quality pixmap)
+            if hasattr(self, 'background_pixmap') and not self.background_pixmap.isNull():
+                bg_pixmap = self.background_pixmap
+                
+                # Calculate position to center the pixmap
+                x = (self.canvas.width() - bg_pixmap.width()) // 2
+                y = (self.canvas.height() - bg_pixmap.height()) // 2
+                
+                # Draw the pixmap
+                painter.drawPixmap(x, y, bg_pixmap)
+                print(f"Background drawn at {x},{y}, size {bg_pixmap.width()}x{bg_pixmap.height()}")
+            elif hasattr(self, 'bg_label') and self.bg_label and self.bg_label.pixmap():
+                # Fallback to current bg_label pixmap if needed
+                bg_pixmap = self.bg_label.pixmap()
+                painter.drawPixmap(self.bg_label.pos(), bg_pixmap)
+                print(f"Background drawn via bg_label at {self.bg_label.pos()}, size {bg_pixmap.width()}x{bg_pixmap.height()}")
+            
+            # Draw the bezel if it's visible
+            if hasattr(self, 'bezel_visible') and self.bezel_visible and hasattr(self, 'bezel_label') and self.bezel_label:
+                bezel_pixmap = self.bezel_label.pixmap()
+                if bezel_pixmap and not bezel_pixmap.isNull():
+                    # The bezel should typically cover the full canvas area
+                    painter.drawPixmap(0, 0, bezel_pixmap)
+                    print(f"Bezel drawn at 0,0, size {bezel_pixmap.width()}x{bezel_pixmap.height()}")
+            
+            # Draw the logo if visible
+            if hasattr(self, 'logo_label') and self.logo_label and self.logo_label.isVisible():
+                logo_pixmap = self.logo_label.pixmap()
+                if logo_pixmap and not logo_pixmap.isNull():
+                    painter.drawPixmap(self.logo_label.pos(), logo_pixmap)
+                    print(f"Logo drawn at {self.logo_label.pos()}, size {logo_pixmap.width()}x{logo_pixmap.height()}")
+            
+            # Draw control labels
+            if hasattr(self, 'control_labels'):
+                for control_name, control_data in self.control_labels.items():
+                    label = control_data['label']
+                    
+                    # Skip if label is not visible
+                    if not label.isVisible():
+                        continue
+                    
+                    # Draw shadow first if visible
+                    shadow = self.shadow_labels.get(control_name)
+                    if shadow and shadow.isVisible():
+                        shadow_font = shadow.font()
+                        painter.setFont(shadow_font)
+                        painter.setPen(Qt.black)
+                        painter.drawText(
+                            shadow.pos().x(), 
+                            shadow.pos().y() + QFontMetrics(shadow_font).height(), 
+                            shadow.text()
+                        )
+                    
+                    # Then draw the label text
+                    font = label.font()
+                    painter.setFont(font)
+                    painter.setPen(Qt.white)
+                    painter.drawText(
+                        label.pos().x(), 
+                        label.pos().y() + QFontMetrics(font).height(), 
+                        label.text()
+                    )
+                    
+                print(f"Drew {len(self.control_labels)} control labels")
             
             # End painting
             painter.end()
             
             # Save the image
             if image.save(output_path, "PNG"):
+                print(f"Image saved successfully to {output_path}")
                 QMessageBox.information(
                     self,
                     "Success",
                     f"Image saved to:\n{output_path}"
                 )
-                print(f"Image saved successfully to {output_path}")
+                return True
             else:
+                print(f"Failed to save image to {output_path}")
                 QMessageBox.warning(
                     self,
                     "Error",
-                    f"Failed to save image to {output_path}"
+                    f"Failed to save image. Could not write to file."
                 )
+                return False
                 
         except Exception as e:
             print(f"Error saving image: {e}")
+            import traceback
             traceback.print_exc()
             QMessageBox.critical(
                 self,
                 "Error",
                 f"Failed to save image: {str(e)}"
             )
+            return False
 
 def show_preview(rom_name, game_data, mame_dir):
     """Show the preview window for a specific ROM"""
