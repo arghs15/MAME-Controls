@@ -86,14 +86,15 @@ def main():
     
     print("Creating main window...")
     try:
-        # Create window but don't show it yet
         window = MAMEControlConfig()
-        print("Main window created.")
-        
-        # First maximize, then show - this sequence works better on most systems
-        window.showMaximized()
-        print("Window maximized.")
-        
+
+        # Get the screen geometry dynamically
+        screen_geometry = QApplication.primaryScreen().geometry()
+        window.setGeometry(screen_geometry)
+        window.move(0, 0)
+        window.show()
+        print(f"Window set to {screen_geometry.width()}x{screen_geometry.height()}")
+
     except Exception as e:
         print(f"Error creating window: {e}")
         import traceback

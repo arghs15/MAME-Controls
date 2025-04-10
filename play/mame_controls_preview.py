@@ -1,8 +1,9 @@
 import os
+import random
 import sys
 import json
 import traceback
-from PyQt5.QtWidgets import (QAction, QGridLayout, QMainWindow, QMenu, QMessageBox, QSpinBox, QVBoxLayout, QHBoxLayout, QWidget, 
+from PyQt5.QtWidgets import (QAction, QGridLayout, QMainWindow, QMenu, QMessageBox, QSizePolicy, QSpinBox, QVBoxLayout, QHBoxLayout, QWidget, 
                             QLabel, QPushButton, QFrame, QApplication, QDesktopWidget,
                             QDialog, QGroupBox, QCheckBox, QSlider, QComboBox)
 from PyQt5.QtGui import QImage, QPixmap, QFont, QColor, QPainter, QPen, QFontMetrics
@@ -11,6 +12,7 @@ from PyQt5.QtCore import Qt, QPoint, QTimer, QRect, QEvent, QSize
 class DraggableLabel(QLabel):
     """An enhanced draggable label with shadow, resizing and better visibility"""
     def __init__(self, text, parent=None, shadow_offset=2, settings=None):
+        """Initialize the draggable label with enhanced resize behavior"""
         super().__init__(text, parent)
         self.shadow_offset = shadow_offset
         self.settings = settings or {}
@@ -22,6 +24,7 @@ class DraggableLabel(QLabel):
         self.setMouseTracking(True)
         self.dragging = False
         self.resizing = False
+        self.was_resizing = False
         self.offset = QPoint()
         
         # Original position for reset
@@ -31,10 +34,14 @@ class DraggableLabel(QLabel):
         self.original_font_size = self.settings.get("font_size", 28)
         
         # Size for resize handle
-        self.resize_handle_size = 10
+        self.resize_handle_size = 15  # Larger handle area
         
         # Create context menu
         self.setup_context_menu()
+        
+        # Enable auto-resizing based on content
+        self.setWordWrap(True)
+        self.adjustSize()
         
     def setup_context_menu(self):
         """Setup right-click context menu"""
@@ -101,19 +108,24 @@ class DraggableLabel(QLabel):
             text = text.upper()
         self.setText(text)
         
+    # Add this to mousePressEvent to store initial position for better resize calculations
     def mousePressEvent(self, event):
+        """Handle mouse press events with better resize handling"""
         if event.button() == Qt.LeftButton:
             # Check if we're in the resize corner
             if self.is_in_resize_corner(event.pos()):
                 self.resizing = True
+                self.last_resize_pos = event.pos()  # Store initial position
                 self.setCursor(Qt.SizeFDiagCursor)
             else:
                 self.dragging = True
                 self.offset = event.pos()
                 self.setCursor(Qt.ClosedHandCursor)
         
+    # Completely rewrite the mouseMoveEvent method to directly adjust text size
     def mouseMoveEvent(self, event):
-        # Update cursor when hovering over the resize corner
+        """Handle mouse move events for dragging and resizing with direct size adjustments"""
+        # Update cursor when hovering over resize corner
         if not self.dragging and not self.resizing:
             if self.is_in_resize_corner(event.pos()):
                 self.setCursor(Qt.SizeFDiagCursor)
@@ -122,44 +134,104 @@ class DraggableLabel(QLabel):
         
         # Handle dragging
         if self.dragging:
-            self.move(self.mapToParent(event.pos() - self.offset))
+            new_pos = self.mapToParent(event.pos() - self.offset)
+            self.move(new_pos)
             
             # Notify the parent to update shadow label if it exists
             if hasattr(self.parent(), "update_shadow_position"):
                 self.parent().update_shadow_position(self)
         
-        # Handle resizing
+        # Handle resizing with direct font size control
         elif self.resizing:
-            # Calculate the relative change based on the movement
-            width_delta = event.x() - self.width()
-            height_delta = event.y() - self.height()
+            self.was_resizing = True
             
-            # Use the larger change to determine how much to scale the font
-            delta = max(width_delta, height_delta)
+            # Calculate the relative change based on mouse movement
+            delta_x = event.x() - self.last_resize_pos.x() if hasattr(self, 'last_resize_pos') else 0
+            delta_y = event.y() - self.last_resize_pos.y() if hasattr(self, 'last_resize_pos') else 0
             
-            # Scale font size based on movement
+            # Use the larger of horizontal or vertical movement
+            delta = max(abs(delta_x), abs(delta_y))
+            if (delta_x < 0 or delta_y < 0) and delta > 0:
+                delta = -delta  # Make delta negative if shrinking
+                
+            # Store current position for next move
+            self.last_resize_pos = event.pos()
+            
+            # Get current font and size
             current_font = self.font()
             current_size = current_font.pointSize()
             
-            # Adjust font size, with a minimum size
-            new_size = max(8, current_size + delta // 10)
+            # Adjust size with appropriate sensitivity
+            sensitivity = 0.5  # Higher = less sensitive
+            new_size = current_size + (delta / sensitivity)
             
-            # Apply new font size
-            current_font.setPointSize(new_size)
-            self.setFont(current_font)
+            # Enforce min/max limits
+            new_size = max(8, min(120, new_size))
             
-            # Update settings
-            if self.settings:
-                self.settings["font_size"] = new_size
+            # Only update if there's a meaningful change
+            if abs(new_size - current_size) >= 0.5:
+                # Apply new font size
+                rounded_size = int(round(new_size))
+                current_font.setPointSize(rounded_size)
+                self.setFont(current_font)
+                
+                # Also resize the label to fit the text
+                self.adjustSize()
+                
+                # Update settings
+                if hasattr(self, 'settings'):
+                    self.settings["font_size"] = rounded_size
+                    print(f"Font size updated to: {rounded_size}")
+                
+                # Notify the parent to update shadow label if it exists
+                if hasattr(self.parent(), "update_shadow_font"):
+                    self.parent().update_shadow_font(self)
             
-            # Notify the parent to update shadow label if it exists
-            if hasattr(self.parent(), "update_shadow_font"):
-                self.parent().update_shadow_font(self)
-            
+    # Fix the mouseReleaseEvent method in DraggableLabel to properly handle parent navigation
     def mouseReleaseEvent(self, event):
+        """Handle mouse release without crashing on parent navigation"""
         if event.button() == Qt.LeftButton:
             self.dragging = False
             self.resizing = False
+            
+            # Update local settings if it was resizing, but don't save to file
+            if hasattr(self, 'was_resizing') and self.was_resizing:
+                self.was_resizing = False
+                current_size = self.font().pointSize()
+                
+                # Update settings object only
+                if hasattr(self, 'settings'):
+                    self.settings["font_size"] = current_size
+                    
+                    # Find the PreviewWindow to update its settings (but not save to file)
+                    parent_widget = self.parent()
+                    
+                    # Check if parent has update_text_settings_no_save method
+                    if parent_widget and hasattr(parent_widget, 'update_text_settings_no_save'):
+                        parent_widget.update_text_settings_no_save(self.settings)
+                        print(f"Font size {current_size} updated in memory (not saved to file)")
+                    else:
+                        # Try to find the PreviewWindow instance
+                        # This is the safe way to navigate up the parent chain
+                        preview_window = None
+                        current = self.parent()
+                        
+                        # Safely navigate up the parent hierarchy
+                        while current is not None:
+                            if hasattr(current, 'update_text_settings_no_save'):
+                                preview_window = current
+                                break
+                            try:
+                                # Access the parent attribute, don't call it as a method
+                                current = current.parent()
+                            except Exception as e:
+                                print(f"Error accessing parent: {e}")
+                                break
+                        
+                        # Update settings in memory only if we found the PreviewWindow
+                        if preview_window:
+                            preview_window.update_text_settings_no_save(self.settings)
+                            print(f"Font size {current_size} updated in memory via parent chain")
             
             # Update cursor based on position
             if self.is_in_resize_corner(event.pos()):
@@ -167,6 +239,17 @@ class DraggableLabel(QLabel):
             else:
                 self.setCursor(Qt.OpenHandCursor)
             
+    # Add a method to PreviewWindow to update text settings without saving
+    def update_text_settings_no_save(self, settings):
+        """Update text settings in memory only without saving to file"""
+        # Update local settings with merge
+        self.text_settings.update(settings)
+        
+        # Apply to existing controls
+        self.apply_text_settings()
+        
+        print(f"Text settings updated in memory (not saved): {self.text_settings}")
+    
     def contextMenuEvent(self, event):
         """Show context menu on right-click"""
         self.menu.exec_(event.globalPos())
@@ -526,8 +609,10 @@ Modifications to the PreviewWindow class in mame_controls_preview.py
 class PreviewWindow(QMainWindow):
     """Window for displaying game controls preview"""
     def __init__(self, rom_name, game_data, mame_dir, parent=None):
+        """Enhanced initialization with better logo handling"""
+        # Keep the original __init__ code
         super().__init__(parent)
-        
+
         # Store parameters
         self.rom_name = rom_name
         self.game_data = game_data
@@ -535,7 +620,6 @@ class PreviewWindow(QMainWindow):
         self.control_labels = {}
         self.shadow_labels = {}
         self.bg_label = None
-        self.background_pixmap = None  # For saving image
         
         # Force window to be displayed in the correct place
         self.parent = parent
@@ -672,7 +756,7 @@ class PreviewWindow(QMainWindow):
             self.main_layout.addWidget(self.button_frame)
             
             # Load the background image
-            self.load_background_image()
+            self.load_background_image_fullscreen()
             
             # Create control labels
             self.create_control_labels()
@@ -680,6 +764,9 @@ class PreviewWindow(QMainWindow):
             # Add logo if enabled
             if self.logo_visible:
                 self.add_logo()
+                
+                # NEW: Add a small delay then force logo resize to ensure it applies correctly
+                QTimer.singleShot(100, self.force_logo_resize)
             
             # Track whether texts are visible
             self.texts_visible = True
@@ -695,35 +782,429 @@ class PreviewWindow(QMainWindow):
             
             # Move to primary screen first
             self.move_to_screen(1)  # Start with primary screen
-            
+            self.layering_for_bezel()
+            self.integrate_bezel_support()
+            self.canvas.resizeEvent = self.on_canvas_resize_with_background
             print("PreviewWindow initialization complete")
             
         except Exception as e:
             print(f"Error in PreviewWindow initialization: {e}")
+            import traceback
             traceback.print_exc()
             QMessageBox.critical(self, "Error", f"Error initializing preview: {e}")
             self.close()
+            
+    # Add bezel-related attributes and initial setup to __init__
+    def add_bezel_support_to_init(self):
+        """Initialize bezel-related attributes"""
+        # Add bezel attributes
+        self.bezel_visible = False
+        self.bezel_label = None
+        self.has_bezel = False
         
+        # Add a button for toggling bezel visibility
+        button_style = """
+            QPushButton {
+                background-color: #3d3d3d;
+                color: white;
+                border: 1px solid #5a5a5a;
+                border-radius: 4px;
+                padding: 6px 12px;
+                font-weight: bold;
+                min-width: 90px;
+            }
+            QPushButton:hover {
+                background-color: #4a4a4a;
+            }
+            QPushButton:pressed {
+                background-color: #2a2a2a;
+            }
+        """
         
+        # Create bezel toggle button
+        self.bezel_button = QPushButton("Show Bezel")
+        self.bezel_button.clicked.connect(self.toggle_bezel_improved)
+        self.bezel_button.setStyleSheet(button_style)
+        
+        # Add to the bottom row if it exists
+        if hasattr(self, 'bottom_row'):
+            self.bottom_row.addWidget(self.bezel_button)
+        
+        # Check if a bezel exists for this ROM
+        bezel_path = self.find_bezel_path(self.rom_name)
+        self.has_bezel = bezel_path is not None
+        
+        # Update button state
+        self.bezel_button.setEnabled(self.has_bezel)
+        if not self.has_bezel:
+            self.bezel_button.setText("No Bezel")
+            self.bezel_button.setToolTip(f"No bezel found for {self.rom_name}")
+        else:
+            self.bezel_button.setToolTip(f"Toggle bezel visibility: {bezel_path}")
+
+    # Add method to find bezel path
+    def find_bezel_path(self, rom_name):
+        """Find bezel image path for a ROM name"""
+        # Define possible locations for bezels
+        possible_paths = [
+            # Main artwork path with Bezel.png naming convention
+            os.path.join(self.mame_dir, "artwork", rom_name, "Bezel.png"),
+            
+            # Alternative locations and naming conventions
+            os.path.join(self.mame_dir, "artwork", rom_name, "bezel.png"),
+            os.path.join(self.mame_dir, "artwork", rom_name, f"{rom_name}_bezel.png"),
+            os.path.join(self.mame_dir, "bezels", f"{rom_name}.png"),
+            os.path.join(self.mame_dir, "bezels", f"{rom_name}_bezel.png"),
+            
+            # Parent directory with artwork subfolder
+            os.path.join(os.path.dirname(self.mame_dir), "artwork", rom_name, "Bezel.png"),
+        ]
+        
+        # Check each possible path
+        for path in possible_paths:
+            if os.path.exists(path):
+                print(f"Found bezel at: {path}")
+                return path
+        
+        print(f"No bezel found for {rom_name}")
+        return None
+
+    # Better toggle method
+    def toggle_bezel_improved(self):
+        """Toggle bezel visibility with better layering"""
+        if not self.has_bezel:
+            print("No bezel available to toggle")
+            return
+        
+        # Toggle visibility flag
+        self.bezel_visible = not self.bezel_visible
+        
+        # Update button text
+        self.bezel_button.setText("Hide Bezel" if self.bezel_visible else "Show Bezel")
+        
+        # Show or hide bezel
+        if self.bezel_visible:
+            self.show_bezel_with_background()
+        else:
+            if hasattr(self, 'bezel_label') and self.bezel_label:
+                self.bezel_label.hide()
+                print("Bezel hidden")
+        
+        # Always raise controls to top
+        self.raise_controls_above_bezel()
+
+    # Improved bezel display that preserves background
+    def show_bezel_with_background(self):
+        """Display bezel while preserving background"""
+        # Find bezel path
+        bezel_path = self.find_bezel_path(self.rom_name)
+        if not bezel_path:
+            print("Cannot show bezel: no bezel image found")
+            return
+        
+        # Create or recreate bezel label
+        if hasattr(self, 'bezel_label') and self.bezel_label:
+            self.bezel_label.deleteLater()
+        
+        # Create a fresh bezel label on the canvas
+        self.bezel_label = QLabel(self.canvas)
+        
+        # Load bezel image
+        bezel_pixmap = QPixmap(bezel_path)
+        if bezel_pixmap.isNull():
+            print(f"Error loading bezel image from {bezel_path}")
+            return
+        
+        # Set up the bezel label
+        self.bezel_label.setPixmap(bezel_pixmap)
+        self.bezel_label.setScaledContents(True)
+        self.bezel_label.setGeometry(0, 0, self.canvas.width(), self.canvas.height())
+        
+        # CRITICAL: Set the bezel to be ABOVE background but BELOW controls
+        if hasattr(self, 'bg_label') and self.bg_label:
+            # Insert bezel above background in widget stack
+            self.bezel_label.stackUnder(self.bg_label)
+            # Then raise it above background
+            self.bezel_label.raise_()
+            print("Positioned bezel between background and controls")
+        
+        # Make sure the bezel is visible but doesn't block the background
+        self.bezel_label.setStyleSheet("background-color: transparent;")
+        
+        # Show the bezel
+        self.bezel_label.show()
+        
+        # Now raise all controls above bezel
+        self.raise_controls_above_bezel()
+        
+        print(f"Bezel displayed with background visible: {self.bezel_label.width()}x{self.bezel_label.height()}")
+
+    # Improved method to raise controls above bezel
+    def raise_controls_above_bezel(self):
+        """Ensure all controls are above the bezel"""
+        if not hasattr(self, 'bezel_label') or not self.bezel_label:
+            return
+        
+        # Raise all shadow labels first
+        if hasattr(self, 'shadow_labels'):
+            for shadow_label in self.shadow_labels.values():
+                shadow_label.raise_()
+        
+        # Raise all control labels
+        if hasattr(self, 'control_labels'):
+            for control_data in self.control_labels.values():
+                if 'label' in control_data and control_data['label']:
+                    control_data['label'].raise_()
+        
+        # Raise logo if it exists
+        if hasattr(self, 'logo_label') and self.logo_label:
+            self.logo_label.raise_()
+        
+        print("All controls raised above bezel")
+    
+    # Make sure the bezel is properly layered in window setup
+    def layering_for_bezel(self):
+        """Setup proper layering for bezel display"""
+        # If we have a bezel, ensure proper layering at startup
+        if hasattr(self, 'has_bezel') and self.has_bezel:
+            # Make sure background label exists and is on top of bezel
+            if hasattr(self, 'bg_label') and self.bg_label:
+                self.bg_label.raise_()
+            
+            # Make sure logo is on top if it exists
+            if hasattr(self, 'logo_label') and self.logo_label:
+                self.logo_label.raise_()
+            
+            # Make sure all control labels are on top
+            if hasattr(self, 'control_labels'):
+                for control_data in self.control_labels.values():
+                    if 'label' in control_data and control_data['label']:
+                        control_data['label'].raise_()
+                    if 'shadow' in control_data and control_data['shadow']:
+                        control_data['shadow'].raise_()
+            
+            print("Layering setup for bezel display")
+    
+    # Add method to properly integrate bezel support
+    def integrate_bezel_support(self):
+        """Add bezel support to the preview window"""
+        # Add bezel attributes
+        self.bezel_visible = False
+        self.bezel_label = None
+        self.has_bezel = False
+        
+        # Add a button for toggling bezel visibility
+        button_style = """
+            QPushButton {
+                background-color: #3d3d3d;
+                color: white;
+                border: 1px solid #5a5a5a;
+                border-radius: 4px;
+                padding: 6px 12px;
+                font-weight: bold;
+                min-width: 90px;
+            }
+            QPushButton:hover {
+                background-color: #4a4a4a;
+            }
+            QPushButton:pressed {
+                background-color: #2a2a2a;
+            }
+        """
+        
+        # Create bezel toggle button
+        self.bezel_button = QPushButton("Show Bezel")
+        self.bezel_button.clicked.connect(self.toggle_bezel_improved)
+        self.bezel_button.setStyleSheet(button_style)
+        
+        # Add to the button layout
+        if hasattr(self, 'bottom_row'):
+            self.bottom_row.addWidget(self.bezel_button)
+        elif hasattr(self, 'button_layout'):
+            self.button_layout.addWidget(self.bezel_button)
+        
+        # Check if a bezel exists for this ROM
+        bezel_path = self.find_bezel_path(self.rom_name)
+        self.has_bezel = bezel_path is not None
+        
+        # Update button state
+        self.bezel_button.setEnabled(self.has_bezel)
+        if not self.has_bezel:
+            self.bezel_button.setText("No Bezel")
+            self.bezel_button.setToolTip(f"No bezel found for {self.rom_name}")
+        else:
+            self.bezel_button.setToolTip(f"Toggle bezel visibility: {bezel_path}")
+            print(f"Bezel available at: {bezel_path}")
+    
+    # Add method to hide bezel
+    def hide_bezel(self):
+        """Hide the bezel image"""
+        if self.bezel_label:
+            self.bezel_label.hide()
+            print("Bezel hidden")
+
+    # Update resizeEvent to handle bezel resizing
+    def on_resize_with_bezel(self, event):
+        """Handle resize events with bezel support"""
+        # Call the original resize handler first
+        if hasattr(self, 'on_canvas_resize'):
+            self.on_canvas_resize_original = self.on_canvas_resize
+        self.canvas.resizeEvent = self.on_canvas_resize_with_background
+        # Update bezel size if it exists and is visible
+        if hasattr(self, 'bezel_visible') and self.bezel_visible and hasattr(self, 'bezel_label') and self.bezel_label:
+            window_width = self.width()
+            window_height = self.height()
+            
+            # Resize bezel to match window
+            if hasattr(self.bezel_label, 'pixmap') and self.bezel_label.pixmap() and not self.bezel_label.pixmap().isNull():
+                # Get the original pixmap
+                original_pixmap = self.bezel_label.pixmap()
+                
+                # Resize to fill window
+                scaled_pixmap = original_pixmap.scaled(
+                    window_width,
+                    window_height,
+                    Qt.IgnoreAspectRatio,  # Force it to fill the window
+                    Qt.SmoothTransformation
+                )
+                self.bezel_label.setPixmap(scaled_pixmap)
+                self.bezel_label.setGeometry(0, 0, window_width, window_height)
+                
+                print(f"Bezel resized to {window_width}x{window_height}")
+    
+    # Add a force resize button to the UI
+    def add_force_resize_button(self):
+        """Add a button to force logo resize"""
+        if hasattr(self, 'bottom_row'):
+            button_style = """
+                QPushButton {
+                    background-color: #3d3d3d;
+                    color: white;
+                    border: 1px solid #5a5a5a;
+                    border-radius: 4px;
+                    padding: 6px 12px;
+                    font-weight: bold;
+                    min-width: 90px;
+                }
+                QPushButton:hover {
+                    background-color: #4a4a4a;
+                }
+                QPushButton:pressed {
+                    background-color: #2a2a2a;
+                }
+            """
+            
+            self.resize_logo_button = QPushButton("Fix Logo")
+            self.resize_logo_button.clicked.connect(self.force_logo_resize)
+            self.resize_logo_button.setStyleSheet(button_style)
+            self.resize_logo_button.setToolTip("Force logo to resize to stored settings")
+            
+            # Add to your bottom row layout
+            self.bottom_row.addWidget(self.resize_logo_button)
+    
+    # Add helper method to explicitly save global text settings
+    def save_global_text_settings(self):
+        """Save current text settings as global defaults"""
+        try:
+            # Create preview directory if it doesn't exist
+            preview_dir = os.path.join(self.mame_dir, "preview")
+            os.makedirs(preview_dir, exist_ok=True)
+            
+            # Save to global settings file
+            global_settings_file = os.path.join(preview_dir, "global_text_settings.json")
+            
+            with open(global_settings_file, 'w') as f:
+                json.dump(self.text_settings, f)
+            print(f"Saved GLOBAL text settings to {global_settings_file}: {self.text_settings}")
+            
+            # Optional - show a confirmation message
+            QMessageBox.information(self, "Settings Saved", 
+                                "Text settings have been saved as global defaults.")
+        except Exception as e:
+            print(f"Error saving global text settings: {e}")
+            import traceback
+            traceback.print_exc()
+    
+    # Add a global button to save text settings
+    def add_global_text_settings_button(self):
+        """Add a button to save text settings as global defaults"""
+        # Button style (reusing existing style)
+        button_style = """
+            QPushButton {
+                background-color: #3d3d3d;
+                color: white;
+                border: 1px solid #5a5a5a;
+                border-radius: 4px;
+                padding: 6px 12px;
+                font-weight: bold;
+                min-width: 90px;
+            }
+            QPushButton:hover {
+                background-color: #4a4a4a;
+            }
+            QPushButton:pressed {
+                background-color: #2a2a2a;
+            }
+        """
+        
+        # Create button
+        self.global_text_button = QPushButton("Global Text")
+        self.global_text_button.clicked.connect(self.save_global_text_settings)
+        self.global_text_button.setStyleSheet(button_style)
+        
+        # Add to bottom row if it exists
+        if hasattr(self, 'bottom_row'):
+            self.bottom_row.addWidget(self.global_text_button)
+    
+    # Ensure the load_logo_settings method properly loads custom position
     def load_logo_settings(self):
         """Load logo settings from file"""
         settings = {
             "logo_visible": True,
-            "logo_position": "top-left"
+            "custom_position": False,
+            "x_position": 20,
+            "y_position": 20,
+            "width_percentage": 15,
+            "height_percentage": 15,
+            "maintain_aspect": True
         }
         
         try:
-            settings_file = os.path.join(self.mame_dir, "logo_settings.json")
-            if os.path.exists(settings_file):
-                with open(settings_file, 'r') as f:
+            # Check first for ROM-specific settings
+            preview_dir = os.path.join(self.mame_dir, "preview")
+            os.makedirs(preview_dir, exist_ok=True)
+            
+            rom_settings_file = os.path.join(preview_dir, f"{self.rom_name}_logo.json")
+            global_settings_file = os.path.join(preview_dir, "global_logo.json")
+            
+            # First check for ROM-specific settings
+            if os.path.exists(rom_settings_file):
+                with open(rom_settings_file, 'r') as f:
                     loaded_settings = json.load(f)
                     settings.update(loaded_settings)
+                    print(f"Loaded ROM-specific logo settings for {self.rom_name}: {settings}")
+            # Then fall back to global settings
+            elif os.path.exists(global_settings_file):
+                with open(global_settings_file, 'r') as f:
+                    loaded_settings = json.load(f)
+                    settings.update(loaded_settings)
+                    print(f"Loaded global logo settings: {settings}")
+            else:
+                # Backward compatibility with old location
+                old_settings_file = os.path.join(self.mame_dir, "logo_settings.json")
+                if os.path.exists(old_settings_file):
+                    with open(old_settings_file, 'r') as f:
+                        loaded_settings = json.load(f)
+                        settings.update(loaded_settings)
+                        print(f"Loaded legacy logo settings: {settings}")
+                else:
+                    print(f"No logo settings file found")
         except Exception as e:
             print(f"Error loading logo settings: {e}")
         
         return settings
     
-        # Update this method in the PreviewWindow class
+    # Make sure the toggle_logo method properly handles visibility
     def toggle_logo(self):
         """Toggle logo visibility"""
         self.logo_visible = not self.logo_visible
@@ -741,30 +1222,43 @@ class PreviewWindow(QMainWindow):
         # Update settings
         self.logo_settings["logo_visible"] = self.logo_visible
         
-        # Save setting
-        self.save_logo_settings()
+        # Save setting immediately 
+        self.save_positions(is_global=False)  # Save for current ROM by default
     
     def show_logo_position(self):
         """Show dialog to configure logo position"""
         self.show_logo_settings()
     
-    def save_logo_settings(self):
-        """Save logo settings to file"""
+    # Method for properly saving logo settings
+    def save_logo_settings(self, is_global=False):
+        """Save logo settings to file with proper directory handling"""
         try:
-            settings = {
-                "logo_visible": self.logo_visible,
-                "logo_position": self.logo_settings.get("logo_position", "top-left")
-            }
+            # Create preview directory if it doesn't exist
+            preview_dir = os.path.join(self.mame_dir, "preview")
+            os.makedirs(preview_dir, exist_ok=True)
             
-            settings_file = os.path.join(self.mame_dir, "logo_settings.json")
+            # Determine file path
+            if is_global:
+                settings_file = os.path.join(preview_dir, "global_logo.json")
+            else:
+                settings_file = os.path.join(preview_dir, f"{self.rom_name}_logo.json")
+            
+            # Save settings
             with open(settings_file, 'w') as f:
-                json.dump(settings, f)
-            print(f"Saved logo settings: {settings}")
+                json.dump(self.logo_settings, f)
+                
+            print(f"Saved logo settings to {settings_file}: {self.logo_settings}")
+            return True
         except Exception as e:
             print(f"Error saving logo settings: {e}")
+            import traceback
+            traceback.print_exc()
+            return False
     
+    # Add a method to add_logo to store original pixmap
+    # Improved add_logo method to handle sizes better
     def add_logo(self):
-        """Add logo overlay to preview"""
+        """Add logo overlay to preview with better size handling"""
         # Find logo path
         logo_path = self.find_logo_path(self.rom_name)
         if not logo_path:
@@ -773,32 +1267,41 @@ class PreviewWindow(QMainWindow):
             
         # Create logo label
         self.logo_label = QLabel(self.canvas)
-        logo_pixmap = QPixmap(logo_path)
         
-        if logo_pixmap.isNull():
+        # Load and store original pixmap
+        original_pixmap = QPixmap(logo_path)
+        self.original_logo_pixmap = original_pixmap  # Store unmodified original
+        
+        if original_pixmap.isNull():
             print(f"Error loading logo image from {logo_path}")
             return
         
-        # Store original pixmap
-        self.logo_label.setPixmap(logo_pixmap)
+        # Set initial pixmap
+        self.logo_label.setPixmap(original_pixmap)
         
-        # Update the logo display
-        self.update_logo_display()
+        # Set cursor for dragging
+        self.logo_label.setCursor(Qt.OpenHandCursor)
         
         # Enable mouse tracking for logo
         self.logo_label.setMouseTracking(True)
         
-        # Add context menu for logo
-        self.logo_label.setContextMenuEnabled = True
-        self.logo_label.contextMenuEvent = lambda event: self.logo_context_menu(event)
-        
-        # Add drag support
+        # Add drag and resize support
         self.logo_label.mousePressEvent = lambda event: self.logo_mouse_press(event)
         self.logo_label.mouseMoveEvent = lambda event: self.logo_mouse_move(event)
         self.logo_label.mouseReleaseEvent = lambda event: self.logo_mouse_release(event)
         
+        # Add custom paint event for resize handle
+        self.logo_label.paintEvent = lambda event: self.logo_paint_event(event)
+        
+        # Now update the logo display to apply settings
+        # This will resize according to saved settings
+        self.update_logo_display()
+        
         # Show the logo
         self.logo_label.show()
+        
+        print(f"Logo added and sized: {self.logo_label.width()}x{self.logo_label.height()}")
+
     
     def logo_context_menu(self, event):
         """Show context menu for logo"""
@@ -846,43 +1349,267 @@ class PreviewWindow(QMainWindow):
         self.update_logo_display()
         self.save_logo_settings()
     
+    # Improve logo_mouse_press to store the original pixmap for proper resizing
     def logo_mouse_press(self, event):
-        """Handle mouse press on logo for dragging"""
+        """Handle mouse press on logo for dragging and resizing with pixmap preservation"""
         if event.button() == Qt.LeftButton:
-            # Store drag start position
-            self.logo_drag_start_pos = event.pos()
-            self.logo_is_dragging = True
-            
-            # Change cursor to indicate dragging
-            self.logo_label.setCursor(Qt.ClosedHandCursor)
-            
-            # Enable custom position mode
-            self.logo_settings["custom_position"] = True
+            # Check if we're in the resize corner
+            if self.is_in_logo_resize_corner(event.pos()):
+                # Start resizing
+                self.logo_is_resizing = True
+                self.logo_original_size = self.logo_label.size()
+                self.logo_resize_start_pos = event.pos()
+                
+                # Make sure we have the original pixmap stored
+                if not hasattr(self, 'original_logo_pixmap') or not self.original_logo_pixmap:
+                    self.original_logo_pixmap = self.logo_label.pixmap()
+                    
+                self.logo_label.setCursor(Qt.SizeFDiagCursor)
+                print("Logo resize started")
+            else:
+                # Start dragging
+                self.logo_drag_start_pos = event.pos()
+                self.logo_is_dragging = True
+                
+                # Change cursor to indicate dragging
+                self.logo_label.setCursor(Qt.ClosedHandCursor)
+                
+                # Enable custom position mode
+                self.logo_settings["custom_position"] = True
 
+    # Add a method to check if we're in the logo resize corner
+    def is_in_logo_resize_corner(self, pos):
+        """Check if the position is in the logo resize corner"""
+        if not hasattr(self, 'logo_label') or not self.logo_label:
+            return False
+            
+        # Define resize handle size
+        resize_handle_size = 15
+        
+        # Check if position is in bottom-right corner
+        return (pos.x() > self.logo_label.width() - resize_handle_size and 
+                pos.y() > self.logo_label.height() - resize_handle_size)
+    
+    # Modified logo_mouse_move method for more consistent pixmap handling
     def logo_mouse_move(self, event):
-        """Handle mouse move on logo for dragging"""
-        if hasattr(self, 'logo_is_dragging') and self.logo_is_dragging:
+        """Handle mouse move on logo for dragging and resizing with reliable pixmap scaling"""
+        # Handle resizing with direct pixmap manipulation
+        if hasattr(self, 'logo_is_resizing') and self.logo_is_resizing:
+            # Calculate size change
+            delta_width = event.x() - self.logo_resize_start_pos.x()
+            delta_height = event.y() - self.logo_resize_start_pos.y()
+            
+            # Calculate new size with minimum
+            new_width = max(50, self.logo_original_size.width() + delta_width)
+            new_height = max(30, self.logo_original_size.height() + delta_height)
+            
+            # Get the original pixmap
+            if hasattr(self, 'original_logo_pixmap') and not self.original_logo_pixmap.isNull():
+                original_pixmap = self.original_logo_pixmap
+            else:
+                # Fallback to the current pixmap if original not available
+                original_pixmap = self.logo_label.pixmap()
+                self.original_logo_pixmap = QPixmap(original_pixmap)  # Make a copy
+            
+            # Resize the pixmap with proper aspect ratio handling
+            if self.logo_settings.get("maintain_aspect", True):
+                scaled_pixmap = original_pixmap.scaled(
+                    new_width, 
+                    new_height, 
+                    Qt.KeepAspectRatio, 
+                    Qt.SmoothTransformation
+                )
+            else:
+                scaled_pixmap = original_pixmap.scaled(
+                    new_width, 
+                    new_height, 
+                    Qt.IgnoreAspectRatio, 
+                    Qt.SmoothTransformation
+                )
+            
+            # Apply the scaled pixmap
+            self.logo_label.setPixmap(scaled_pixmap)
+            
+            # Actually resize the label to match the pixmap
+            self.logo_label.resize(scaled_pixmap.width(), scaled_pixmap.height())
+            
+            # Update size percentages for settings
+            canvas_width = self.canvas.width()
+            canvas_height = self.canvas.height()
+            
+            width_percentage = (scaled_pixmap.width() / canvas_width) * 100
+            height_percentage = (scaled_pixmap.height() / canvas_height) * 100
+            
+            # Update settings in memory
+            self.logo_settings["width_percentage"] = width_percentage
+            self.logo_settings["height_percentage"] = height_percentage
+            
+            # Debug output (occasionally)
+            if random.random() < 0.05:
+                print(f"Logo resized: {scaled_pixmap.width()}x{scaled_pixmap.height()} " +
+                    f"({width_percentage:.1f}%, {height_percentage:.1f}%)")
+        
+        # Rest of the method for handling dragging and cursor updates...
+        elif hasattr(self, 'logo_is_dragging') and self.logo_is_dragging:
             # Calculate new position
             delta = event.pos() - self.logo_drag_start_pos
             new_pos = self.logo_label.pos() + delta
             
+            # Apply boundaries
+            canvas_width = self.canvas.width()
+            canvas_height = self.canvas.height()
+            logo_width = self.logo_label.width()
+            logo_height = self.logo_label.height()
+            
+            margin = 10
+            new_pos.setX(max(margin, min(canvas_width - logo_width - margin, new_pos.x())))
+            new_pos.setY(max(margin, min(canvas_height - logo_height - margin, new_pos.y())))
+            
             # Move the logo
             self.logo_label.move(new_pos)
             
-            # Update settings with new position
+            # Update position in memory
             self.logo_settings["x_position"] = new_pos.x()
             self.logo_settings["y_position"] = new_pos.y()
-
+        
+        # Update cursor
+        elif hasattr(self, 'logo_label') and self.logo_label:
+            if self.is_in_logo_resize_corner(event.pos()):
+                self.logo_label.setCursor(Qt.SizeFDiagCursor)
+            else:
+                self.logo_label.setCursor(Qt.OpenHandCursor)
+                
+    # Add a method that forces the logo to resize according to settings
+    def force_logo_resize(self):
+        """Force logo to resize according to current settings"""
+        if not hasattr(self, 'logo_label') or not self.logo_label:
+            print("No logo label to resize")
+            return False
+            
+        if not hasattr(self, 'original_logo_pixmap') or self.original_logo_pixmap.isNull():
+            # Try to load the logo image again
+            logo_path = self.find_logo_path(self.rom_name)
+            if not logo_path:
+                print("Cannot force resize - no logo image found")
+                return False
+                
+            self.original_logo_pixmap = QPixmap(logo_path)
+            if self.original_logo_pixmap.isNull():
+                print("Cannot force resize - failed to load logo image")
+                return False
+        
+        # Get canvas and logo dimensions
+        canvas_width = self.canvas.width()
+        canvas_height = self.canvas.height()
+        
+        # Calculate target size
+        width_percent = float(self.logo_settings.get("width_percentage", 15))
+        height_percent = float(self.logo_settings.get("height_percentage", 15))
+        
+        target_width = int((width_percent / 100) * canvas_width)
+        target_height = int((height_percent / 100) * canvas_height)
+        
+        print(f"Force-resizing logo to {target_width}x{target_height} pixels " +
+            f"({width_percent:.1f}%, {height_percent:.1f}%)")
+        
+        # Scale the pixmap to the target size
+        if self.logo_settings.get("maintain_aspect", True):
+            scaled_pixmap = self.original_logo_pixmap.scaled(
+                target_width, 
+                target_height, 
+                Qt.KeepAspectRatio, 
+                Qt.SmoothTransformation
+            )
+        else:
+            scaled_pixmap = self.original_logo_pixmap.scaled(
+                target_width, 
+                target_height, 
+                Qt.IgnoreAspectRatio, 
+                Qt.SmoothTransformation
+            )
+        
+        # Apply the scaled pixmap
+        self.logo_label.setPixmap(scaled_pixmap)
+        
+        # Ensure label size matches pixmap size
+        self.logo_label.resize(scaled_pixmap.width(), scaled_pixmap.height())
+        
+        # Position the logo
+        if self.logo_settings.get("custom_position", False):
+            self.logo_label.move(
+                self.logo_settings.get("x_position", 20),
+                self.logo_settings.get("y_position", 20)
+            )
+        
+        print(f"Logo resized to {scaled_pixmap.width()}x{scaled_pixmap.height()} pixels")
+        return True
+    
+    # Fix logo_mouse_release to NOT auto-save
     def logo_mouse_release(self, event):
-        """Handle mouse release on logo to end dragging"""
-        if event.button() == Qt.LeftButton and hasattr(self, 'logo_is_dragging'):
-            self.logo_is_dragging = False
+        """Handle mouse release on logo to end dragging or resizing without auto-saving"""
+        if event.button() == Qt.LeftButton:
+            was_resizing = hasattr(self, 'logo_is_resizing') and self.logo_is_resizing
+            was_dragging = hasattr(self, 'logo_is_dragging') and self.logo_is_dragging
+            
+            # End resizing/dragging states
+            if hasattr(self, 'logo_is_resizing'):
+                self.logo_is_resizing = False
+            if hasattr(self, 'logo_is_dragging'):
+                self.logo_is_dragging = False
             
             # Reset cursor
-            self.logo_label.setCursor(Qt.OpenHandCursor)
+            if self.is_in_logo_resize_corner(event.pos()):
+                self.logo_label.setCursor(Qt.SizeFDiagCursor)
+            else:
+                self.logo_label.setCursor(Qt.OpenHandCursor)
             
-            # Save the new position
-            self.save_logo_settings()
+            # Update settings in memory only (don't save to file)
+            if was_resizing or was_dragging:
+                # Update position and size in settings
+                if was_resizing:
+                    pixmap = self.logo_label.pixmap()
+                    canvas_width = self.canvas.width()
+                    canvas_height = self.canvas.height()
+                    
+                    # Update size percentages
+                    self.logo_settings["width_percentage"] = (pixmap.width() / canvas_width) * 100
+                    self.logo_settings["height_percentage"] = (pixmap.height() / canvas_height) * 100
+                
+                if was_dragging:
+                    pos = self.logo_label.pos()
+                    self.logo_settings["x_position"] = pos.x()
+                    self.logo_settings["y_position"] = pos.y()
+                    self.logo_settings["custom_position"] = True
+                
+                # Only update in memory (don't save to file)
+                action = "resized" if was_resizing else "moved"
+                print(f"Logo {action} - settings updated in memory only")
+    
+    # Add logo resize handle display in paintEvent
+    def logo_paint_event(self, event):
+        """Paint event handler for logo label to draw resize handle"""
+        # Call the original paint event first (we'll need to hook this up properly)
+        QLabel.paintEvent(self.logo_label, event)
+        
+        # Draw a resize handle in the corner
+        if hasattr(self, 'logo_label') and self.logo_label:
+            painter = QPainter(self.logo_label)
+            painter.setPen(QPen(QColor(255, 255, 255), 2))
+            
+            # Draw in bottom-right corner
+            handle_size = 12
+            width = self.logo_label.width()
+            height = self.logo_label.height()
+            
+            # Draw diagonal lines for resize handle
+            for i in range(1, 3):
+                offset = i * 4
+                painter.drawLine(
+                    width - offset, height, 
+                    width, height - offset
+                )
+            
+            painter.end()
     
     def find_logo_path(self, rom_name):
         """Find logo path for a ROM name"""
@@ -905,101 +1632,88 @@ class PreviewWindow(QMainWindow):
         # Fallback - not found
         return None
     
+    # Completely rewrite the update_logo_display method to fix size loading 
     def update_logo_display(self):
-        """Update the logo display based on current settings"""
+        """Update the logo display based on current settings with fixed size loading"""
         if not hasattr(self, 'logo_label') or not self.logo_label:
+            print("No logo label to update")
             return
         
-        # Get logo size from pixmap
-        logo_pixmap = self.logo_label.pixmap()
-        if not logo_pixmap or logo_pixmap.isNull():
-            return
+        # Make sure we have the original pixmap
+        if not hasattr(self, 'original_logo_pixmap') or not self.original_logo_pixmap or self.original_logo_pixmap.isNull():
+            # If we don't have original, use current pixmap as original
+            self.original_logo_pixmap = self.logo_label.pixmap()
+            if not self.original_logo_pixmap or self.original_logo_pixmap.isNull():
+                print("No logo pixmap available to resize")
+                return
         
-        # Calculate size based on percentage of canvas and maintain aspect ratio
+        # Get current canvas dimensions 
         canvas_width = self.canvas.width()
         canvas_height = self.canvas.height()
         
+        # Get size percentages from settings
         width_percent = self.logo_settings.get("width_percentage", 15) / 100
         height_percent = self.logo_settings.get("height_percentage", 15) / 100
         
-        # Calculate new dimensions
-        new_width = int(canvas_width * width_percent)
-        new_height = int(canvas_height * height_percent)
+        # Calculate pixel dimensions based on percentages
+        target_width = int(canvas_width * width_percent)
+        target_height = int(canvas_height * height_percent)
         
-        # Resize logo while maintaining aspect ratio if specified
+        print(f"Logo target size: {target_width}x{target_height} pixels ({width_percent*100:.1f}%, {height_percent*100:.1f}%)")
+        
+        # Get original size for reference
+        orig_width = self.original_logo_pixmap.width()
+        orig_height = self.original_logo_pixmap.height()
+        
+        # Handle aspect ratio if needed
         if self.logo_settings.get("maintain_aspect", True):
-            orig_ratio = logo_pixmap.width() / logo_pixmap.height() if logo_pixmap.height() != 0 else 1
+            orig_ratio = orig_width / orig_height if orig_height > 0 else 1
             
-            # Calculate the width based on height
-            calc_width = int(new_height * orig_ratio)
-            
-            # Calculate the height based on width
-            calc_height = int(new_width / orig_ratio)
-            
-            # Use the smaller of the two dimensions to maintain aspect ratio
-            if calc_width <= new_width:
-                new_width = calc_width
+            # Calculate dimensions preserving aspect ratio
+            if (target_width / target_height) > orig_ratio:
+                # Height is limiting factor
+                final_height = target_height
+                final_width = int(final_height * orig_ratio)
             else:
-                new_height = calc_height
+                # Width is limiting factor
+                final_width = target_width
+                final_height = int(final_width / orig_ratio)
+        else:
+            # Use target dimensions directly
+            final_width = target_width
+            final_height = target_height
         
-        # Scale the pixmap
-        scaled_logo = logo_pixmap.scaled(
-            new_width, 
-            new_height, 
+        # Apply minimum size constraints
+        final_width = max(30, final_width)
+        final_height = max(20, final_height)
+        
+        # Scale the original pixmap to the calculated size
+        scaled_pixmap = self.original_logo_pixmap.scaled(
+            final_width, 
+            final_height, 
             Qt.KeepAspectRatio if self.logo_settings.get("maintain_aspect", True) else Qt.IgnoreAspectRatio, 
             Qt.SmoothTransformation
         )
         
-        # Update the label with new pixmap
-        self.logo_label.setPixmap(scaled_logo)
+        # Set the pixmap on the label
+        self.logo_label.setPixmap(scaled_pixmap)
         
-        # Position the logo based on settings
-        if self.logo_settings.get("custom_position", False):
-            # Use custom X,Y position
+        # Resize the label to match pixmap
+        self.logo_label.resize(scaled_pixmap.width(), scaled_pixmap.height())
+        
+        # Position the logo
+        if self.logo_settings.get("custom_position", False) and "x_position" in self.logo_settings and "y_position" in self.logo_settings:
             x = self.logo_settings.get("x_position", 20)
             y = self.logo_settings.get("y_position", 20)
         else:
-            # Use predefined position
-            position = self.logo_settings.get("logo_position", "top-left")
-            
-            # Padding from edges
-            padding = 20
-            
-            # Calculate position
-            if "top" in position and "left" in position:
-                x, y = padding, padding
-            elif "top" in position and "center" in position and "center-left" not in position and "center-right" not in position:
-                x = (canvas_width - new_width) // 2
-                y = padding
-            elif "top" in position and "right" in position:
-                x = canvas_width - new_width - padding
-                y = padding
-            elif "center" in position and "left" in position:
-                x = padding
-                y = (canvas_height - new_height) // 2
-            elif position == "center":
-                x = (canvas_width - new_width) // 2
-                y = (canvas_height - new_height) // 2
-            elif "center" in position and "right" in position:
-                x = canvas_width - new_width - padding
-                y = (canvas_height - new_height) // 2
-            elif "bottom" in position and "left" in position:
-                x = padding
-                y = canvas_height - new_height - padding
-            elif "bottom" in position and "center" in position and "center-left" not in position and "center-right" not in position:
-                x = (canvas_width - new_width) // 2
-                y = canvas_height - new_height - padding
-            elif "bottom" in position and "right" in position:
-                x = canvas_width - new_width - padding
-                y = canvas_height - new_height - padding
-            else:
-                # Default to top-left
-                x, y = padding, padding
+            # Default position
+            x, y = 20, 20
         
-        # Move logo to position
-        self.logo_label.resize(new_width, new_height)
+        # Move to position
         self.logo_label.move(x, y)
-    
+        
+        print(f"Logo display updated: {scaled_pixmap.width()}x{scaled_pixmap.height()} pixels")
+        
     def position_logo(self, position):
         """Position the logo based on position setting"""
         if not hasattr(self, 'logo_label'):
@@ -1234,33 +1948,227 @@ class PreviewWindow(QMainWindow):
         self.bottom_row.addWidget(self.shadow_button)
     
     # Fix for the save_image method
+    # Replace the original save_image method with this fixed version
     def save_image(self):
-        """Save current preview as an image"""
+        """Save current preview as an image with better error handling"""
         try:
-            from mame_controls_save import SaveUtility
-            result = SaveUtility.save_preview_image(self.canvas, self.rom_name, self.mame_dir)
-            if result:
-                print(f"Successfully saved image for {self.rom_name}")
+            # Create preview directory if it doesn't exist
+            preview_dir = os.path.join(self.mame_dir, "preview")
+            os.makedirs(preview_dir, exist_ok=True)
+            
+            # Define the output path
+            output_path = os.path.join(preview_dir, f"{self.rom_name}.png")
+            
+            # Check if file already exists
+            if os.path.exists(output_path):
+                # Ask for confirmation
+                if QMessageBox.question(
+                    self, 
+                    "Confirm Overwrite", 
+                    f"Image already exists for {self.rom_name}. Overwrite?",
+                    QMessageBox.Yes | QMessageBox.No
+                ) != QMessageBox.Yes:
+                    return False
+            
+            # Create a new image with the same size as the canvas
+            image = QImage(
+                self.canvas.size(),
+                QImage.Format_ARGB32
+            )
+            # Fill with black background
+            image.fill(Qt.black)
+            
+            # Create painter for the image
+            painter = QPainter(image)
+            painter.setRenderHint(QPainter.Antialiasing)
+            painter.setRenderHint(QPainter.TextAntialiasing)
+            painter.setRenderHint(QPainter.SmoothPixmapTransform)
+            
+            # Draw the background image if available (fix direct attribute access)
+            if hasattr(self, 'bg_label') and self.bg_label and self.bg_label.pixmap():
+                bg_pixmap = self.bg_label.pixmap()
+                painter.drawPixmap(self.bg_label.pos(), bg_pixmap)
+                print(f"Background drawn at {self.bg_label.pos()}, size {bg_pixmap.width()}x{bg_pixmap.height()}")
             else:
-                print("Image save was cancelled or failed")
-        except ImportError:
-            print("SaveUtility module not found")
-            QMessageBox.warning(self, "Not Implemented", 
-                            "Save image feature requires mame_controls_save.py module.")
+                print("No background image available to draw")
+            
+            # Draw the logo if visible
+            if hasattr(self, 'logo_label') and self.logo_label and self.logo_label.isVisible():
+                logo_pixmap = self.logo_label.pixmap()
+                if logo_pixmap and not logo_pixmap.isNull():
+                    painter.drawPixmap(self.logo_label.pos(), logo_pixmap)
+                    print(f"Logo drawn at {self.logo_label.pos()}, size {logo_pixmap.width()}x{logo_pixmap.height()}")
+            
+            # Draw control labels
+            if hasattr(self, 'control_labels'):
+                for control_name, control_data in self.control_labels.items():
+                    label = control_data['label']
+                    
+                    # Skip if label is not visible
+                    if not label.isVisible():
+                        continue
+                    
+                    # Draw shadow first if visible
+                    shadow = self.shadow_labels.get(control_name)
+                    if shadow and shadow.isVisible():
+                        shadow_font = shadow.font()
+                        painter.setFont(shadow_font)
+                        painter.setPen(Qt.black)
+                        painter.drawText(
+                            shadow.pos().x(), 
+                            shadow.pos().y() + QFontMetrics(shadow_font).height(), 
+                            shadow.text()
+                        )
+                    
+                    # Then draw the label text
+                    font = label.font()
+                    painter.setFont(font)
+                    painter.setPen(Qt.white)
+                    painter.drawText(
+                        label.pos().x(), 
+                        label.pos().y() + QFontMetrics(font).height(), 
+                        label.text()
+                    )
+                    
+                print(f"Drew {len(self.control_labels)} control labels")
+            
+            # End painting
+            painter.end()
+            
+            # Save the image
+            if image.save(output_path, "PNG"):
+                print(f"Image saved successfully to {output_path}")
+                QMessageBox.information(
+                    self,
+                    "Success",
+                    f"Image saved to:\n{output_path}"
+                )
+                return True
+            else:
+                print(f"Failed to save image to {output_path}")
+                QMessageBox.warning(
+                    self,
+                    "Error",
+                    f"Failed to save image. Could not write to file."
+                )
+                return False
+                
         except Exception as e:
             print(f"Error saving image: {e}")
             import traceback
             traceback.print_exc()
-            QMessageBox.critical(self, "Error", f"Failed to save image: {str(e)}")
+            QMessageBox.critical(
+                self,
+                "Error",
+                f"Failed to save image: {str(e)}"
+            )
+            return False
         
     def handle_key_press(self, event):
         """Handle key press events"""
         if event.key() == Qt.Key_Escape:
             self.close()
             
-    # Replace the move_to_screen method with this enhanced version
+    # Update the __init__ method to remove margins and borders
+    def fix_borders_in_init(self):
+        """Fix borders and margins in window setup"""
+        # Set layout margins to zero
+        if hasattr(self, 'main_layout'):
+            self.main_layout.setContentsMargins(0, 0, 0, 0)
+            self.main_layout.setSpacing(0)
+        
+        # Set window margin/padding to zero
+        self.setContentsMargins(0, 0, 0, 0)
+        
+        # Set central widget margins to zero
+        if hasattr(self, 'central_widget'):
+            self.central_widget.setContentsMargins(0, 0, 0, 0)
+            
+            # Add specific style for central widget
+            self.central_widget.setStyleSheet("""
+                QWidget {
+                    background-color: black;
+                    margin: 0px;
+                    padding: 0px;
+                    border: none;
+                }
+            """)
+        
+        # Set canvas margins to zero
+        if hasattr(self, 'canvas'):
+            self.canvas.setContentsMargins(0, 0, 0, 0)
+            
+            # Add specific style for canvas 
+            self.canvas.setStyleSheet("""
+                QWidget {
+                    background-color: black;
+                    margin: 0px;
+                    padding: 0px;
+                    border: none;
+                }
+            """)
+        
+        # Apply borderless style to the main window
+        self.setStyleSheet("""
+            QMainWindow {
+                border: none;
+                margin: 0px;
+                padding: 0px;
+            }
+        """)
+        
+        print("Removed borders and margins from preview window")
+    
+    # Improve the button frame to avoid it creating border issues
+    def fix_button_frame(self):
+        """Fix button frame styling to avoid borders"""
+        if hasattr(self, 'button_frame'):
+            # Use a more transparent style
+            self.button_frame.setStyleSheet("""
+                QFrame {
+                    background-color: rgba(20, 20, 20, 180);
+                    border: none;
+                    margin: 0px;
+                    padding: 0px;
+                }
+            """)
+            
+            # Remove margins from button layout
+            if hasattr(self, 'button_layout'):
+                self.button_layout.setContentsMargins(10, 2, 10, 2)
+                self.button_layout.setSpacing(2)
+            
+            # Update rows spacing too
+            if hasattr(self, 'top_row'):
+                self.top_row.setContentsMargins(0, 0, 0, 0)
+                self.top_row.setSpacing(4)
+            
+            if hasattr(self, 'bottom_row'):
+                self.bottom_row.setContentsMargins(0, 0, 0, 0)
+                self.bottom_row.setSpacing(4)
+                
+            print("Fixed button frame styling")
+    
+    # Make sure the window is full screen without borders
+    def set_fullscreen(self):
+        """Make the window truly fullscreen without borders"""
+        # Get screen geometry
+        screen_rect = QApplication.desktop().screenGeometry(self.current_screen - 1)  # -1 for 0-based index
+        
+        # Set window to exactly screen size
+        self.setGeometry(screen_rect)
+        
+        # Remove window frame
+        self.setWindowFlags(self.windowFlags() | Qt.FramelessWindowHint)
+        
+        # Update window
+        self.show()
+        
+        print(f"Set window to full screen: {screen_rect.width()}x{screen_rect.height()}")
+    
+    # Modify move_to_screen to ensure full screen
     def move_to_screen(self, screen_index):
-        """Move window to specified screen"""
+        """Move window to specified screen with better full screen handling"""
         try:
             desktop = QDesktopWidget()
             num_screens = desktop.screenCount()
@@ -1275,15 +2183,24 @@ class PreviewWindow(QMainWindow):
             screen_geometry = desktop.screenGeometry(screen_index - 1)
             print(f"Screen {screen_index} geometry: {screen_geometry.x()},{screen_geometry.y()} {screen_geometry.width()}x{screen_geometry.height()}")
             
-            # Move window to that screen and maximize
+            # Move window to that screen and true full screen
             self.setGeometry(screen_geometry)
-            print(f"Window moved to screen {screen_index}")
+            
+            # Store current screen
+            self.current_screen = screen_index
             
             # Update screen button text
             if hasattr(self, 'screen_button'):
                 self.screen_button.setText(f"Screen {screen_index}")
+                
+            # Remove window frame for true full screen
+            self.setWindowFlags(self.windowFlags() | Qt.FramelessWindowHint)
+            self.show()
+            
+            print(f"Window moved to screen {screen_index} in full screen mode")
         except Exception as e:
             print(f"Error moving to screen: {e}")
+            import traceback
             traceback.print_exc()
     
     def toggle_screen(self):
@@ -1300,8 +2217,29 @@ class PreviewWindow(QMainWindow):
         # Move to the new screen
         self.move_to_screen(self.current_screen)
     
-    # Replace the load_background_image method with this enhanced version
-    def load_background_image(self):
+    # Add a method to force controls above the bezel
+    def force_controls_above_bezel(self):
+        """Force all control elements to be above the bezel"""
+        if not hasattr(self, 'bezel_label') or not self.bezel_label:
+            return
+        
+        # Raise all control labels
+        if hasattr(self, 'control_labels'):
+            for control_data in self.control_labels.values():
+                if 'label' in control_data and control_data['label']:
+                    control_data['label'].raise_()
+                if 'shadow' in control_data and control_data['shadow']:
+                    control_data['shadow'].raise_()
+        
+        # Raise logo if it exists
+        if hasattr(self, 'logo_label') and self.logo_label:
+            self.logo_label.raise_()
+        
+        print("All controls raised above bezel")
+    
+    # Revised background loading method
+     # Replace the load_background_image method with this enhanced version
+    def load_background_image_fullscreen(self):
         """Load the background image for the game"""
         try:
             # Check for game-specific image
@@ -1377,9 +2315,43 @@ class PreviewWindow(QMainWindow):
                 self.bg_label.setStyleSheet("color: red; font-size: 18px;")
                 self.bg_label.setAlignment(Qt.AlignCenter)
                 self.bg_label.setGeometry(0, 0, self.canvas.width(), self.canvas.height())
-    
-    # Replace the on_canvas_resize method in mame_controls_preview.py with this fixed version
 
+    # Add this method to force background recalculation when window size changes
+    def on_canvas_resize_with_background(self, event):
+        """Handle canvas resize to update background image to fill screen"""
+        try:
+            # Resize the background to fill the entire canvas
+            if hasattr(self, 'bg_label') and self.bg_label:
+                self.bg_label.setGeometry(0, 0, self.canvas.width(), self.canvas.height())
+                print(f"Resized background to fill canvas: {self.canvas.width()}x{self.canvas.height()}")
+            
+            # Continue with other resize handling
+            if hasattr(self, 'on_canvas_resize_original'):
+                self.on_canvas_resize_original(event)
+            
+            # Also update bezel if it's visible
+            if hasattr(self, 'bezel_visible') and self.bezel_visible and hasattr(self, 'bezel_label') and self.bezel_label:
+                self.bezel_label.setGeometry(0, 0, self.canvas.width(), self.canvas.height())
+                print(f"Resized bezel to fill canvas: {self.canvas.width()}x{self.canvas.height()}")
+                
+        except Exception as e:
+            print(f"Error in canvas resize: {e}")
+            import traceback
+            traceback.print_exc()
+
+    # Force background to update on demand
+    def force_background_fullscreen(self):
+        """Force background to update to fullscreen"""
+        if hasattr(self, 'bg_label') and self.bg_label and hasattr(self, 'canvas'):
+            # Ensure the label fills the entire canvas
+            self.bg_label.setGeometry(0, 0, self.canvas.width(), self.canvas.height())
+            self.bg_label.setScaledContents(True)
+            self.bg_label.lower()
+            self.bg_label.show()
+            print(f"Force-updated background to fullscreen: {self.canvas.width()}x{self.canvas.height()}")
+            return True
+        return False
+    
     def on_canvas_resize(self, event):
         """Handle canvas resize to update background image"""
         try:
@@ -1424,6 +2396,7 @@ class PreviewWindow(QMainWindow):
             self.bg_pos = (x, y)
             self.bg_size = (pixmap.width(), pixmap.height())
     
+    # Update load_text_settings to check preview directory
     def load_text_settings(self):
         """Load text appearance settings from file"""
         settings = {
@@ -1435,31 +2408,73 @@ class PreviewWindow(QMainWindow):
         }
         
         try:
-            settings_file = os.path.join(self.mame_dir, "text_appearance_settings.json")
-            if os.path.exists(settings_file):
-                with open(settings_file, 'r') as f:
+            # Check for ROM-specific settings first
+            preview_dir = os.path.join(self.mame_dir, "preview")
+            rom_settings_file = os.path.join(preview_dir, f"{self.rom_name}_text_settings.json")
+            global_settings_file = os.path.join(preview_dir, "global_text_settings.json")
+            
+            # First try ROM-specific settings
+            if os.path.exists(rom_settings_file):
+                with open(rom_settings_file, 'r') as f:
                     loaded_settings = json.load(f)
                     settings.update(loaded_settings)
+                    print(f"Loaded ROM-specific text settings for {self.rom_name}")
+            # Then try global settings
+            elif os.path.exists(global_settings_file):
+                with open(global_settings_file, 'r') as f:
+                    loaded_settings = json.load(f)
+                    settings.update(loaded_settings)
+                    print(f"Loaded global text settings")
+            else:
+                # Backward compatibility - check old location
+                old_settings_file = os.path.join(self.mame_dir, "text_appearance_settings.json")
+                if os.path.exists(old_settings_file):
+                    with open(old_settings_file, 'r') as f:
+                        loaded_settings = json.load(f)
+                        settings.update(loaded_settings)
+                        print(f"Loaded legacy text settings")
+                else:
+                    print("No text settings found, using defaults")
         except Exception as e:
             print(f"Error loading text appearance settings: {e}")
+            import traceback
+            traceback.print_exc()
         
         return settings
     
+    # Update the save_text_settings method in PreviewWindow
     def save_text_settings(self, settings):
-        """Save text appearance settings to file"""
+        """Save text appearance settings to file with better error handling"""
         try:
-            settings_file = os.path.join(self.mame_dir, "text_appearance_settings.json")
-            with open(settings_file, 'w') as f:
-                json.dump(settings, f)
-            print(f"Saved text appearance settings: {settings}")
+            # Update local settings
+            self.text_settings.update(settings)
+            
+            # Create preview directory if it doesn't exist
+            preview_dir = os.path.join(self.mame_dir, "preview")
+            os.makedirs(preview_dir, exist_ok=True)
+            
+            # Save to ROM-specific file
+            rom_settings_file = os.path.join(preview_dir, f"{self.rom_name}_text_settings.json")
+            
+            with open(rom_settings_file, 'w') as f:
+                json.dump(self.text_settings, f)
+            print(f"Saved text settings to {rom_settings_file}: {self.text_settings}")
         except Exception as e:
-            print(f"Error saving text appearance settings: {e}")
+            print(f"Error saving text settings: {e}")
+            import traceback
+            traceback.print_exc()
+
     
+    # Enhance the create_control_labels method to load saved positions
     def create_control_labels(self):
-        """Create draggable labels for each control"""
+        """Create draggable labels for each control with saved positions"""
         if not self.game_data or 'players' not in self.game_data:
             return
-                
+        
+        # First load saved positions (ROM-specific or global)
+        saved_positions = self.load_saved_positions()
+        print(f"Loaded positions: {len(saved_positions)} control positions found")
+            
         # Get Player 1 controls
         for player in self.game_data.get('players', []):
             if player['number'] != 1:  # Only show Player 1 controls for now
@@ -1485,18 +2500,34 @@ class PreviewWindow(QMainWindow):
                 # Copy font settings from main label
                 shadow_label.setFont(label.font())
                 
-                # Default position based on a grid layout
-                x = 100 + (grid_x * 150)
-                y = 100 + (grid_y * 40)
-                
-                # Apply y-offset from text settings
-                y_offset = self.text_settings.get("y_offset", -40)
-                y += y_offset
-                
-                # Update grid position
-                grid_x = (grid_x + 1) % 5
-                if grid_x == 0:
-                    grid_y += 1
+                # Use saved position if available, otherwise use default grid position
+                if control_name in saved_positions:
+                    # Get saved position
+                    pos_x, pos_y = saved_positions[control_name]
+                    
+                    # Apply y-offset from text settings
+                    y_offset = self.text_settings.get("y_offset", -40)
+                    
+                    # Use saved position
+                    x, y = pos_x, pos_y + y_offset
+                    original_pos = QPoint(pos_x, pos_y)  # Store without offset
+                    print(f"Using saved position for {control_name}: {pos_x}, {pos_y}")
+                else:
+                    # Default position based on a grid layout
+                    x = 100 + (grid_x * 150)
+                    y = 100 + (grid_y * 40)
+                    
+                    # Apply y-offset from text settings
+                    y_offset = self.text_settings.get("y_offset", -40)
+                    y += y_offset
+                    
+                    # Store original position without offset
+                    original_pos = QPoint(x, y - y_offset)
+                    
+                    # Update grid position
+                    grid_x = (grid_x + 1) % 5
+                    if grid_x == 0:
+                        grid_y += 1
                 
                 # Position the labels - IMPORTANT: shadow goes behind!
                 shadow_label.move(x + 2, y + 2)  # Shadow offset
@@ -1510,7 +2541,7 @@ class PreviewWindow(QMainWindow):
                     'label': label,
                     'shadow': shadow_label,
                     'action': action_text,
-                    'original_pos': QPoint(x, y - y_offset)  # Store without offset for reset
+                    'original_pos': original_pos  # Store without offset for reset
                 }
                 
                 # Store shadow label separately for convenience
@@ -1520,6 +2551,48 @@ class PreviewWindow(QMainWindow):
                 original_mouseMoveEvent = label.mouseMoveEvent
                 label.mouseMoveEvent = lambda event, label=label, shadow=shadow_label, orig_func=original_mouseMoveEvent: self.on_label_move(event, label, shadow, orig_func)
 
+    # Add or update a method to load saved positions
+    def load_saved_positions(self):
+        """Load saved positions from ROM-specific or global config"""
+        positions = {}
+        
+        try:
+            # Check for ROM-specific positions first
+            preview_dir = os.path.join(self.mame_dir, "preview")
+            rom_positions_file = os.path.join(preview_dir, f"{self.rom_name}_positions.json")
+            global_positions_file = os.path.join(preview_dir, "global_positions.json")
+            
+            # First try ROM-specific positions
+            if os.path.exists(rom_positions_file):
+                with open(rom_positions_file, 'r') as f:
+                    positions = json.load(f)
+                    print(f"Loaded ROM-specific positions for {self.rom_name} from {rom_positions_file}")
+                    if positions:
+                        # Check if we have any control positions (not just logo settings)
+                        has_control_positions = any(key != "__logo_settings__" for key in positions.keys())
+                        print(f"ROM-specific control positions found: {has_control_positions}")
+            
+            # If no ROM-specific positions or they're empty, try global positions
+            if not positions:
+                if os.path.exists(global_positions_file):
+                    with open(global_positions_file, 'r') as f:
+                        positions = json.load(f)
+                        print(f"Loaded global positions from {global_positions_file}")
+                else:
+                    print(f"No position files found")
+            
+            # Handle special logo settings object if present
+            if "__logo_settings__" in positions:
+                # Don't include logo settings in the return value
+                del positions["__logo_settings__"]
+                
+        except Exception as e:
+            print(f"Error loading saved positions: {e}")
+            import traceback
+            traceback.print_exc()
+        
+        return positions
+    
     def on_label_move(self, event, label, shadow, original_func):
         """Custom mouseMoveEvent to keep shadow with main label"""
         # Call the original mouseMoveEvent to handle dragging
@@ -1562,27 +2635,51 @@ class PreviewWindow(QMainWindow):
                 control_data['label'].setVisible(is_visible)
                 self.shadow_labels[control_name].setVisible(is_visible)
     
+    # Update the reset_positions method to better handle saved positions
     def reset_positions(self):
-        """Reset control labels to default positions"""
-        y_offset = self.text_settings.get("y_offset", -40)
+        """Reset control labels to their original positions"""
+        try:
+            # Apply y-offset from text settings
+            y_offset = self.text_settings.get("y_offset", -40)
+            
+            for control_name, control_data in self.control_labels.items():
+                # Get the original position
+                original_pos = control_data.get('original_pos', QPoint(100, 100))
+                
+                # Apply the current y-offset 
+                new_pos = QPoint(original_pos.x(), original_pos.y() + y_offset)
+                
+                # Move the labels
+                control_data['label'].move(new_pos)
+                self.shadow_labels[control_name].move(new_pos.x() + 2, new_pos.y() + 2)
+            
+            print(f"Reset {len(self.control_labels)} control positions to original values")
+            
+            # Also reload saved positions to update self.control_labels with fresh saved positions 
+            saved_positions = self.load_saved_positions()
+            if saved_positions:
+                # Update original positions in control_labels
+                for control_name, position in saved_positions.items():
+                    if control_name in self.control_labels:
+                        pos_x, pos_y = position
+                        self.control_labels[control_name]['original_pos'] = QPoint(pos_x, pos_y)
+                
+                print(f"Updated {len(saved_positions)} original positions from saved positions")
+                
+        except Exception as e:
+            print(f"Error resetting positions: {e}")
+            import traceback
+            traceback.print_exc()
         
-        for control_name, control_data in self.control_labels.items():
-            # Get the original position
-            original_pos = control_data.get('original_pos', QPoint(100, 100))
-            
-            # Apply the current y-offset
-            new_pos = QPoint(original_pos.x(), original_pos.y() + y_offset)
-            
-            # Move the labels
-            control_data['label'].move(new_pos)
-            self.shadow_labels[control_name].move(new_pos.x() + 2, new_pos.y() + 2)
-    
+    # Now let's add a new method to handle saving both control positions and logo position
+    # Update the save_positions method to include saving both text and logo settings
+    # Enhanced save_positions method to properly save logo size
     def save_positions(self, is_global=False):
-        """Save current control positions"""
+        """Save current control positions, text settings and logo settings"""
         # Create positions dictionary
         positions = {}
         
-        # Remove y-offset from positions for storage
+        # Save control positions (from original method)
         y_offset = self.text_settings.get("y_offset", -40)
         
         for control_name, control_data in self.control_labels.items():
@@ -1597,36 +2694,110 @@ class PreviewWindow(QMainWindow):
             preview_dir = os.path.join(self.mame_dir, "preview")
             os.makedirs(preview_dir, exist_ok=True)
             
-            # Determine the file path
+            # Determine the file paths
             if is_global:
-                filepath = os.path.join(preview_dir, "global_positions.json")
+                positions_filepath = os.path.join(preview_dir, "global_positions.json")
+                text_settings_filepath = os.path.join(preview_dir, "global_text_settings.json") 
+                logo_settings_filepath = os.path.join(preview_dir, "global_logo.json")
             else:
-                filepath = os.path.join(preview_dir, f"{self.rom_name}_positions.json")
+                positions_filepath = os.path.join(preview_dir, f"{self.rom_name}_positions.json")
+                text_settings_filepath = os.path.join(preview_dir, f"{self.rom_name}_text_settings.json")
+                logo_settings_filepath = os.path.join(preview_dir, f"{self.rom_name}_logo.json")
             
-            # Save to file
-            with open(filepath, 'w') as f:
+            # Save positions to file
+            with open(positions_filepath, 'w') as f:
                 json.dump(positions, f)
+            print(f"Saved {len(positions)} positions to: {positions_filepath}")
+                    
+            # Save text settings to file
+            with open(text_settings_filepath, 'w') as f:
+                json.dump(self.text_settings, f)
+            print(f"Saved text settings to: {text_settings_filepath}")
+            
+            # Save logo settings to file if logo exists
+            if hasattr(self, 'logo_label') and self.logo_label:
+                # Update logo settings before saving
+                if self.logo_label.isVisible():
+                    # Update current logo position and size
+                    self.logo_settings["logo_visible"] = True
+                    self.logo_settings["custom_position"] = True
+                    self.logo_settings["x_position"] = self.logo_label.pos().x()
+                    self.logo_settings["y_position"] = self.logo_label.pos().y()
+                    
+                    # Update size percentages based on current pixmap
+                    logo_pixmap = self.logo_label.pixmap()
+                    if logo_pixmap and not logo_pixmap.isNull():
+                        canvas_width = self.canvas.width()
+                        canvas_height = self.canvas.height()
+                        
+                        width_percentage = (logo_pixmap.width() / canvas_width) * 100
+                        height_percentage = (logo_pixmap.height() / canvas_height) * 100
+                        
+                        self.logo_settings["width_percentage"] = width_percentage
+                        self.logo_settings["height_percentage"] = height_percentage
+                        
+                        print(f"Updating logo size in settings: {width_percentage:.1f}% x {height_percentage:.1f}%")
                 
-            print(f"Saved {len(positions)} positions to: {filepath}")
+                # Save logo settings
+                with open(logo_settings_filepath, 'w') as f:
+                    json.dump(self.logo_settings, f)
+                print(f"Saved logo settings to: {logo_settings_filepath}")
+            
+            # Print confirmation
+            save_type = "global" if is_global else f"ROM-specific ({self.rom_name})"
+            print(f"All settings saved as {save_type}")
+            
+            # Show confirmation message
+            QMessageBox.information(
+                self,
+                "Settings Saved",
+                f"Settings saved as {save_type}."
+            )
+            return True
+            
         except Exception as e:
-            print(f"Error saving positions: {e}")
+            print(f"Error saving settings: {e}")
+            import traceback
+            traceback.print_exc()
+            
+            # Show error message
+            QMessageBox.critical(
+                self,
+                "Error",
+                f"Failed to save settings: {str(e)}"
+            )
+            return False
     
+    # Update the show_text_settings method to include a global save option
     def show_text_settings(self):
         """Show dialog to configure text appearance"""
         dialog = TextSettingsDialog(self, self.text_settings)
+        dialog.setWindowTitle("Text Appearance Settings")
+        
+        # Add global save button to dialog
+        button_layout = dialog.findChild(QHBoxLayout, "button_layout")
+        if button_layout:
+            global_button = QPushButton("Save as Global")
+            global_button.clicked.connect(lambda: self.save_global_text_settings())
+            global_button.clicked.connect(dialog.accept)
+            button_layout.insertWidget(1, global_button)
+        
         if dialog.exec_() == QDialog.Accepted:
             print("Text settings updated")
     
+    # Improved update_text_settings to ensure font size is applied to all controls
     def update_text_settings(self, settings):
-        """Update text settings and apply to controls"""
-        # Update local settings
-        self.text_settings = settings
+        """Update text settings and properly apply to all controls"""
+        # Update local settings with merge
+        self.text_settings.update(settings)
         
         # Save to file
-        self.save_text_settings(settings)
+        self.save_text_settings(self.text_settings)
         
         # Apply to existing controls
         self.apply_text_settings()
+        
+        print(f"Text settings updated and applied: {self.text_settings}")
     
     def apply_text_settings(self):
         """Apply current text settings to all controls"""
@@ -1885,10 +3056,22 @@ class LogoSettingsDialog(QDialog):
         if self.parent and hasattr(self.parent, 'update_logo_settings'):
             self.parent.update_logo_settings(settings)
     
+    # Also update the TextSettingsDialog.accept_settings method to properly save settings
     def accept_settings(self):
-        """Save settings and close dialog"""
-        self.apply_settings()
+        """Save settings and close dialog with more robust saving"""
+        settings = self.get_current_settings()
+        
+        # Save locally
+        self.settings = settings
+        
+        # If parent provided, update parent settings
+        if self.parent and hasattr(self.parent, 'update_text_settings'):
+            self.parent.update_text_settings(settings)
+            print(f"Text settings saved via dialog: {settings}")
+        
+        # Close dialog
         self.accept()
+
 
     def show_logo_settings(self):
         """Show dialog to configure logo settings"""

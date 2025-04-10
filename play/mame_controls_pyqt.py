@@ -4,7 +4,7 @@ import json
 import re
 from typing import Dict, Optional, Set, List, Tuple
 import xml.etree.ElementTree as ET
-from PyQt5.QtWidgets import (QApplication, QMainWindow, QWidget, QVBoxLayout, QHBoxLayout, 
+from PyQt5.QtWidgets import (QApplication, QDesktopWidget, QMainWindow, QWidget, QVBoxLayout, QHBoxLayout, 
                             QSplitter, QLabel, QLineEdit, QTextEdit, QFrame, QPushButton, 
                             QCheckBox, QScrollArea, QGridLayout, QMessageBox, QFileDialog)
 from PyQt5.QtCore import Qt, QSize, pyqtSignal
@@ -129,14 +129,12 @@ class MAMEControlConfig(QMainWindow):
         if not preview_only:
             # Configure the window
             self.setWindowTitle("MAME Control Configuration Checker")
-            self.resize(1024, 768)
                 
             # Create the interface
             self.create_layout()
             
             # Load all data
             self.load_all_data()
-            
             # We will maximize in the calling function
         else:
             # For preview-only mode, just initialize minimal attributes
@@ -508,7 +506,6 @@ class MAMEControlConfig(QMainWindow):
         if not preview_only:
             # Configure the window
             self.setWindowTitle("MAME Control Configuration Checker")
-            self.resize(1024, 768)
                 
             # Create the interface
             self.create_layout()
@@ -1592,7 +1589,16 @@ class MAMEControlConfig(QMainWindow):
     
     # Entry point for testing
 if __name__ == "__main__":
+    import sys
+    from PyQt5.QtWidgets import QApplication
     app = QApplication(sys.argv)
+
     window = MAMEControlConfig()
+    
+    # Dynamic full screen fallback
+    screen_geometry = app.primaryScreen().geometry()
+    window.setGeometry(screen_geometry)
+    window.move(0, 0)
     window.show()
+
     sys.exit(app.exec_())
