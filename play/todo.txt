@@ -1,8 +1,13 @@
-Logo
-- has black within the canvas around the image - need to remove and make transparent
+Preview image black bars on sides
+-not covering full screen. two black bars down each side
+-saved image is 1920x994 which is why - look into this and correct
 
-Bezel
--doesn't save with image
+Add custom fonts
 
-Default image
--quality bad - why?
+Move all files to preview, and preview\settings
+
+Tkninter for main GUI
+
+Add edit controls from previous exe
+
+Add generate images from previous exe
