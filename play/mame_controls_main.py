@@ -3,7 +3,7 @@
 # If Python can't find PyQt5, install it via:
 # pip install PyQt5
 """
-MAME Control Configuration Tool - PyQt5 Version
+MAME Control Configuration Tool - Hybrid Version (PyQt5 and Tkinter)
 A tool for viewing and configuring MAME controls.
 
 This is the main entry point for the application.
@@ -15,31 +15,13 @@ Command line arguments:
     --game: Specify the ROM name to preview
     --screen: Screen number to display preview on (default: 2)
     --auto-close: Automatically close preview when MAME exits
+    --use-qt: Use the PyQt5 version of the main GUI (default: Tkinter)
 """
 
 import sys
 import os
 import argparse
-try:
-    from PyQt5.QtWidgets import QApplication
-    from PyQt5.QtGui import QPalette, QColor
-    from PyQt5.QtCore import Qt, QTimer
-except ImportError:
-    print("PyQt5 is not installed. Please install it with: pip install PyQt5")
-    sys.exit(1)
 
-# Make sure the path is properly set for module imports
-script_dir = os.path.dirname(os.path.abspath(__file__))
-sys.path.append(script_dir)
-print(f"Script directory: {script_dir}")
-
-# Import the main application class
-try:
-    from mame_controls_pyqt import MAMEControlConfig
-except ImportError as e:
-    print(f"Error importing MAMEControlConfig: {e}")
-    print("Make sure PyQt5 is installed: pip install PyQt5")
-    sys.exit(1)
 
 def main():
     """Main entry point for the application"""
@@ -48,71 +30,106 @@ def main():
     # Create argument parser
     parser = argparse.ArgumentParser(description='MAME Control Configuration')
     parser.add_argument('--preview-only', action='store_true', help='Show only the preview window')
+    parser.add_argument('--clean-preview', action='store_true', help='Show preview without buttons and UI elements (like saved image)')
     parser.add_argument('--game', type=str, help='Specify the ROM name to preview')
     parser.add_argument('--screen', type=int, default=2, help='Screen number to display preview on (default: 2)')
     parser.add_argument('--auto-close', action='store_true', help='Automatically close preview when MAME exits')
+    parser.add_argument('--use-qt', action='store_true', help='Use the PyQt5 version of the main GUI (default: Tkinter)')
     args = parser.parse_args()
     print("Arguments parsed.")
     
-    # Check for preview-only mode
+    # Make sure the path is properly set for module imports
+    script_dir = os.path.dirname(os.path.abspath(__file__))
+    sys.path.append(script_dir)
+    print(f"Script directory: {script_dir}")
+    
+    # Check for preview-only mode - always use PyQt
     if args.preview_only and args.game:
-        # Initialize QApplication for preview only
-        app = QApplication(sys.argv)
-        app.setApplicationName("MAME Control Preview")
-        set_dark_theme(app)
-        
-        # Create MAMEControlConfig in preview mode
-        config = MAMEControlConfig(preview_only=True)
-        
-        # Show preview for specified game
-        config.show_preview_standalone(args.game, args.auto_close)
-        
-        # Run app
-        sys.exit(app.exec_())
-    
-    # Initialize QApplication
-    print("Creating QApplication...")
-    app = QApplication(sys.argv)
-    print("QApplication created.")
-    
-    # Set application metadata
-    app.setApplicationName("MAME Control Configuration")
-    app.setApplicationVersion("1.0")
-    
-    # Apply dark theme
-    print("Applying dark theme...")
-    set_dark_theme(app)
-    print("Dark theme applied.")
-    
-    print("Creating main window...")
-    try:
-        window = MAMEControlConfig()
+        print(f"Preview-only mode for ROM: {args.game}")
+        try:
+            # Initialize PyQt preview
+            from PyQt5.QtWidgets import QApplication
+            from mame_controls_pyqt import MAMEControlConfig
+            
+            # Create QApplication
+            app = QApplication(sys.argv)
+            app.setApplicationName("MAME Control Preview")
 
-        # Get the screen geometry dynamically
-        screen_geometry = QApplication.primaryScreen().geometry()
-        window.setGeometry(screen_geometry)
-        window.move(0, 0)
-        window.show()
-        print(f"Window set to {screen_geometry.width()}x{screen_geometry.height()}")
-
-    except Exception as e:
-        print(f"Error creating window: {e}")
-        import traceback
-        traceback.print_exc()
-        return
+            # Apply dark theme
+            set_dark_theme(app)
+            
+            # Create MAMEControlConfig in preview mode
+            config = MAMEControlConfig(preview_only=True)
+            
+            # Show preview for specified game
+            # Show preview for specified game with clean mode if requested
+            config.show_preview_standalone(args.game, args.auto_close, clean_mode=args.clean_preview)
+            
+            # Run app
+            sys.exit(app.exec_())
+        except ImportError:
+            print("PyQt5 or necessary modules not found for preview mode.")
+            sys.exit(1)
     
-    # Start the application main loop
-    print("Starting application loop...")
-    try:
-        sys.exit(app.exec_())
-    except Exception as e:
-        print(f"Error running application: {e}")
-        import traceback
-        traceback.print_exc()
+    # For the main application, check which UI to use
+    if args.use_qt:
+        # Initialize PyQt application
+        try:
+            from PyQt5.QtWidgets import QApplication
+            from mame_controls_pyqt import MAMEControlConfig
+            
+            # Create QApplication
+            app = QApplication(sys.argv)
+            app.setApplicationName("MAME Control Configuration (PyQt)")
+            app.setApplicationVersion("1.0")
+            
+            # Apply dark theme
+            set_dark_theme(app)
+            
+            # Create main window
+            window = MAMEControlConfig()
+            
+            # Set window size to full screen
+            screen_geometry = QApplication.primaryScreen().geometry()
+            window.setGeometry(screen_geometry)
+            window.move(0, 0)
+            window.show()
+            
+            # Run application
+            sys.exit(app.exec_())
+        except ImportError:
+            print("PyQt5 not found, falling back to Tkinter version.")
+            args.use_qt = False
+    
+    # If not using PyQt or if PyQt failed to import, use Tkinter
+    if not args.use_qt:
+        try:
+            # Import the Tkinter version
+            import customtkinter as ctk
+            from mame_controls_tkinter import MAMEControlConfig
+            
+            # Set appearance mode and theme
+            ctk.set_appearance_mode("dark")
+            ctk.set_default_color_theme("dark-blue")
+            
+            # Create the Tkinter application
+            app = MAMEControlConfig()
+            
+            # Auto maximize
+            app.after(100, app.state, 'zoomed')
+            
+            # Run the application
+            app.mainloop()
+        except ImportError:
+            print("CustomTkinter or required modules not found. Please install with:")
+            print("pip install customtkinter")
+            sys.exit(1)
+
 
 def set_dark_theme(app):
-    """Apply an improved dark theme with rounded corners and better contrast"""
-    app.setStyle("Fusion")
+    """Apply a dark theme to the PyQt application"""
+    from PyQt5.QtGui import QPalette, QColor
+    from PyQt5.QtCore import Qt
     
     # Create dark palette with better colors
     dark_palette = QPalette()
@@ -226,6 +243,7 @@ def set_dark_theme(app):
             width: 0px;
         }
     """)
+
 
 if __name__ == "__main__":
     try:

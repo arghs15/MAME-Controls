@@ -572,7 +572,7 @@ class MAMEControlConfig(QMainWindow):
             import traceback
             traceback.print_exc()
     
-    def show_preview_standalone(self, rom_name, auto_close=False):
+    def show_preview_standalone(self, rom_name, auto_close=False, clean_mode=False):
         """Show the preview for a specific ROM without running the main app"""
         print(f"Starting standalone preview for ROM: {rom_name}")
         
@@ -598,19 +598,26 @@ class MAMEControlConfig(QMainWindow):
             QMessageBox.critical(self, "Error", f"No control data found for {rom_name}")
             return
         
-        print(f"Successfully loaded game data for {rom_name}")
-        
         # Start MAME process monitoring only if auto_close is enabled
         if auto_close:
             print("Auto-close enabled - preview will close when MAME exits")
             self.monitor_mame_process(check_interval=0.5)
-        else:
-            print("Auto-close disabled - preview will stay open until manually closed")
         
         # Show the preview window
         try:
-            from mame_controls_preview import show_preview
-            self.preview_window = show_preview(rom_name, game_data, self.mame_dir)
+            from mame_controls_preview import PreviewWindow
+            
+            # Create and configure the preview window
+            self.preview_window = PreviewWindow(rom_name, game_data, self.mame_dir)
+            
+            # Apply clean mode if requested
+            if clean_mode:
+                # These attributes/methods might need to be implemented in your PreviewWindow class
+                self.preview_window.hide_buttons = True  # Hide button frame
+                self.preview_window.clean_mode = True    # Disable drag handles, edit marks, etc.
+            
+            # Show the window
+            self.preview_window.showFullScreen()
             print("Preview window displayed successfully")
         except Exception as e:
             print(f"Error showing preview: {str(e)}")

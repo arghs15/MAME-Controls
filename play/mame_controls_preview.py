@@ -605,10 +605,9 @@ class TextSettingsDialog(QDialog):
 Modifications to the PreviewWindow class in mame_controls_preview.py
 """
 
-# Replace or modify the PreviewWindow class initialization
 class PreviewWindow(QMainWindow):
     """Window for displaying game controls preview"""
-    def __init__(self, rom_name, game_data, mame_dir, parent=None):
+    def __init__(self, rom_name, game_data, mame_dir, parent=None, hide_buttons=False, clean_mode=False):
         """Enhanced initialization with better logo handling"""
         # Keep the original __init__ code
         super().__init__(parent)
@@ -621,12 +620,17 @@ class PreviewWindow(QMainWindow):
         self.shadow_labels = {}
         self.bg_label = None
         
+        # Add clean preview mode parameters
+        self.hide_buttons = hide_buttons
+        self.clean_mode = clean_mode
+        
         # Force window to be displayed in the correct place
         self.parent = parent
         
         # Print debugging info
         print(f"Initializing PreviewWindow for ROM: {rom_name}")
         print(f"MAME directory: {mame_dir}")
+        print(f"Clean mode: {clean_mode}, Hide buttons: {hide_buttons}")
         
         try:
             # Load settings
@@ -657,111 +661,113 @@ class PreviewWindow(QMainWindow):
             self.canvas.setStyleSheet("background-color: black;")
             self.main_layout.addWidget(self.canvas, 1)  # 1 stretch factor for most space
             
-            # Button row at the bottom
-            self.button_frame = QFrame()
-            self.button_frame.setStyleSheet("background-color: rgba(30, 30, 30, 180);")  # Semi-transparent
-            self.button_frame.setFixedHeight(80)
-            self.button_layout = QVBoxLayout(self.button_frame)
-            self.button_layout.setContentsMargins(10, 5, 10, 5)
-            
-            # Create two rows for buttons
-            self.top_row = QHBoxLayout()
-            self.bottom_row = QHBoxLayout()
-            
-            # Button style
-            button_style = """
-                QPushButton {
-                    background-color: #3d3d3d;
-                    color: white;
-                    border: 1px solid #5a5a5a;
-                    border-radius: 4px;
-                    padding: 6px 12px;
-                    font-weight: bold;
-                    min-width: 90px;
-                }
-                QPushButton:hover {
-                    background-color: #4a4a4a;
-                }
-                QPushButton:pressed {
-                    background-color: #2a2a2a;
-                }
-            """
-            
-            # Top row buttons
-            self.close_button = QPushButton("Close")
-            self.close_button.clicked.connect(self.close)
-            self.close_button.setStyleSheet(button_style)
-            self.top_row.addWidget(self.close_button)
-            
-            self.reset_button = QPushButton("Reset")
-            self.reset_button.clicked.connect(self.reset_positions)
-            self.reset_button.setStyleSheet(button_style)
-            self.top_row.addWidget(self.reset_button)
-            
-            self.global_button = QPushButton("Global")
-            self.global_button.clicked.connect(lambda: self.save_positions(is_global=True))
-            self.global_button.setStyleSheet(button_style)
-            self.top_row.addWidget(self.global_button)
-            
-            self.rom_button = QPushButton("ROM")
-            self.rom_button.clicked.connect(lambda: self.save_positions(is_global=False))
-            self.rom_button.setStyleSheet(button_style)
-            self.top_row.addWidget(self.rom_button)
-            
-            self.text_settings_button = QPushButton("Text Settings")
-            self.text_settings_button.clicked.connect(self.show_text_settings)
-            self.text_settings_button.setStyleSheet(button_style)
-            self.top_row.addWidget(self.text_settings_button)
-            
-            self.save_image_button = QPushButton("Save Image")
-            self.save_image_button.clicked.connect(self.save_image)
-            self.save_image_button.setStyleSheet(button_style)
-            self.top_row.addWidget(self.save_image_button)
-            
-            # Bottom row buttons
-            self.joystick_button = QPushButton("Joystick")
-            self.joystick_button.clicked.connect(self.toggle_joystick_controls)
-            self.joystick_button.setStyleSheet(button_style)
-            self.bottom_row.addWidget(self.joystick_button)
-            
-            self.toggle_texts_button = QPushButton("Hide Texts")
-            self.toggle_texts_button.clicked.connect(self.toggle_texts)
-            self.toggle_texts_button.setStyleSheet(button_style)
-            self.bottom_row.addWidget(self.toggle_texts_button)
-            
-            self.add_xinput_controls_button()
-            
-            # Add logo controls
-            self.logo_visible = self.logo_settings.get("logo_visible", True)
-            logo_text = "Hide Logo" if self.logo_visible else "Show Logo"
-            self.logo_button = QPushButton(logo_text)
-            self.logo_button.clicked.connect(self.toggle_logo)
-            self.logo_button.setStyleSheet(button_style)
-            self.bottom_row.addWidget(self.logo_button)
-            
-            self.logo_pos_button = QPushButton("Logo Pos")
-            self.logo_pos_button.clicked.connect(self.show_logo_position)
-            self.logo_pos_button.setStyleSheet(button_style)
-            self.bottom_row.addWidget(self.logo_pos_button)
-            
-            # Add screen toggle button
-            self.screen_button = QPushButton("Screen 2")
-            self.screen_button.clicked.connect(self.toggle_screen)
-            self.screen_button.setStyleSheet(button_style)
-            self.bottom_row.addWidget(self.screen_button)
-            
-            # Add rows to button layout
-            self.button_layout.addLayout(self.top_row)
-            self.button_layout.addLayout(self.bottom_row)
-            
-            # Add button frame to main layout
-            self.main_layout.addWidget(self.button_frame)
+            # Only create buttons if not in clean mode
+            if not self.hide_buttons:
+                # Button row at the bottom
+                self.button_frame = QFrame()
+                self.button_frame.setStyleSheet("background-color: rgba(30, 30, 30, 180);")  # Semi-transparent
+                self.button_frame.setFixedHeight(80)
+                self.button_layout = QVBoxLayout(self.button_frame)
+                self.button_layout.setContentsMargins(10, 5, 10, 5)
+                
+                # Create two rows for buttons
+                self.top_row = QHBoxLayout()
+                self.bottom_row = QHBoxLayout()
+                
+                # Button style
+                button_style = """
+                    QPushButton {
+                        background-color: #3d3d3d;
+                        color: white;
+                        border: 1px solid #5a5a5a;
+                        border-radius: 4px;
+                        padding: 6px 12px;
+                        font-weight: bold;
+                        min-width: 90px;
+                    }
+                    QPushButton:hover {
+                        background-color: #4a4a4a;
+                    }
+                    QPushButton:pressed {
+                        background-color: #2a2a2a;
+                    }
+                """
+                
+                # Top row buttons
+                self.close_button = QPushButton("Close")
+                self.close_button.clicked.connect(self.close)
+                self.close_button.setStyleSheet(button_style)
+                self.top_row.addWidget(self.close_button)
+                
+                self.reset_button = QPushButton("Reset")
+                self.reset_button.clicked.connect(self.reset_positions)
+                self.reset_button.setStyleSheet(button_style)
+                self.top_row.addWidget(self.reset_button)
+                
+                self.global_button = QPushButton("Global")
+                self.global_button.clicked.connect(lambda: self.save_positions(is_global=True))
+                self.global_button.setStyleSheet(button_style)
+                self.top_row.addWidget(self.global_button)
+                
+                self.rom_button = QPushButton("ROM")
+                self.rom_button.clicked.connect(lambda: self.save_positions(is_global=False))
+                self.rom_button.setStyleSheet(button_style)
+                self.top_row.addWidget(self.rom_button)
+                
+                self.text_settings_button = QPushButton("Text Settings")
+                self.text_settings_button.clicked.connect(self.show_text_settings)
+                self.text_settings_button.setStyleSheet(button_style)
+                self.top_row.addWidget(self.text_settings_button)
+                
+                self.save_image_button = QPushButton("Save Image")
+                self.save_image_button.clicked.connect(self.save_image)
+                self.save_image_button.setStyleSheet(button_style)
+                self.top_row.addWidget(self.save_image_button)
+                
+                # Bottom row buttons
+                self.joystick_button = QPushButton("Joystick")
+                self.joystick_button.clicked.connect(self.toggle_joystick_controls)
+                self.joystick_button.setStyleSheet(button_style)
+                self.bottom_row.addWidget(self.joystick_button)
+                
+                self.toggle_texts_button = QPushButton("Hide Texts")
+                self.toggle_texts_button.clicked.connect(self.toggle_texts)
+                self.toggle_texts_button.setStyleSheet(button_style)
+                self.bottom_row.addWidget(self.toggle_texts_button)
+                
+                self.add_xinput_controls_button()
+                
+                # Add logo controls
+                self.logo_visible = self.logo_settings.get("logo_visible", True)
+                logo_text = "Hide Logo" if self.logo_visible else "Show Logo"
+                self.logo_button = QPushButton(logo_text)
+                self.logo_button.clicked.connect(self.toggle_logo)
+                self.logo_button.setStyleSheet(button_style)
+                self.bottom_row.addWidget(self.logo_button)
+                
+                self.logo_pos_button = QPushButton("Logo Pos")
+                self.logo_pos_button.clicked.connect(self.show_logo_position)
+                self.logo_pos_button.setStyleSheet(button_style)
+                self.bottom_row.addWidget(self.logo_pos_button)
+                
+                # Add screen toggle button
+                self.screen_button = QPushButton("Screen 2")
+                self.screen_button.clicked.connect(self.toggle_screen)
+                self.screen_button.setStyleSheet(button_style)
+                self.bottom_row.addWidget(self.screen_button)
+                
+                # Add rows to button layout
+                self.button_layout.addLayout(self.top_row)
+                self.button_layout.addLayout(self.bottom_row)
+                
+                # Add button frame to main layout
+                self.main_layout.addWidget(self.button_frame)
             
             # Load the background image
             self.load_background_image_fullscreen()
             
-            # Create control labels
-            self.create_control_labels()
+            # Create control labels - with clean mode option
+            self.create_control_labels(clean_mode=self.clean_mode)
             
             # Add logo if enabled
             if self.logo_visible:
@@ -3197,48 +3203,31 @@ class PreviewWindow(QMainWindow):
     
     # Enhance the create_control_labels method to load saved positions
     # Improved create_control_labels method that respects joystick visibility
-    def create_control_labels(self):
-        """Create draggable labels for each control with joystick visibility support"""
+    def create_control_labels(self, clean_mode=False):
+        """Create control labels with option for clean mode and joystick visibility support"""
         if not self.game_data or 'players' not in self.game_data:
             return
         
-        # First load saved positions (ROM-specific or global)
+        # Load saved positions
         saved_positions = self.load_saved_positions()
         print(f"Loaded positions: {len(saved_positions)} control positions found")
         
-        # Make sure joystick_visible is initialized
-        if not hasattr(self, 'joystick_visible'):
-            # Try to load from settings
-            bezel_settings = self.load_bezel_settings()
-            self.joystick_visible = bezel_settings.get("joystick_visible", True)
-            print(f"Loaded joystick_visible from settings: {self.joystick_visible}")
-        
-        # Get Player 1 controls
+        # Process controls
         for player in self.game_data.get('players', []):
-            if player['number'] != 1:  # Only show Player 1 controls for now
+            if player['number'] != 1:  # Only show Player 1 controls
                 continue
-                    
+                
             # Create a label for each control
             grid_x, grid_y = 0, 0
             for control in player.get('labels', []):
                 control_name = control['name']
                 action_text = control['value']
                 
-                # Apply text settings - uppercase if enabled
+                # Apply text settings
                 if self.text_settings.get("use_uppercase", False):
                     action_text = action_text.upper()
                 
-                # Create a draggable label with current text settings
-                label = DraggableLabel(action_text, self.canvas, settings=self.text_settings)
-                
-                # Create shadow effect for better visibility
-                shadow_label = QLabel(action_text, self.canvas)
-                shadow_label.setStyleSheet("color: black; background-color: transparent; border: none;")
-                
-                # Copy font settings from main label
-                shadow_label.setFont(label.font())
-                
-                # Use saved position if available, otherwise use default grid position
+                # Get position - use saved position or default grid position
                 if control_name in saved_positions:
                     # Get saved position
                     pos_x, pos_y = saved_positions[control_name]
@@ -3267,6 +3256,28 @@ class PreviewWindow(QMainWindow):
                     if grid_x == 0:
                         grid_y += 1
                 
+                # Create label based on mode
+                if clean_mode:
+                    # Simple label without drag features in clean mode
+                    label = QLabel(action_text, self.canvas)
+                    
+                    # Apply font and styling
+                    font = QFont(self.text_settings.get("font_family", "Arial"), 
+                                self.text_settings.get("font_size", 28), 
+                                QFont.Bold)
+                    label.setFont(font)
+                    label.setStyleSheet("color: white; background-color: transparent;")
+                else:
+                    # Standard draggable label with all editing features
+                    label = DraggableLabel(action_text, self.canvas, settings=self.text_settings)
+                
+                # Create shadow effect for better visibility
+                shadow_label = QLabel(action_text, self.canvas)
+                shadow_label.setStyleSheet("color: black; background-color: transparent; border: none;")
+                
+                # Copy font settings from main label
+                shadow_label.setFont(label.font())
+                
                 # Position the labels - IMPORTANT: shadow goes behind!
                 shadow_label.move(x + 2, y + 2)  # Shadow offset
                 label.move(x, y)
@@ -3275,23 +3286,34 @@ class PreviewWindow(QMainWindow):
                 shadow_label.lower()
                 
                 # Store the labels
-                self.control_labels[control_name] = {
-                    'label': label,
-                    'shadow': shadow_label,
-                    'action': action_text,
-                    'original_pos': original_pos  # Store without offset for reset
-                }
+                if clean_mode:
+                    self.control_labels[control_name] = {
+                        'label': label,
+                        'shadow': shadow_label,
+                        'action': action_text
+                    }
+                else:
+                    self.control_labels[control_name] = {
+                        'label': label,
+                        'shadow': shadow_label,
+                        'action': action_text,
+                        'original_pos': original_pos  # Store without offset for reset
+                    }
                 
                 # Store shadow label separately for convenience
                 self.shadow_labels[control_name] = shadow_label
                 
-                # Connect position update for shadow
-                original_mouseMoveEvent = label.mouseMoveEvent
-                label.mouseMoveEvent = lambda event, label=label, shadow=shadow_label, orig_func=original_mouseMoveEvent: self.on_label_move(event, label, shadow, orig_func)
+                # Connect position update for shadow (only for draggable labels)
+                if not clean_mode:
+                    original_mouseMoveEvent = label.mouseMoveEvent
+                    label.mouseMoveEvent = lambda event, label=label, shadow=shadow_label, orig_func=original_mouseMoveEvent: self.on_label_move(event, label, shadow, orig_func)
                 
                 # CRITICAL FIX: Check if this is a joystick control and apply visibility
                 if "JOYSTICK" in control_name:
                     # Initially hide joystick controls if joystick_visible is False
+                    if not hasattr(self, 'joystick_visible'):
+                        self.joystick_visible = True  # Default value if attribute doesn't exist
+                    
                     if not self.joystick_visible:
                         label.setVisible(False)
                         shadow_label.setVisible(False)
