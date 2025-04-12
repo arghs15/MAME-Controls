@@ -607,14 +607,15 @@ class MAMEControlConfig(QMainWindow):
         try:
             from mame_controls_preview import PreviewWindow
             
-            # Create and configure the preview window
-            self.preview_window = PreviewWindow(rom_name, game_data, self.mame_dir)
+            # Create the preview window with clean mode parameter
+            self.preview_window = PreviewWindow(rom_name, game_data, self.mame_dir, 
+                                            self, 
+                                            hide_buttons=clean_mode,  # Hide buttons in clean mode
+                                            clean_mode=clean_mode)  # Pass clean mode flag
             
-            # Apply clean mode if requested
-            if clean_mode:
-                # These attributes/methods might need to be implemented in your PreviewWindow class
-                self.preview_window.hide_buttons = True  # Hide button frame
-                self.preview_window.clean_mode = True    # Disable drag handles, edit marks, etc.
+            # Show the window
+            self.preview_window.showFullScreen()
+            print("Preview window displayed successfully")
             
             # Show the window
             self.preview_window.showFullScreen()

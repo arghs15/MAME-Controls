@@ -624,6 +624,10 @@ class PreviewWindow(QMainWindow):
         self.hide_buttons = hide_buttons
         self.clean_mode = clean_mode
         
+        # Print debugging info
+        print(f"Initializing PreviewWindow for ROM: {rom_name}")
+        print(f"Clean mode: {clean_mode}, Hide buttons: {hide_buttons}")
+
         # Force window to be displayed in the correct place
         self.parent = parent
         
@@ -631,12 +635,15 @@ class PreviewWindow(QMainWindow):
         print(f"Initializing PreviewWindow for ROM: {rom_name}")
         print(f"MAME directory: {mame_dir}")
         print(f"Clean mode: {clean_mode}, Hide buttons: {hide_buttons}")
-        
+
         try:
             # Load settings
             self.text_settings = self.load_text_settings()
             self.logo_settings = self.load_logo_settings()
             
+            # Initialize logo_visible from settings
+            self.logo_visible = self.logo_settings.get("logo_visible", True)
+
             # Configure window
             self.setWindowTitle(f"Control Preview: {rom_name}")
             self.resize(1280, 720)
@@ -738,7 +745,6 @@ class PreviewWindow(QMainWindow):
                 self.add_xinput_controls_button()
                 
                 # Add logo controls
-                self.logo_visible = self.logo_settings.get("logo_visible", True)
                 logo_text = "Hide Logo" if self.logo_visible else "Show Logo"
                 self.logo_button = QPushButton(logo_text)
                 self.logo_button.clicked.connect(self.toggle_logo)
@@ -766,7 +772,7 @@ class PreviewWindow(QMainWindow):
             # Load the background image
             self.load_background_image_fullscreen()
             
-            # Create control labels - with clean mode option
+            # Create control labels - WITH clean mode parameter
             self.create_control_labels(clean_mode=self.clean_mode)
             
             # Add logo if enabled
@@ -1764,20 +1770,25 @@ class PreviewWindow(QMainWindow):
         
         # Set initial pixmap
         self.logo_label.setPixmap(original_pixmap)
-        
-        # Set cursor for dragging
-        self.logo_label.setCursor(Qt.OpenHandCursor)
-        
-        # Enable mouse tracking for logo
-        self.logo_label.setMouseTracking(True)
-        
-        # Add drag and resize support
-        self.logo_label.mousePressEvent = lambda event: self.logo_mouse_press(event)
-        self.logo_label.mouseMoveEvent = lambda event: self.logo_mouse_move(event)
-        self.logo_label.mouseReleaseEvent = lambda event: self.logo_mouse_release(event)
-        
-        # Add custom paint event for resize handle
-        self.logo_label.paintEvent = lambda event: self.logo_paint_event(event)
+
+        # Always remove border, especially important in clean mode
+        self.logo_label.setStyleSheet("background-color: transparent; border: none;")
+
+        # Only enable drag and resize in non-clean mode
+        if not hasattr(self, 'clean_mode') or not self.clean_mode:
+            # Set cursor for dragging
+            self.logo_label.setCursor(Qt.OpenHandCursor)
+            
+            # Enable mouse tracking for logo
+            self.logo_label.setMouseTracking(True)
+            
+            # Add drag and resize support
+            self.logo_label.mousePressEvent = lambda event: self.logo_mouse_press(event)
+            self.logo_label.mouseMoveEvent = lambda event: self.logo_mouse_move(event)
+            self.logo_label.mouseReleaseEvent = lambda event: self.logo_mouse_release(event)
+            
+            # Add custom paint event for resize handle
+            self.logo_label.paintEvent = lambda event: self.logo_paint_event(event)
         
         # Now update the logo display to apply settings
         # This will resize according to saved settings
@@ -3200,8 +3211,6 @@ class PreviewWindow(QMainWindow):
             import traceback
             traceback.print_exc()
 
-    
-    # Enhance the create_control_labels method to load saved positions
     # Improved create_control_labels method that respects joystick visibility
     def create_control_labels(self, clean_mode=False):
         """Create control labels with option for clean mode and joystick visibility support"""
@@ -3210,18 +3219,29 @@ class PreviewWindow(QMainWindow):
         
         # Load saved positions
         saved_positions = self.load_saved_positions()
-        print(f"Loaded positions: {len(saved_positions)} control positions found")
+        
+        # Make sure joystick_visible is set before we start creating controls
+        if not hasattr(self, 'joystick_visible'):
+            # Load from settings if possible
+            bezel_settings = self.load_bezel_settings() if hasattr(self, 'load_bezel_settings') else {}
+            self.joystick_visible = bezel_settings.get("joystick_visible", True)
+            print(f"Pre-initialized joystick visibility to: {self.joystick_visible}")
         
         # Process controls
         for player in self.game_data.get('players', []):
             if player['number'] != 1:  # Only show Player 1 controls
                 continue
-                
+                    
             # Create a label for each control
             grid_x, grid_y = 0, 0
             for control in player.get('labels', []):
                 control_name = control['name']
                 action_text = control['value']
+                
+                # Determine visibility BEFORE creating the control
+                is_visible = True
+                if "JOYSTICK" in control_name:
+                    is_visible = getattr(self, 'joystick_visible', True)
                 
                 # Apply text settings
                 if self.text_settings.get("use_uppercase", False):
@@ -3238,7 +3258,6 @@ class PreviewWindow(QMainWindow):
                     # Use saved position
                     x, y = pos_x, pos_y + y_offset
                     original_pos = QPoint(pos_x, pos_y)  # Store without offset
-                    print(f"Using saved position for {control_name}: {pos_x}, {pos_y}")
                 else:
                     # Default position based on a grid layout
                     x = 100 + (grid_x * 150)
@@ -3266,7 +3285,7 @@ class PreviewWindow(QMainWindow):
                                 self.text_settings.get("font_size", 28), 
                                 QFont.Bold)
                     label.setFont(font)
-                    label.setStyleSheet("color: white; background-color: transparent;")
+                    label.setStyleSheet("color: white; background-color: transparent; border: none;")
                 else:
                     # Standard draggable label with all editing features
                     label = DraggableLabel(action_text, self.canvas, settings=self.text_settings)
@@ -3284,6 +3303,10 @@ class PreviewWindow(QMainWindow):
                 
                 # Make shadow label go behind the main label
                 shadow_label.lower()
+                
+                # Apply visibility immediately
+                label.setVisible(is_visible)
+                shadow_label.setVisible(is_visible)
                 
                 # Store the labels
                 if clean_mode:
@@ -3307,23 +3330,38 @@ class PreviewWindow(QMainWindow):
                 if not clean_mode:
                     original_mouseMoveEvent = label.mouseMoveEvent
                     label.mouseMoveEvent = lambda event, label=label, shadow=shadow_label, orig_func=original_mouseMoveEvent: self.on_label_move(event, label, shadow, orig_func)
-                
-                # CRITICAL FIX: Check if this is a joystick control and apply visibility
-                if "JOYSTICK" in control_name:
-                    # Initially hide joystick controls if joystick_visible is False
-                    if not hasattr(self, 'joystick_visible'):
-                        self.joystick_visible = True  # Default value if attribute doesn't exist
-                    
-                    if not self.joystick_visible:
-                        label.setVisible(False)
-                        shadow_label.setVisible(False)
-                        print(f"Initially hiding joystick control: {control_name}")
         
         # Update joystick button text if it exists
         if hasattr(self, 'joystick_button'):
             self.joystick_button.setText("Show Joystick" if not self.joystick_visible else "Hide Joystick")
-            print(f"Updated joystick button text for visibility: {self.joystick_visible}")
-
+        
+        # At the end of the method, add a QTimer to ensure proper layout in clean mode
+        if clean_mode:
+            from PyQt5.QtCore import QTimer
+            QTimer.singleShot(50, self.ensure_clean_layout)
+                
+    def ensure_clean_layout(self):
+        """Ensure all controls are properly laid out in clean mode"""
+        # Force a redraw of the canvas
+        self.canvas.update()
+        
+        # Make sure all shadow labels are properly positioned
+        for control_name, control_data in self.control_labels.items():
+            if 'shadow' in control_data and 'label' in control_data:
+                shadow = control_data['shadow']
+                label = control_data['label']
+                pos = label.pos()
+                shadow.move(pos.x() + 2, pos.y() + 2)
+                
+                # Make sure shadow is behind label
+                shadow.lower()
+                
+        # If logo exists, make sure it has no border
+        if hasattr(self, 'logo_label') and self.logo_label:
+            self.logo_label.setStyleSheet("background-color: transparent; border: none;")
+            
+        print("Clean layout applied - shadows positioned correctly")
+    
     # Add or update a method to load saved positions
     def load_saved_positions(self):
         """Load saved positions from ROM-specific or global config"""
