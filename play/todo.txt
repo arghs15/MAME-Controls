@@ -1,6 +1,6 @@
 preferred screen doesn't work correctly. needs args for standalone preview to overwrite json
 
-save image text is in slightly different place than preview
+--no-buttons for standalone cmd
 
 Preview image black bars on sides
 -not covering full screen. two black bars down each side
