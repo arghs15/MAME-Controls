@@ -775,6 +775,12 @@ class PreviewWindow(QMainWindow):
         self.rom_button.clicked.connect(lambda: self.save_positions(is_global=False))
         self.rom_button.setStyleSheet(button_style)
         self.button_layout.addWidget(self.rom_button)
+
+        # Create button for XInput controls toggle
+        self.xinput_controls_button = QPushButton("Show All XInput")
+        self.xinput_controls_button.clicked.connect(self.toggle_xinput_controls)
+        self.xinput_controls_button.setStyleSheet(button_style)
+        self.button_layout.addWidget(self.xinput_controls_button)
         
         self.toggle_texts_button = QPushButton("Hide Texts")
         self.toggle_texts_button.clicked.connect(self.toggle_texts)
@@ -1483,10 +1489,10 @@ class PreviewWindow(QMainWindow):
         """
         
         # Create button for XInput controls toggle
-        self.xinput_controls_button = QPushButton("Show All XInput")
+        '''self.xinput_controls_button = QPushButton("Show All XInput")
         self.xinput_controls_button.clicked.connect(self.toggle_xinput_controls)
         self.xinput_controls_button.setStyleSheet(button_style)
-        self.xinput_controls_button.setToolTip("Show all XInput controls for positioning")
+        self.button_layout.setToolTip("Show all XInput controls for positioning")'''
         
         # Add to bottom row if it exists
         if hasattr(self, 'bottom_row'):
