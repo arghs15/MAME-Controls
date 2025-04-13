@@ -138,6 +138,7 @@ class DraggableLabel(QLabel):
             self.move(new_pos)
             
             # Notify the parent to update shadow label if it exists
+            # Notify the parent to update shadow label if it exists
             if hasattr(self.parent(), "update_shadow_position"):
                 self.parent().update_shadow_position(self)
         
@@ -668,7 +669,8 @@ class PreviewWindow(QMainWindow):
             self.canvas.setStyleSheet("background-color: black;")
             self.main_layout.addWidget(self.canvas, 1)  # 1 stretch factor for most space
             
-            # Only create buttons if not in clean mode
+            # Only create buttons if not hiding them
+            # Only create buttons if not hiding them
             if not self.hide_buttons:
                 # Button row at the bottom
                 self.button_frame = QFrame()
@@ -828,6 +830,22 @@ class PreviewWindow(QMainWindow):
         # Update button text
         if hasattr(self, 'bezel_button'):
             self.bezel_button.setText("Hide Bezel" if self.bezel_visible else "Show Bezel")
+    
+    # Add this method to the PreviewWindow class in mame_controls_preview.py
+    def ensure_consistent_text_positioning(self):
+        """
+        Ensure text positioning is consistent across all display methods.
+        Call this after creating control labels.
+        """
+        # Apply standard positioning logic to all labels
+        for control_name, control_data in self.control_labels.items():
+            label = control_data['label']
+            shadow = self.shadow_labels[control_name]
+            
+            # Ensure shadow is exactly 2px offset from main label
+            shadow.move(label.pos().x() + 2, label.pos().y() + 2)
+        
+        print("Applied consistent text positioning to all controls")
     
     # Add bezel-related attributes and initial setup to __init__
     def add_bezel_support_to_init(self):
@@ -2446,8 +2464,9 @@ class PreviewWindow(QMainWindow):
     
     # Fix for the save_image method
     # Completely rewritten save_image method with explicit bezel handling
+    # Add/update the save_image method in PreviewWindow in mame_controls_preview.py:
     def save_image(self):
-        """Save current preview as an image with robust bezel support"""
+        """Save current preview as an image with consistent text positioning"""
         try:
             # Create preview directory if it doesn't exist
             preview_dir = os.path.join(self.mame_dir, "preview")
@@ -2467,11 +2486,6 @@ class PreviewWindow(QMainWindow):
                 ) != QMessageBox.Yes:
                     return False
             
-            # Debug info about current state
-            print("\n--- Starting image save process ---")
-            print(f"Canvas size: {self.canvas.width()}x{self.canvas.height()}")
-            print(f"Bezel visible: {getattr(self, 'bezel_visible', False)}")
-            
             # Create a new image with the same size as the canvas
             image = QImage(
                 self.canvas.width(),
@@ -2487,7 +2501,7 @@ class PreviewWindow(QMainWindow):
             painter.setRenderHint(QPainter.TextAntialiasing)
             painter.setRenderHint(QPainter.SmoothPixmapTransform)
             
-            # LAYER 1: Draw the background image
+            # Draw the background image
             if hasattr(self, 'background_pixmap') and self.background_pixmap and not self.background_pixmap.isNull():
                 bg_pixmap = self.background_pixmap
                 
@@ -2497,100 +2511,53 @@ class PreviewWindow(QMainWindow):
                 
                 # Draw the pixmap
                 painter.drawPixmap(x, y, bg_pixmap)
-                print(f"Background drawn at {x},{y}, size {bg_pixmap.width()}x{bg_pixmap.height()}")
-            elif hasattr(self, 'bg_label') and self.bg_label and self.bg_label.pixmap():
-                # Fallback to current bg_label pixmap if needed
-                bg_pixmap = self.bg_label.pixmap()
-                painter.drawPixmap(self.bg_label.pos(), bg_pixmap)
-                print(f"Background drawn via bg_label at {self.bg_label.pos()}, size {bg_pixmap.width()}x{bg_pixmap.height()}")
-            else:
-                print("No background image available to draw")
             
-            # LAYER 2: Draw the bezel if it's visible - with extra checks
-            bezel_drawn = False
-            if hasattr(self, 'bezel_visible') and self.bezel_visible:
-                print("Bezel is marked as visible, attempting to draw it")
-                
-                # First try the bezel label's pixmap
-                if hasattr(self, 'bezel_label') and self.bezel_label and self.bezel_label.isVisible():
-                    bezel_pixmap = self.bezel_label.pixmap()
-                    if bezel_pixmap and not bezel_pixmap.isNull():
-                        # Draw centered on canvas
-                        x = (self.canvas.width() - bezel_pixmap.width()) // 2
-                        y = (self.canvas.height() - bezel_pixmap.height()) // 2
-                        painter.drawPixmap(x, y, bezel_pixmap)
-                        print(f"Bezel drawn from label at {x},{y}, size {bezel_pixmap.width()}x{bezel_pixmap.height()}")
-                        bezel_drawn = True
-                
-                # If that didn't work, try the stored bezel pixmap
-                if not bezel_drawn and hasattr(self, 'bezel_pixmap') and not self.bezel_pixmap.isNull():
-                    bezel_pixmap = self.bezel_pixmap
-                    x = (self.canvas.width() - bezel_pixmap.width()) // 2
-                    y = (self.canvas.height() - bezel_pixmap.height()) // 2
-                    painter.drawPixmap(x, y, bezel_pixmap)
-                    print(f"Bezel drawn from stored pixmap at {x},{y}, size {bezel_pixmap.width()}x{bezel_pixmap.height()}")
-                    bezel_drawn = True
-                    
-                # If both methods failed, try to reload the bezel
-                if not bezel_drawn:
-                    bezel_path = self.find_bezel_path(self.rom_name)
-                    if bezel_path and os.path.exists(bezel_path):
-                        direct_bezel = QPixmap(bezel_path)
-                        if not direct_bezel.isNull():
-                            direct_bezel = direct_bezel.scaled(
-                                self.canvas.width(),
-                                self.canvas.height(),
-                                Qt.KeepAspectRatio,
-                                Qt.SmoothTransformation
-                            )
-                            x = (self.canvas.width() - direct_bezel.width()) // 2
-                            y = (self.canvas.height() - direct_bezel.height()) // 2
-                            painter.drawPixmap(x, y, direct_bezel)
-                            print(f"Bezel drawn directly from file at {x},{y}, size {direct_bezel.width()}x{direct_bezel.height()}")
-                            bezel_drawn = True
+            # Draw the bezel if it's visible
+            if hasattr(self, 'bezel_visible') and self.bezel_visible and hasattr(self, 'bezel_pixmap') and not self.bezel_pixmap.isNull():
+                bezel_pixmap = self.bezel_pixmap
+                # Position bezel in center
+                x = (self.canvas.width() - bezel_pixmap.width()) // 2
+                y = (self.canvas.height() - bezel_pixmap.height()) // 2
+                painter.drawPixmap(x, y, bezel_pixmap)
             
-            if not bezel_drawn and getattr(self, 'bezel_visible', False):
-                print("Warning: Bezel is marked as visible but could not be drawn")
-            
-            # LAYER 3: Draw the logo if visible
+            # Draw the logo if visible
             if hasattr(self, 'logo_label') and self.logo_label and self.logo_label.isVisible():
                 logo_pixmap = self.logo_label.pixmap()
                 if logo_pixmap and not logo_pixmap.isNull():
                     painter.drawPixmap(self.logo_label.pos(), logo_pixmap)
-                    print(f"Logo drawn at {self.logo_label.pos()}, size {logo_pixmap.width()}x{logo_pixmap.height()}")
             
-            # LAYER 4: Draw control labels
+            # Draw control labels - CRITICAL CHANGE: Use the same relative positioning
             if hasattr(self, 'control_labels'):
                 for control_name, control_data in self.control_labels.items():
                     label = control_data['label']
+                    shadow = self.shadow_labels[control_name]
                     
-                    # Skip if label is not visible
+                    # Skip if not visible
                     if not label.isVisible():
                         continue
                     
-                    # Draw shadow first if visible
-                    shadow = self.shadow_labels.get(control_name)
-                    if shadow and shadow.isVisible():
-                        shadow_font = shadow.font()
-                        painter.setFont(shadow_font)
-                        painter.setPen(Qt.black)
-                        painter.drawText(
-                            shadow.pos().x(), 
-                            shadow.pos().y() + QFontMetrics(shadow_font).height(), 
-                            shadow.text()
-                        )
-                    
-                    # Then draw the label text
+                    # IMPORTANT: Get the exact font from the label
                     font = label.font()
+                    metrics = QFontMetrics(font)
+                    
+                    # CRITICAL FIX: Draw shadow first using EXACT same position logic as in the UI
+                    # Draw shadow first with exact +2,+2 offset
+                    shadow_pos = label.pos() + QPoint(2, 2)
                     painter.setFont(font)
-                    painter.setPen(Qt.white)
+                    painter.setPen(Qt.black)
                     painter.drawText(
-                        label.pos().x(), 
-                        label.pos().y() + QFontMetrics(font).height(), 
+                        shadow_pos.x(),
+                        shadow_pos.y() + metrics.ascent(),  # This is the key fix - using ascent() 
                         label.text()
                     )
                     
-                print(f"Drew {len(self.control_labels)} control labels")
+                    # Then draw main text
+                    painter.setPen(Qt.white)
+                    painter.drawText(
+                        label.pos().x(),
+                        label.pos().y() + metrics.ascent(),  # This is the key fix - using ascent()
+                        label.text()
+                    )
             
             # End painting
             painter.end()
@@ -3339,6 +3306,10 @@ class PreviewWindow(QMainWindow):
         if clean_mode:
             from PyQt5.QtCore import QTimer
             QTimer.singleShot(50, self.ensure_clean_layout)
+        
+        # At the very end of the method, add:
+        # Ensure consistent text positioning
+        self.ensure_consistent_text_positioning()
                 
     def ensure_clean_layout(self):
         """Ensure all controls are properly laid out in clean mode"""
@@ -3409,6 +3380,9 @@ class PreviewWindow(QMainWindow):
         # Call the original mouseMoveEvent to handle dragging
         original_func(event)
         
+        # CRITICAL CHANGE: Use exact 2px offset rather than calculating
+        shadow.move(label.pos().x() + 2, label.pos().y() + 2)
+
         # Now update the shadow position
         if hasattr(label, 'dragging') and label.dragging:
             shadow.move(label.pos().x() + 2, label.pos().y() + 2)

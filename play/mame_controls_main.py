@@ -61,6 +61,9 @@ def main():
             # Create MAMEControlConfig in preview mode
             config = MAMEControlConfig(preview_only=True)
             
+            # Force hide buttons in preview-only mode regardless of other settings
+            config.hide_preview_buttons = True
+            
             # Show preview for specified game
             # Show preview for specified game with clean mode if requested
             config.show_preview_standalone(args.game, args.auto_close, clean_mode=args.clean_preview)
