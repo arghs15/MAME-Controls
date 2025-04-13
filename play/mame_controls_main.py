@@ -34,6 +34,7 @@ def main():
     parser.add_argument('--game', type=str, help='Specify the ROM name to preview')
     parser.add_argument('--screen', type=int, default=2, help='Screen number to display preview on (default: 2)')
     parser.add_argument('--auto-close', action='store_true', help='Automatically close preview when MAME exits')
+    parser.add_argument('--no-buttons', action='store_true', help='Hide buttons in preview mode (overrides settings)')
     parser.add_argument('--use-qt', action='store_true', help='Use the PyQt5 version of the main GUI (default: Tkinter)')
     args = parser.parse_args()
     print("Arguments parsed.")
@@ -61,10 +62,11 @@ def main():
             # Create MAMEControlConfig in preview mode
             config = MAMEControlConfig(preview_only=True)
             
-            # Force hide buttons in preview-only mode regardless of other settings
-            config.hide_preview_buttons = True
+            # Force hide buttons in preview-only mode if requested
+            if args.no_buttons:
+                config.hide_preview_buttons = True
+                print("Command line option forcing buttons to be hidden")
             
-            # Show preview for specified game
             # Show preview for specified game with clean mode if requested
             config.show_preview_standalone(args.game, args.auto_close, clean_mode=args.clean_preview)
             

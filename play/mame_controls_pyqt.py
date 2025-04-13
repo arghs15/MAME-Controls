@@ -588,6 +588,19 @@ class MAMEControlConfig(QMainWindow):
         # Load settings (for screen preference)
         self.load_settings()
         
+        # ADDED: Get command line arguments for screen and button visibility
+        import sys
+        for i, arg in enumerate(sys.argv):
+            if arg == '--screen' and i+1 < len(sys.argv):
+                try:
+                    self.preferred_preview_screen = int(sys.argv[i+1])
+                    print(f"OVERRIDE: Using screen {self.preferred_preview_screen} from command line")
+                except:
+                    pass
+            elif arg == '--no-buttons':
+                self.hide_preview_buttons = True
+                print(f"OVERRIDE: Hiding buttons due to command line flag")
+        
         # Set the current game
         self.current_game = rom_name
         
@@ -608,7 +621,6 @@ class MAMEControlConfig(QMainWindow):
             from mame_controls_preview import PreviewWindow
             
             # Create the preview window with clean mode parameter
-            # Create and configure the preview window
             self.preview_window = PreviewWindow(rom_name, game_data, self.mame_dir, 
                                                 hide_buttons=self.hide_preview_buttons,
                                                 clean_mode=clean_mode)
@@ -616,13 +628,21 @@ class MAMEControlConfig(QMainWindow):
             # CRITICAL ADDITION: Call the new method to ensure consistent positioning
             self.preview_window.ensure_consistent_text_positioning()
             
-            # Show the window and set up auto-close if requested
-            self.preview_window.showFullScreen()
-            print("Preview window displayed successfully")
             
-            # Show the window
+            # Ensure the window appears on top of MAME
+            self.preview_window.setWindowFlags(Qt.WindowStaysOnTopHint | Qt.FramelessWindowHint)
+
+            # Show the window fullscreen on the specified screen
+            screen_num = getattr(self, 'preferred_preview_screen', 2)
+            self.preview_window.current_screen = screen_num
+            self.preview_window.move_to_screen(screen_num)
+            
+            # Make sure it's active and visible
             self.preview_window.showFullScreen()
-            print("Preview window displayed successfully")
+            self.preview_window.activateWindow()
+            self.preview_window.raise_()
+
+            print(f"Preview window displayed successfully on screen {screen_num}, topmost: True")
         except Exception as e:
             print(f"Error showing preview: {str(e)}")
             import traceback

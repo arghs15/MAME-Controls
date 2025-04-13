@@ -632,11 +632,6 @@ class PreviewWindow(QMainWindow):
         # Force window to be displayed in the correct place
         self.parent = parent
         
-        # Print debugging info
-        print(f"Initializing PreviewWindow for ROM: {rom_name}")
-        print(f"MAME directory: {mame_dir}")
-        print(f"Clean mode: {clean_mode}, Hide buttons: {hide_buttons}")
-
         try:
             # Load settings
             self.text_settings = self.load_text_settings()
@@ -649,9 +644,6 @@ class PreviewWindow(QMainWindow):
             self.setWindowTitle(f"Control Preview: {rom_name}")
             self.resize(1280, 720)
             
-            # Keep frame for now to make window more visible
-            # self.setWindowFlags(Qt.FramelessWindowHint)
-            
             # Set attributes for proper window handling
             self.setAttribute(Qt.WA_DeleteOnClose, True)
             
@@ -660,7 +652,7 @@ class PreviewWindow(QMainWindow):
             self.central_widget.setStyleSheet("background-color: black;")
             self.setCentralWidget(self.central_widget)
             
-            # Main layout
+            # Main layout - just holds the canvas, no buttons in this layout
             self.main_layout = QVBoxLayout(self.central_widget)
             self.main_layout.setContentsMargins(0, 0, 0, 0)
             
@@ -668,108 +660,6 @@ class PreviewWindow(QMainWindow):
             self.canvas = QWidget()
             self.canvas.setStyleSheet("background-color: black;")
             self.main_layout.addWidget(self.canvas, 1)  # 1 stretch factor for most space
-            
-            # Only create buttons if not hiding them
-            # Only create buttons if not hiding them
-            if not self.hide_buttons:
-                # Button row at the bottom
-                self.button_frame = QFrame()
-                self.button_frame.setStyleSheet("background-color: rgba(30, 30, 30, 180);")  # Semi-transparent
-                self.button_frame.setFixedHeight(80)
-                self.button_layout = QVBoxLayout(self.button_frame)
-                self.button_layout.setContentsMargins(10, 5, 10, 5)
-                
-                # Create two rows for buttons
-                self.top_row = QHBoxLayout()
-                self.bottom_row = QHBoxLayout()
-                
-                # Button style
-                button_style = """
-                    QPushButton {
-                        background-color: #3d3d3d;
-                        color: white;
-                        border: 1px solid #5a5a5a;
-                        border-radius: 4px;
-                        padding: 6px 12px;
-                        font-weight: bold;
-                        min-width: 90px;
-                    }
-                    QPushButton:hover {
-                        background-color: #4a4a4a;
-                    }
-                    QPushButton:pressed {
-                        background-color: #2a2a2a;
-                    }
-                """
-                
-                # Top row buttons
-                self.close_button = QPushButton("Close")
-                self.close_button.clicked.connect(self.close)
-                self.close_button.setStyleSheet(button_style)
-                self.top_row.addWidget(self.close_button)
-                
-                self.reset_button = QPushButton("Reset")
-                self.reset_button.clicked.connect(self.reset_positions)
-                self.reset_button.setStyleSheet(button_style)
-                self.top_row.addWidget(self.reset_button)
-                
-                self.global_button = QPushButton("Global")
-                self.global_button.clicked.connect(lambda: self.save_positions(is_global=True))
-                self.global_button.setStyleSheet(button_style)
-                self.top_row.addWidget(self.global_button)
-                
-                self.rom_button = QPushButton("ROM")
-                self.rom_button.clicked.connect(lambda: self.save_positions(is_global=False))
-                self.rom_button.setStyleSheet(button_style)
-                self.top_row.addWidget(self.rom_button)
-                
-                self.text_settings_button = QPushButton("Text Settings")
-                self.text_settings_button.clicked.connect(self.show_text_settings)
-                self.text_settings_button.setStyleSheet(button_style)
-                self.top_row.addWidget(self.text_settings_button)
-                
-                self.save_image_button = QPushButton("Save Image")
-                self.save_image_button.clicked.connect(self.save_image)
-                self.save_image_button.setStyleSheet(button_style)
-                self.top_row.addWidget(self.save_image_button)
-                
-                # Bottom row buttons
-                self.joystick_button = QPushButton("Joystick")
-                self.joystick_button.clicked.connect(self.toggle_joystick_controls)
-                self.joystick_button.setStyleSheet(button_style)
-                self.bottom_row.addWidget(self.joystick_button)
-                
-                self.toggle_texts_button = QPushButton("Hide Texts")
-                self.toggle_texts_button.clicked.connect(self.toggle_texts)
-                self.toggle_texts_button.setStyleSheet(button_style)
-                self.bottom_row.addWidget(self.toggle_texts_button)
-                
-                self.add_xinput_controls_button()
-                
-                # Add logo controls
-                logo_text = "Hide Logo" if self.logo_visible else "Show Logo"
-                self.logo_button = QPushButton(logo_text)
-                self.logo_button.clicked.connect(self.toggle_logo)
-                self.logo_button.setStyleSheet(button_style)
-                self.bottom_row.addWidget(self.logo_button)
-                
-                self.logo_pos_button = QPushButton("Logo Pos")
-                self.logo_pos_button.clicked.connect(self.show_logo_position)
-                self.logo_pos_button.setStyleSheet(button_style)
-                self.bottom_row.addWidget(self.logo_pos_button)
-                
-                # Add screen toggle button
-                self.screen_button = QPushButton("Screen 2")
-                self.screen_button.clicked.connect(self.toggle_screen)
-                self.screen_button.setStyleSheet(button_style)
-                self.bottom_row.addWidget(self.screen_button)
-                
-                # Add rows to button layout
-                self.button_layout.addLayout(self.top_row)
-                self.button_layout.addLayout(self.bottom_row)
-                
-                # Add button frame to main layout
-                self.main_layout.addWidget(self.button_frame)
             
             # Load the background image
             self.load_background_image_fullscreen()
@@ -783,6 +673,10 @@ class PreviewWindow(QMainWindow):
                 
                 # NEW: Add a small delay then force logo resize to ensure it applies correctly
                 QTimer.singleShot(100, self.force_logo_resize)
+            
+            # Create button frame as a FLOATING OVERLAY
+            if not self.hide_buttons and not self.clean_mode:
+                self.create_floating_button_frame()
             
             # Track whether texts are visible
             self.texts_visible = True
@@ -801,7 +695,7 @@ class PreviewWindow(QMainWindow):
             self.layering_for_bezel()
             self.integrate_bezel_support()
             self.canvas.resizeEvent = self.on_canvas_resize_with_background
-    
+        
             # Add this line to initialize bezel state after a short delay
             QTimer.singleShot(500, self.ensure_bezel_state)
             
@@ -815,6 +709,136 @@ class PreviewWindow(QMainWindow):
             traceback.print_exc()
             QMessageBox.critical(self, "Error", f"Error initializing preview: {e}")
             self.close()
+
+    # 2. New method for creating floating button frame
+
+    def create_floating_button_frame(self):
+        """Create clean, simple floating button frame with Tkinter-like styling"""
+        # Create a floating button frame
+        self.button_frame = QFrame(self)
+        
+        # Simple, clean styling with no border
+        self.button_frame.setStyleSheet("""
+            QFrame {
+                background-color: rgba(40, 40, 45, 200);
+                border-radius: 8px;
+                border: none;
+            }
+        """)
+        
+        # Adjust height for single row of buttons
+        self.button_frame.setFixedHeight(50)
+        
+        # Add layout to button frame with better spacing
+        self.button_layout = QHBoxLayout(self.button_frame)
+        self.button_layout.setContentsMargins(10, 5, 10, 5)
+        self.button_layout.setSpacing(8)
+        
+        # Clean, Tkinter-like button style
+        button_style = """
+            QPushButton {
+                background-color: #404050;
+                color: white;
+                border: none;
+                border-radius: 4px;
+                padding: 6px 10px;
+                font-weight: bold;
+                font-family: 'Segoe UI', Arial, sans-serif;
+                font-size: 12px;
+                min-width: 80px;
+            }
+            QPushButton:hover {
+                background-color: #555565;
+            }
+            QPushButton:pressed {
+                background-color: #303040;
+            }
+        """
+        
+        # Create a single row of essential buttons (minimize the number of buttons)
+        self.close_button = QPushButton("Close")
+        self.close_button.clicked.connect(self.close)
+        self.close_button.setStyleSheet(button_style)
+        self.button_layout.addWidget(self.close_button)
+        
+        '''self.reset_button = QPushButton("Reset")
+        self.reset_button.clicked.connect(self.reset_positions)
+        self.reset_button.setStyleSheet(button_style)
+        self.button_layout.addWidget(self.reset_button)'''
+        
+        self.save_button = QPushButton("Global Save")
+        self.save_button.clicked.connect(lambda: self.save_positions(is_global=False))
+        self.save_button.setStyleSheet(button_style)
+        self.button_layout.addWidget(self.save_button)
+
+        self.rom_button = QPushButton("ROM Save")
+        self.rom_button.clicked.connect(lambda: self.save_positions(is_global=False))
+        self.rom_button.setStyleSheet(button_style)
+        self.button_layout.addWidget(self.rom_button)
+        
+        self.toggle_texts_button = QPushButton("Hide Texts")
+        self.toggle_texts_button.clicked.connect(self.toggle_texts)
+        self.toggle_texts_button.setStyleSheet(button_style)
+        self.button_layout.addWidget(self.toggle_texts_button)
+        
+        self.joystick_button = QPushButton("Joystick")
+        self.joystick_button.clicked.connect(self.toggle_joystick_controls)
+        self.joystick_button.setStyleSheet(button_style)
+        self.button_layout.addWidget(self.joystick_button)
+        
+        # Logo toggle
+        logo_text = "Hide Logo" if self.logo_visible else "Show Logo"
+        self.logo_button = QPushButton(logo_text)
+        self.logo_button.clicked.connect(self.toggle_logo)
+        self.logo_button.setStyleSheet(button_style)
+        self.button_layout.addWidget(self.logo_button)
+        
+        # Screen toggle with number indicator
+        self.screen_button = QPushButton(f"Screen {getattr(self, 'current_screen', 1)}")
+        self.screen_button.clicked.connect(self.toggle_screen)
+        self.screen_button.setStyleSheet(button_style)
+        self.button_layout.addWidget(self.screen_button)
+        
+        # Add save image button
+        self.save_image_button = QPushButton("Save Image")
+        self.save_image_button.clicked.connect(self.save_image)
+        self.save_image_button.setStyleSheet(button_style)
+        self.button_layout.addWidget(self.save_image_button)
+        
+        # Determine button frame position
+        self.position_button_frame()
+        
+        # Show button frame
+        self.button_frame.show()
+        
+        # Setup resize handler to reposition button frame
+        self.resizeEvent = self.on_resize_with_buttons
+
+    def position_button_frame(self):
+        """Position the button frame at the bottom of the window"""
+        if hasattr(self, 'button_frame'):
+            # Calculate width and position - with int conversion
+            frame_width = int(min(1000, self.width() * 0.9))  # 90% of window width, max 1000px
+            x_pos = (self.width() - frame_width) // 2
+            y_pos = self.height() - self.button_frame.height() - 20  # 20px from bottom
+            
+            # Set width and position
+            self.button_frame.setFixedWidth(frame_width)
+            self.button_frame.move(x_pos, y_pos)
+
+    # 4. Override the resize event to reposition the button frame
+
+    def on_resize_with_buttons(self, event):
+        """Handle resize events and reposition the button frame"""
+        # Let the normal resize event happen first
+        super().resizeEvent(event)
+        
+        # Reposition the button frame
+        self.position_button_frame()
+        
+        # Also handle bezel resizing if needed
+        if hasattr(self, 'on_resize_with_bezel'):
+            self.on_resize_with_bezel(event)
     
     # Add this to the PreviewWindow class
     def ensure_bezel_state(self):
