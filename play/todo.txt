@@ -1,3 +1,5 @@
+preferred screen doesn't work correctly. needs args for standalone preview to overwrite json
+
 Preview image black bars on sides
 -not covering full screen. two black bars down each side
 -saved image is 1920x994 which is why - look into this and correct
@@ -5,8 +7,6 @@ Preview image black bars on sides
 Add custom fonts
 
 Move all files to preview, and preview\settings
-
-Tkninter for main GUI
 
 Add edit controls from previous exe
 
