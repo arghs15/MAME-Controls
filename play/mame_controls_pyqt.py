@@ -619,10 +619,13 @@ class MAMEControlConfig(QMainWindow):
         try:
             from mame_controls_preview import PreviewWindow
             
-            # Create the preview window with clean mode parameter
+            # Create the preview window
             self.preview_window = PreviewWindow(rom_name, game_data, self.mame_dir, 
                                             hide_buttons=self.hide_preview_buttons,
                                             clean_mode=clean_mode)
+            
+            # Mark this as a standalone preview (for proper cleanup)
+            self.preview_window.standalone_mode = True
             
             # CRITICAL ADDITION: Call the new method to ensure consistent positioning
             self.preview_window.ensure_consistent_text_positioning()

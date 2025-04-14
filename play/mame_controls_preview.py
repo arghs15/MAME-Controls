@@ -2991,7 +2991,13 @@ class PreviewWindow(QMainWindow):
     def handle_key_press(self, event):
         """Handle key press events"""
         if event.key() == Qt.Key_Escape:
+            # Close the window
             self.close()
+            
+            # If this is a standalone preview, also exit the application
+            if getattr(self, 'standalone_mode', False):
+                # Give a short delay before quitting to allow cleanup
+                QTimer.singleShot(100, QApplication.quit)
             
     # Update the __init__ method to remove margins and borders
     def fix_borders_in_init(self):
@@ -3540,7 +3546,7 @@ class PreviewWindow(QMainWindow):
         if not self.game_data or 'players' not in self.game_data:
             return
         
-        # Load saved positions
+        # Load saved positions - this should happen regardless of mode
         saved_positions = self.load_saved_positions()
         
         # Make sure joystick_visible is set before we start creating controls
@@ -3571,6 +3577,7 @@ class PreviewWindow(QMainWindow):
                     action_text = action_text.upper()
                 
                 # Get position - use saved position or default grid position
+                # IMPORTANT: This same position logic should be used for both modes
                 if control_name in saved_positions:
                     # Get saved position
                     pos_x, pos_y = saved_positions[control_name]
@@ -3598,41 +3605,54 @@ class PreviewWindow(QMainWindow):
                     if grid_x == 0:
                         grid_y += 1
                 
-                # When creating each label:
+                # Create label based on mode
                 if clean_mode:
                     # Simple label without drag features in clean mode
                     label = QLabel(action_text, self.canvas)
                     
-                    # IMPORTANT: Use our loaded font
+                    # IMPORTANT: Apply the initialized font if available
                     if hasattr(self, 'current_font'):
                         label.setFont(self.current_font)
-                        print(f"Applied loaded font to {control_name}")
+                    elif hasattr(self, 'initialized_font'):
+                        label.setFont(self.initialized_font)
                     else:
-                        # Fallback
+                        # Fallback to standard approach
                         font = QFont(self.text_settings.get("font_family", "Arial"), 
-                                self.text_settings.get("font_size", 28))
+                                    self.text_settings.get("font_size", 28))
                         font.setBold(self.text_settings.get("bold_strength", 2) > 0)
                         label.setFont(font)
+                    
+                    # Apply styling without font family in stylesheet
+                    label.setStyleSheet("color: white; background-color: transparent; border: none;")
+                    
+                    # CRITICAL: Set exact position for clean mode - same as normal mode
+                    label.move(x, y)
                 else:
-                    # For DraggableLabel, pass the loaded font
+                    # For DraggableLabel, pass our initialized font
                     if hasattr(self, 'current_font'):
                         label = DraggableLabel(action_text, self.canvas, 
                                             settings=self.text_settings,
                                             initialized_font=self.current_font)
+                    elif hasattr(self, 'initialized_font'):
+                        label = DraggableLabel(action_text, self.canvas, 
+                                            settings=self.text_settings,
+                                            initialized_font=self.initialized_font)
                     else:
                         label = DraggableLabel(action_text, self.canvas, 
                                             settings=self.text_settings)
+                    
+                    # Position the draggable label
+                    label.move(x, y)
                 
-                # Make sure shadow also uses the same font
+                # Create shadow with matching font
                 shadow_label = QLabel(action_text, self.canvas)
                 shadow_label.setStyleSheet("color: black; background-color: transparent; border: none;")
                 
-                # Copy font directly from main label to ensure consistency
+                # Copy font directly from main label
                 shadow_label.setFont(label.font())
                 
-                # Position the labels - IMPORTANT: shadow goes behind!
-                shadow_label.move(x + 2, y + 2)  # Shadow offset
-                label.move(x, y)
+                # Position the shadow - IMPORTANT: Use exact offset (2,2)
+                shadow_label.move(x + 2, y + 2)
                 
                 # Make shadow label go behind the main label
                 shadow_label.lower()
@@ -3646,7 +3666,8 @@ class PreviewWindow(QMainWindow):
                     self.control_labels[control_name] = {
                         'label': label,
                         'shadow': shadow_label,
-                        'action': action_text
+                        'action': action_text,
+                        'original_pos': original_pos  # IMPORTANT: Store position for reset in clean mode too
                     }
                 else:
                     self.control_labels[control_name] = {
@@ -3663,19 +3684,6 @@ class PreviewWindow(QMainWindow):
                 if not clean_mode:
                     original_mouseMoveEvent = label.mouseMoveEvent
                     label.mouseMoveEvent = lambda event, label=label, shadow=shadow_label, orig_func=original_mouseMoveEvent: self.on_label_move(event, label, shadow, orig_func)
-        
-        # Update joystick button text if it exists
-        if hasattr(self, 'joystick_button'):
-            self.joystick_button.setText("Show Joystick" if not self.joystick_visible else "Hide Joystick")
-        
-        # At the end of the method, add a QTimer to ensure proper layout in clean mode
-        if clean_mode:
-            from PyQt5.QtCore import QTimer
-            QTimer.singleShot(50, self.ensure_clean_layout)
-        
-        # At the very end of the method, add:
-        # Ensure consistent text positioning
-        self.ensure_consistent_text_positioning()
                 
     def ensure_clean_layout(self):
         """Ensure all controls are properly laid out in clean mode"""
