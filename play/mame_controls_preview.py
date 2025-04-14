@@ -44,6 +44,21 @@ class DraggableLabel(QLabel):
         self.setWordWrap(True)
         self.adjustSize()
         
+    # Add to DraggableLabel class
+    def setFont(self, font):
+        """Override setFont to automatically resize the label"""
+        super().setFont(font)
+        
+        # Adjust size to fit new font
+        self.adjustSize()
+        
+        # Make sure we don't have size restrictions
+        self.setMinimumSize(0, 0)
+        self.setMaximumSize(16777215, 16777215)  # Qt's QWIDGETSIZE_MAX
+        
+        # Also reset size policy
+        self.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)
+    
     def setup_context_menu(self):
         """Setup right-click context menu"""
         self.menu = QMenu(self)
@@ -661,6 +676,7 @@ class PreviewWindow(QMainWindow):
         super().__init__(parent)
 
         # Store parameters
+        self.setVisible(False)  # Start invisible
         self.rom_name = rom_name
         self.game_data = game_data
         self.mame_dir = mame_dir
@@ -758,7 +774,10 @@ class PreviewWindow(QMainWindow):
             print("PreviewWindow initialization complete")
             
             QTimer.singleShot(600, self.apply_joystick_visibility)
-            QTimer.singleShot(200, self.load_and_register_fonts)
+            #QTimer.singleShot(200, self.load_and_register_fonts)
+            QTimer.singleShot(300, self.force_resize_all_labels)
+
+            self.setVisible(True)  # Now show the fully prepared window
             
         except Exception as e:
             print(f"Error in PreviewWindow initialization: {e}")
@@ -837,7 +856,7 @@ class PreviewWindow(QMainWindow):
         self.apply_current_font_to_controls()
     
     def apply_current_font_to_controls(self):
-        """Apply the current font to all control labels"""
+        """Apply the current font to all control labels and properly resize them"""
         if not hasattr(self, 'current_font'):
             print("No current font to apply")
             return
@@ -850,14 +869,33 @@ class PreviewWindow(QMainWindow):
         for control_name, control_data in self.control_labels.items():
             if 'label' in control_data and control_data['label']:
                 label = control_data['label']
+                
+                # Apply the font
                 label.setFont(self.current_font)
                 
-                # Also update shadow
+                # CRITICAL: Adjust size to match new font
+                label.adjustSize()
+                
+                # Make sure we don't have any size restrictions
+                label.setMinimumSize(0, 0)
+                label.setMaximumSize(16777215, 16777215)  # Qt's QWIDGETSIZE_MAX
+                
+                # Also reset size policy to ensure it can grow
+                label.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)
+                
+                # Also update shadow with same settings
                 if control_name in self.shadow_labels:
                     shadow = self.shadow_labels[control_name]
                     shadow.setFont(self.current_font)
+                    shadow.adjustSize()
+                    shadow.setMinimumSize(0, 0)
+                    shadow.setMaximumSize(16777215, 16777215)
+                    shadow.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)
                     
-        print("Font applied to all controls")
+                    # Update shadow position
+                    shadow.move(label.pos().x() + 2, label.pos().y() + 2)
+                    
+        print("Font applied and labels resized")
     
     def init_fonts(self):
         """Initialize and preload fonts at startup to ensure they're available throughout the session"""
@@ -1101,8 +1139,56 @@ class PreviewWindow(QMainWindow):
             
             # Ensure shadow is exactly 2px offset from main label
             shadow.move(label.pos().x() + 2, label.pos().y() + 2)
+            
+            # ADDED: Ensure labels can expand to fit text
+            label.setMinimumSize(0, 0)
+            label.setMaximumSize(16777215, 16777215)
+            label.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)
+            label.adjustSize()
+            
+            shadow.setMinimumSize(0, 0)
+            shadow.setMaximumSize(16777215, 16777215)
+            shadow.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)
+            shadow.adjustSize()
         
         print("Applied consistent text positioning to all controls")
+    
+    def force_resize_all_labels(self):
+        """Force all control labels to resize according to their content"""
+        if not hasattr(self, 'control_labels'):
+            return
+            
+        print("Force resizing all control labels")
+        for control_name, control_data in self.control_labels.items():
+            if 'label' in control_data and control_data['label']:
+                label = control_data['label']
+                
+                # Make sure we don't have size restrictions
+                label.setMinimumSize(0, 0)
+                label.setMaximumSize(16777215, 16777215)
+                
+                # Reset size policy
+                label.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)
+                
+                # Adjust size to content
+                label.adjustSize()
+                
+                # Do the same for shadow
+                if control_name in self.shadow_labels:
+                    shadow = self.shadow_labels[control_name]
+                    shadow.setMinimumSize(0, 0)
+                    shadow.setMaximumSize(16777215, 16777215)
+                    shadow.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)
+                    shadow.adjustSize()
+                    
+                    # Update shadow position
+                    shadow.move(label.pos().x() + 2, label.pos().y() + 2)
+        
+        # Force a repaint
+        if hasattr(self, 'canvas'):
+            self.canvas.update()
+            
+        print("All labels resized")
     
     # Add bezel-related attributes and initial setup to __init__
     def add_bezel_support_to_init(self):
@@ -3258,6 +3344,9 @@ class PreviewWindow(QMainWindow):
                     
                     # Fix layering again after resize
                     self.raise_controls_above_bezel()
+
+                    # Add at the end
+                    QTimer.singleShot(100, self.force_resize_all_labels)
             
             # Call the original resize handler if it exists
             if hasattr(self, 'on_canvas_resize_original'):
