@@ -11,11 +11,12 @@ from PyQt5.QtCore import Qt, QPoint, QTimer, QRect, QEvent, QSize
 
 class DraggableLabel(QLabel):
     """An enhanced draggable label with shadow, resizing and better visibility"""
-    def __init__(self, text, parent=None, shadow_offset=2, settings=None):
+    def __init__(self, text, parent=None, shadow_offset=2, settings=None, initialized_font=None):
         """Initialize the draggable label with enhanced resize behavior"""
         super().__init__(text, parent)
         self.shadow_offset = shadow_offset
         self.settings = settings or {}
+        self.initialized_font = initialized_font
         
         # Apply font settings
         self.update_appearance()
@@ -90,15 +91,21 @@ class DraggableLabel(QLabel):
         
     def update_appearance(self):
         """Update appearance based on settings"""
-        font_family = self.settings.get("font_family", "Arial")
-        font_size = self.settings.get("font_size", 28)
-        use_bold = self.settings.get("bold_strength", 2) > 0
+        # If we have an initialized font, use it directly
+        if self.initialized_font:
+            self.setFont(self.initialized_font)
+            print(f"DraggableLabel using initialized font: {self.initialized_font.family()}")
+        else:
+            # Standard font creation as fallback
+            font_family = self.settings.get("font_family", "Arial")
+            font_size = self.settings.get("font_size", 28)
+            use_bold = self.settings.get("bold_strength", 2) > 0
+            
+            font = QFont(font_family, font_size)
+            font.setBold(use_bold)
+            self.setFont(font)
         
-        font = QFont(font_family, font_size)
-        font.setBold(use_bold)
-        self.setFont(font)
-        
-        # Remove all borders and make background transparent
+        # Only use stylesheet for color and background
         self.setStyleSheet("color: white; background-color: transparent; border: none;")
         self.setCursor(Qt.OpenHandCursor)
         
@@ -648,7 +655,7 @@ Modifications to the PreviewWindow class in mame_controls_preview.py
 
 class PreviewWindow(QMainWindow):
     """Window for displaying game controls preview"""
-    def __init__(self, rom_name, game_data, mame_dir, parent=None, hide_buttons=False, clean_mode=False):
+    def __init__(self, rom_name, game_data, mame_dir, parent=None, hide_buttons=False, clean_mode=False, font_registry=None):
         """Enhanced initialization with better logo handling"""
         # Keep the original __init__ code
         super().__init__(parent)
@@ -660,6 +667,8 @@ class PreviewWindow(QMainWindow):
         self.control_labels = {}
         self.shadow_labels = {}
         self.bg_label = None
+        
+        self.font_registry = font_registry  # Store the registry reference
         
         # Add clean preview mode parameters
         self.hide_buttons = hide_buttons
@@ -677,6 +686,9 @@ class PreviewWindow(QMainWindow):
             self.text_settings = self.load_text_settings()
             self.logo_settings = self.load_logo_settings()
             
+            # NEW: Initialize fonts immediately at startup
+            self.init_fonts()
+
             # Initialize logo_visible from settings
             self.logo_visible = self.logo_settings.get("logo_visible", True)
 
@@ -750,7 +762,81 @@ class PreviewWindow(QMainWindow):
             QMessageBox.critical(self, "Error", f"Error initializing preview: {e}")
             self.close()
 
-    # 2. New method for creating floating button frame
+    def init_fonts(self):
+        """Initialize and preload fonts at startup to ensure they're available throughout the session"""
+        from PyQt5.QtGui import QFontDatabase, QFont
+        
+        print("\n--- INITIALIZING FONTS ---")
+        # Get requested font from settings
+        font_family = self.text_settings.get("font_family", "Arial")
+        font_size = self.text_settings.get("font_size", 28)
+        
+        # 1. First try to load the exact font file if it's a known system font
+        system_font_map = {
+            "Times New Roman": "times.ttf",
+            "Impact": "impact.ttf",
+            "Courier New": "cour.ttf",
+            "Comic Sans MS": "comic.ttf",
+            "Georgia": "georgia.ttf",
+            "Arial": "arial.ttf",
+            "Verdana": "verdana.ttf",
+            "Tahoma": "tahoma.ttf",
+            "Calibri": "calibri.ttf"
+        }
+        
+        # Store the actual font family name loaded
+        self.initialized_font_family = None
+        
+        if font_family in system_font_map:
+            font_file = system_font_map[font_family]
+            font_path = os.path.join("C:\\Windows\\Fonts", font_file)
+            
+            if os.path.exists(font_path):
+                print(f"Preloading system font: {font_path}")
+                font_id = QFontDatabase.addApplicationFont(font_path)
+                
+                if font_id >= 0:
+                    families = QFontDatabase.applicationFontFamilies(font_id)
+                    if families:
+                        self.initialized_font_family = families[0]
+                        print(f"System font loaded and registered as: {self.initialized_font_family}")
+        
+        # 2. Check for custom fonts if we couldn't load a system font
+        if not self.initialized_font_family:
+            fonts_dir = os.path.join(self.mame_dir, "preview", "fonts")
+            if os.path.exists(fonts_dir):
+                # Try to find a matching font file
+                for filename in os.listdir(fonts_dir):
+                    if filename.lower().endswith(('.ttf', '.otf')):
+                        base_name = os.path.splitext(filename)[0]
+                        
+                        # Check if this might be the font we're looking for
+                        if (base_name.lower() == font_family.lower() or
+                            font_family.lower() in base_name.lower()):
+                            
+                            font_path = os.path.join(fonts_dir, filename)
+                            print(f"Trying to load custom font: {font_path}")
+                            
+                            font_id = QFontDatabase.addApplicationFont(font_path)
+                            if font_id >= 0:
+                                families = QFontDatabase.applicationFontFamilies(font_id)
+                                if families:
+                                    self.initialized_font_family = families[0]
+                                    print(f"Custom font loaded and registered as: {self.initialized_font_family}")
+                                    break
+        
+        # Create a proper QFont with the exact family name
+        if self.initialized_font_family:
+            # Store the font for future use
+            self.initialized_font = QFont(self.initialized_font_family, font_size)
+            self.initialized_font.setBold(self.text_settings.get("bold_strength", 2) > 0)
+            self.initialized_font.setStyleStrategy(QFont.PreferMatch)
+            
+            print(f"Initialized font: {self.initialized_font_family} at size {font_size}")
+        else:
+            print(f"Could not initialize font: {font_family}. Will fallback to system handling.")
+        
+        print("--- FONT INITIALIZATION COMPLETE ---\n")
 
     def create_floating_button_frame(self):
         """Create clean, simple floating button frame with Tkinter-like styling"""
@@ -3331,21 +3417,34 @@ class PreviewWindow(QMainWindow):
                     # Simple label without drag features in clean mode
                     label = QLabel(action_text, self.canvas)
                     
-                    # Apply font and styling
-                    font = QFont(self.text_settings.get("font_family", "Arial"), 
-                                self.text_settings.get("font_size", 28), 
-                                QFont.Bold)
-                    label.setFont(font)
+                    # IMPORTANT: Apply the initialized font if available
+                    if hasattr(self, 'initialized_font'):
+                        label.setFont(self.initialized_font)
+                        print(f"Applied initialized font to {control_name}")
+                    else:
+                        # Fallback to standard approach
+                        font = QFont(self.text_settings.get("font_family", "Arial"), 
+                                    self.text_settings.get("font_size", 28))
+                        font.setBold(self.text_settings.get("bold_strength", 2) > 0)
+                        label.setFont(font)
+                    
+                    # Apply styling without font family in stylesheet
                     label.setStyleSheet("color: white; background-color: transparent; border: none;")
                 else:
-                    # Standard draggable label with all editing features
-                    label = DraggableLabel(action_text, self.canvas, settings=self.text_settings)
+                    # For DraggableLabel, pass our initialized font
+                    if hasattr(self, 'initialized_font'):
+                        label = DraggableLabel(action_text, self.canvas, 
+                                            settings=self.text_settings,
+                                            initialized_font=self.initialized_font)
+                    else:
+                        label = DraggableLabel(action_text, self.canvas, 
+                                            settings=self.text_settings)
                 
-                # Create shadow effect for better visibility
+                # Create shadow with matching font
                 shadow_label = QLabel(action_text, self.canvas)
                 shadow_label.setStyleSheet("color: black; background-color: transparent; border: none;")
                 
-                # Copy font settings from main label
+                # Copy font directly from main label
                 shadow_label.setFont(label.font())
                 
                 # Position the labels - IMPORTANT: shadow goes behind!
@@ -3684,8 +3783,42 @@ class PreviewWindow(QMainWindow):
         
         print(f"Text settings updated and applied: {self.text_settings}")
     
+    def apply_specific_font(self, font_file_name, font_size, bold=False):
+        """Load and apply a specific font from file"""
+        from PyQt5.QtGui import QFont, QFontDatabase
+        
+        # Path to the font file - check in preview/fonts directory
+        font_path = os.path.join(self.mame_dir, "preview", "fonts", font_file_name)
+        
+        # Check if file exists
+        if not os.path.exists(font_path):
+            print(f"Font file not found: {font_path}")
+            return QFont("Arial", font_size, QFont.Bold if bold else QFont.Normal)
+        
+        # Load the font file
+        font_id = QFontDatabase.addApplicationFont(font_path)
+        if font_id < 0:
+            print(f"Error loading font file: {font_path}")
+            return QFont("Arial", font_size, QFont.Bold if bold else QFont.Normal)
+        
+        # Get the font family name as recognized by Qt
+        families = QFontDatabase.applicationFontFamilies(font_id)
+        if not families:
+            print(f"No font families found in: {font_path}")
+            return QFont("Arial", font_size, QFont.Bold if bold else QFont.Normal)
+        
+        # Use the first family name
+        family_name = families[0]
+        print(f"Successfully loaded font: {font_file_name} → {family_name}")
+        
+        # Create font with the exact family name
+        font = QFont(family_name, font_size)
+        font.setBold(bold)
+        
+        return font
+    
     def apply_text_settings(self):
-        """Apply current text settings to all controls with improved font handling"""
+        """Apply current text settings to all controls with direct font application"""
         # Extract settings
         font_family = self.text_settings.get("font_family", "Arial")
         font_size = self.text_settings.get("font_size", 28)
@@ -3693,38 +3826,192 @@ class PreviewWindow(QMainWindow):
         use_uppercase = self.text_settings.get("use_uppercase", False)
         y_offset = self.text_settings.get("y_offset", -40)
         
-        # Ensure the font is available in the Qt font database
-        self.ensure_font_loaded(font_family)
+        # Debug font information if available
+        if hasattr(self, 'debug_font_settings'):
+            self.debug_font_settings()
         
-        # Create font
+        # DIRECT FONT LOADING - Create a completely new approach
+        from PyQt5.QtGui import QFontDatabase, QFont, QFontInfo
+        
+        # Step 1: Create a font object with the requested family
         font = QFont(font_family, font_size)
         font.setBold(bold_strength > 0)
-        font.setWeight(QFont.Bold if bold_strength > 0 else QFont.Normal)
+        
+        # Step 2: Check if Qt is substituting the font
+        font_info = QFontInfo(font)
+        if font_info.family() != font_family:
+            print(f"FONT SUBSTITUTION DETECTED: {font_family} → {font_info.family()}")
+            
+            # CRITICAL FIX: Ensure the font is available by loading the specific font file
+            system_font_map = {
+                "Times New Roman": "times.ttf",
+                "Impact": "impact.ttf",
+                "Courier New": "cour.ttf",
+                "Comic Sans MS": "comic.ttf",
+                "Georgia": "georgia.ttf"
+            }
+            
+            font_loaded = False
+            
+            # Try loading system font if it's in our map
+            if font_family in system_font_map and os.path.exists("C:\\Windows\\Fonts"):
+                font_file = system_font_map[font_family]
+                font_path = os.path.join("C:\\Windows\\Fonts", font_file)
+                
+                if os.path.exists(font_path):
+                    print(f"Loading font directly from: {font_path}")
+                    font_id = QFontDatabase.addApplicationFont(font_path)
+                    
+                    if font_id >= 0:
+                        families = QFontDatabase.applicationFontFamilies(font_id)
+                        if families:
+                            # IMPORTANT: Get the EXACT font family name from Qt
+                            exact_family = families[0]
+                            print(f"Font registered as: {exact_family}")
+                            
+                            # Replace the font object completely
+                            font = QFont(exact_family, font_size)
+                            font.setBold(bold_strength > 0)
+                            
+                            # Force exact match
+                            font.setStyleStrategy(QFont.PreferMatch)
+                            
+                            # Double check it worked
+                            new_info = QFontInfo(font)
+                            print(f"New font family: {new_info.family()}")
+                            font_loaded = True
+            
+            # If system font loading failed, try custom fonts
+            if not font_loaded:
+                fonts_dir = os.path.join(self.mame_dir, "preview", "fonts")
+                if os.path.exists(fonts_dir):
+                    # Try exact match
+                    potential_files = [
+                        f"{font_family}.ttf",
+                        f"{font_family}.otf",
+                        font_family.lower() + ".ttf",
+                        font_family.lower() + ".otf"
+                    ]
+                    
+                    for file_name in potential_files:
+                        font_path = os.path.join(fonts_dir, file_name)
+                        if os.path.exists(font_path):
+                            print(f"Loading custom font: {font_path}")
+                            font_id = QFontDatabase.addApplicationFont(font_path)
+                            
+                            if font_id >= 0:
+                                families = QFontDatabase.applicationFontFamilies(font_id)
+                                if families:
+                                    exact_family = families[0]
+                                    print(f"Custom font registered as: {exact_family}")
+                                    
+                                    font = QFont(exact_family, font_size)
+                                    font.setBold(bold_strength > 0)
+                                    font.setStyleStrategy(QFont.PreferMatch)
+                                    
+                                    font_loaded = True
+                                    break
+                    
+                    # If no exact match, try all font files
+                    if not font_loaded:
+                        for filename in os.listdir(fonts_dir):
+                            if filename.lower().endswith(('.ttf', '.otf')):
+                                font_path = os.path.join(fonts_dir, filename)
+                                print(f"Trying font: {font_path}")
+                                
+                                font_id = QFontDatabase.addApplicationFont(font_path)
+                                if font_id >= 0:
+                                    families = QFontDatabase.applicationFontFamilies(font_id)
+                                    for family in families:
+                                        # Check if this font family contains our requested name
+                                        if (font_family.lower() in family.lower() or 
+                                            family.lower() in font_family.lower()):
+                                            print(f"Found matching font: {family}")
+                                            
+                                            font = QFont(family, font_size)
+                                            font.setBold(bold_strength > 0)
+                                            font.setStyleStrategy(QFont.PreferMatch)
+                                            
+                                            font_loaded = True
+                                            break
+                                
+                                if font_loaded:
+                                    break
+        
+        # Now apply the font to ALL controls with stricter checks
+        from PyQt5.QtCore import QTimer
         
         for control_name, control_data in self.control_labels.items():
-            # Get original action text
-            action_text = control_data['action']
-            
-            # Apply uppercase if enabled
-            display_text = action_text.upper() if use_uppercase else action_text
-            
-            # Update label text and font
-            control_data['label'].setText(display_text)
-            control_data['label'].setFont(font)
-            control_data['label'].update_appearance()
-            
-            # Update shadow text and font
-            shadow = self.shadow_labels[control_name]
-            shadow.setText(display_text)
-            shadow.setFont(font)
-            
-            # Update positions to apply new y-offset
-            original_pos = control_data.get('original_pos', QPoint(100, 100))
-            label_x, label_y = original_pos.x(), original_pos.y() + y_offset
-            
-            # Move the labels
-            control_data['label'].move(label_x, label_y)
-            shadow.move(label_x + 2, label_y + 2)  # Shadow offset
+            if 'label' in control_data:
+                label = control_data['label']
+                
+                # Get original action text
+                action_text = control_data['action']
+                
+                # Apply uppercase if enabled
+                display_text = action_text.upper() if use_uppercase else action_text
+                
+                # Update the text
+                label.setText(display_text)
+                
+                # Apply the font - TWO ways for redundancy
+                label.setFont(font)
+                
+                # FORCE SPECIFIC FONT NAME as fallback with stylesheet (as a second approach)
+                label.setStyleSheet(f"color: white; background-color: transparent; border: none; font-family: '{font.family()}';")
+                
+                # CRITICALLY IMPORTANT: Update shadow
+                shadow = self.shadow_labels[control_name]
+                shadow.setText(display_text)
+                shadow.setFont(font)
+                shadow.setStyleSheet(f"color: black; background-color: transparent; border: none; font-family: '{font.family()}';")
+                
+                # Update positions
+                original_pos = control_data.get('original_pos', QPoint(100, 100))
+                label_x, label_y = original_pos.x(), original_pos.y() + y_offset
+                
+                # Move the labels
+                label.move(label_x, label_y)
+                shadow.move(label_x + 2, label_y + 2)
+        
+        # Force a repaint
+        if hasattr(self, 'canvas'):
+            self.canvas.update()
+        
+        # Verify font application
+        if hasattr(self, 'verify_font_application'):
+            # Use a short delay to allow Qt to properly apply fonts
+            QTimer.singleShot(100, self.verify_font_application)
+
+    def verify_font_application(self, control_name=None):
+        """Verify that fonts are being correctly applied to labels"""
+        print("\n--- FONT APPLICATION VERIFICATION ---")
+        
+        # Get the requested font family from settings
+        requested_font = self.text_settings.get("font_family", "Arial")
+        print(f"Requested font from settings: {requested_font}")
+        
+        # Check a specific control or all controls
+        if control_name and control_name in self.control_labels:
+            label = self.control_labels[control_name]['label']
+            actual_font = label.font().family()
+            actual_size = label.font().pointSize()
+            print(f"Control '{control_name}': font={actual_font}, size={actual_size}")
+        else:
+            # Check a sample of controls
+            sample_count = min(3, len(self.control_labels))
+            count = 0
+            for name, data in self.control_labels.items():
+                if count >= sample_count:
+                    break
+                if 'label' in data:
+                    label = data['label']
+                    actual_font = label.font().family()
+                    actual_size = label.font().pointSize()
+                    print(f"Control '{name}': font={actual_font}, size={actual_size}")
+                    count += 1
+        
+        print("----------------------------------")
 
     def ensure_font_loaded(self, font_family):
         """Ensure the specified font is loaded into the application"""

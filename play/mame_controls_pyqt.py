@@ -10,7 +10,6 @@ from PyQt5.QtWidgets import (QApplication, QDesktopWidget, QMainWindow, QWidget,
 from PyQt5.QtCore import QTimer, Qt, QSize, pyqtSignal
 from PyQt5.QtGui import QFont, QTextCursor, QColor, QPalette
 
-
 class GameListWidget(QTextEdit):
     """Custom widget for the game list with highlighting support"""
     gameSelected = pyqtSignal(str, int)  # Signal for game selection (game_name, line_number)
