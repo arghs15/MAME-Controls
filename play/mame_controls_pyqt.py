@@ -7,7 +7,7 @@ import xml.etree.ElementTree as ET
 from PyQt5.QtWidgets import (QApplication, QDesktopWidget, QMainWindow, QWidget, QVBoxLayout, QHBoxLayout, 
                             QSplitter, QLabel, QLineEdit, QTextEdit, QFrame, QPushButton, 
                             QCheckBox, QScrollArea, QGridLayout, QMessageBox, QFileDialog)
-from PyQt5.QtCore import Qt, QSize, pyqtSignal
+from PyQt5.QtCore import QTimer, Qt, QSize, pyqtSignal
 from PyQt5.QtGui import QFont, QTextCursor, QColor, QPalette
 
 
@@ -616,39 +616,112 @@ class MAMEControlConfig(QMainWindow):
             print("Auto-close enabled - preview will close when MAME exits")
             self.monitor_mame_process(check_interval=0.5)
         
-        # Show the preview window
+        #Show the preview window
         try:
             from mame_controls_preview import PreviewWindow
             
             # Create the preview window with clean mode parameter
             self.preview_window = PreviewWindow(rom_name, game_data, self.mame_dir, 
-                                                hide_buttons=self.hide_preview_buttons,
-                                                clean_mode=clean_mode)
+                                            hide_buttons=self.hide_preview_buttons,
+                                            clean_mode=clean_mode)
             
             # CRITICAL ADDITION: Call the new method to ensure consistent positioning
             self.preview_window.ensure_consistent_text_positioning()
             
+            # Apply aggressive fullscreen settings
+            self.preview_window.setWindowFlags(
+                Qt.WindowStaysOnTopHint | 
+                Qt.FramelessWindowHint | 
+                Qt.Tool  # Removes from taskbar
+            )
             
-            # Ensure the window appears on top of MAME
-            self.preview_window.setWindowFlags(Qt.WindowStaysOnTopHint | Qt.FramelessWindowHint)
-
-            # Show the window fullscreen on the specified screen
+            # Remove all window decorations and background
+            self.preview_window.setAttribute(Qt.WA_NoSystemBackground, True)
+            self.preview_window.setAttribute(Qt.WA_TranslucentBackground, True)
+            
+            # Force stylesheets to remove ALL borders
+            self.preview_window.setStyleSheet("""
+                QMainWindow, QWidget {
+                    border: none !important;
+                    padding: 0px !important;
+                    margin: 0px !important;
+                    background-color: black;
+                }
+            """)
+            
+            # Get the exact screen geometry
+            desktop = QDesktopWidget()
             screen_num = getattr(self, 'preferred_preview_screen', 2)
-            self.preview_window.current_screen = screen_num
-            self.preview_window.move_to_screen(screen_num)
+            screen_geometry = desktop.screenGeometry(screen_num - 1)
             
-            # Make sure it's active and visible
+            # Apply exact geometry before showing
+            self.preview_window.setGeometry(screen_geometry)
+            print(f"Applied screen geometry: {screen_geometry.width()}x{screen_geometry.height()}")
+            
+            # Ensure all widget hierarchies have zero margins
+            self.preview_window.setContentsMargins(0, 0, 0, 0)
+            if hasattr(self.preview_window, 'central_widget'):
+                self.preview_window.central_widget.setContentsMargins(0, 0, 0, 0)
+                self.preview_window.central_widget.setStyleSheet("border: none; padding: 0px; margin: 0px;")
+            
+            if hasattr(self.preview_window, 'main_layout'):
+                self.preview_window.main_layout.setContentsMargins(0, 0, 0, 0)
+                self.preview_window.main_layout.setSpacing(0)
+            
+            if hasattr(self.preview_window, 'canvas'):
+                self.preview_window.canvas.setContentsMargins(0, 0, 0, 0)
+                self.preview_window.canvas.setStyleSheet("border: none; padding: 0px; margin: 0px;")
+                
+                # Force canvas to exact screen dimensions
+                self.preview_window.canvas.setFixedSize(screen_geometry.width(), screen_geometry.height())
+                
+            # Use showFullScreen instead of just show
             self.preview_window.showFullScreen()
             self.preview_window.activateWindow()
             self.preview_window.raise_()
-
-            print(f"Preview window displayed successfully on screen {screen_num}, topmost: True")
+            
+            # Add a short delay to allow window to settle, then check all measurements
+            QTimer.singleShot(100, lambda: self.ensure_full_dimensions(self.preview_window, screen_geometry))
+            
+            print(f"Preview window displayed fullscreen on screen {screen_num}")
+            
         except Exception as e:
             print(f"Error showing preview: {str(e)}")
             import traceback
             traceback.print_exc()
             QMessageBox.critical(self, "Error", f"Failed to show preview: {str(e)}")
             return
+
+    def ensure_full_dimensions(self, window, screen_geometry):
+        """Ensure the window and all children use the full dimensions"""
+        if not window:
+            return
+            
+        # Log all dimensions
+        print(f"Window dimensions: {window.width()}x{window.height()}")
+        if hasattr(window, 'central_widget'):
+            print(f"Central widget: {window.central_widget.width()}x{window.central_widget.height()}")
+        if hasattr(window, 'canvas'):
+            print(f"Canvas: {window.canvas.width()}x{window.canvas.height()}")
+        
+        # Check if dimensions match screen geometry
+        if window.width() != screen_geometry.width() or window.height() != screen_geometry.height():
+            print("MISMATCH: Window size doesn't match screen size!")
+            # Force resize again
+            window.setGeometry(screen_geometry)
+            
+        # Force canvas size if it exists
+        if hasattr(window, 'canvas'):
+            if window.canvas.width() != screen_geometry.width() or window.canvas.height() != screen_geometry.height():
+                print("MISMATCH: Canvas size doesn't match screen size, forcing resize")
+                window.canvas.setFixedSize(screen_geometry.width(), screen_geometry.height())
+                
+        # Make one more attempt to ensure all parent widgets are also sized correctly
+        if hasattr(window, 'central_widget'):
+            window.central_widget.setFixedSize(screen_geometry.width(), screen_geometry.height())
+            
+        # Force a repaint
+        window.repaint()
         
     def monitor_mame_process(self, check_interval=2.0):
         """Monitor MAME process and close preview when MAME closes"""
@@ -1018,49 +1091,54 @@ class MAMEControlConfig(QMainWindow):
             print(f"Error scanning ROMs directory: {e}")
     
     def load_gamedata_json(self):
-        """Load and parse the gamedata.json file for control data"""
+        """Load and parse the gamedata.json file for control data with improved clone handling"""
         if hasattr(self, 'gamedata_json') and self.gamedata_json:
             # Already loaded
             return self.gamedata_json
-            
+                
         self.gamedata_json = {}
-        
+        self.parent_lookup = {}  # Add a dedicated parent lookup table
+            
         # Look for gamedata.json in common locations
         json_paths = [
             os.path.join(self.mame_dir, "gamedata.json"),
             os.path.join(self.mame_dir, "metadata", "gamedata.json"),
             os.path.join(self.mame_dir, "data", "gamedata.json")
         ]
-        
+            
         json_path = None
         for path in json_paths:
             if os.path.exists(path):
                 json_path = path
                 break
-        
+            
         if not json_path:
             print("gamedata.json not found")
             return {}
-            
+                
         try:
             print(f"Loading gamedata.json from: {json_path}")
             with open(json_path, 'r', encoding='utf-8') as f:
                 data = json.load(f)
-                
+                    
             # Process the data to find both main games and clones
             for rom_name, game_data in data.items():
                 self.gamedata_json[rom_name] = game_data
-                
-                # Also index clones for easier lookup
+                    
+                # Index clones with more explicit parent relationship
                 if 'clones' in game_data:
                     for clone_name, clone_data in game_data['clones'].items():
-                        # Store clone with reference to parent
+                        # Store explicit parent reference
                         clone_data['parent'] = rom_name
+                        # Also store in the parent lookup table
+                        self.parent_lookup[clone_name] = rom_name
                         self.gamedata_json[clone_name] = clone_data
-            
+                        print(f"Indexed clone {clone_name} with parent {rom_name}")
+                
             print(f"Loaded {len(self.gamedata_json)} games from gamedata.json")
+            print(f"Indexed {len(self.parent_lookup)} parent-clone relationships")
             return self.gamedata_json
-            
+                
         except Exception as e:
             print(f"Error loading gamedata.json: {str(e)}")
             import traceback
@@ -1425,10 +1503,13 @@ class MAMEControlConfig(QMainWindow):
         main_splitter.setSizes([300, 700])
     
     def get_game_data(self, romname):
-        """Get control data for a ROM from gamedata.json"""
+        """Get control data for a ROM from gamedata.json with improved clone handling"""
         if not hasattr(self, 'gamedata_json'):
             self.load_gamedata_json()
             
+        # Debug output
+        print(f"\nLooking up game data for: {romname}")
+        
         if romname in self.gamedata_json:
             game_data = self.gamedata_json[romname]
             
@@ -1468,16 +1549,40 @@ class MAMEControlConfig(QMainWindow):
                 'players': []
             }
             
+            # Check if this is a clone and needs to inherit controls from parent
+            needs_parent_controls = False
+            
             # Find controls (direct or in a clone)
             controls = None
             if 'controls' in game_data:
                 controls = game_data['controls']
-            elif 'clones' in game_data:
-                for clone in game_data['clones'].values():
-                    if 'controls' in clone:
-                        controls = clone['controls']
-                        break
+                print(f"Found direct controls for {romname}")
+            else:
+                needs_parent_controls = True
+                print(f"No direct controls for {romname}, needs parent controls")
+                
+            # If no controls and this is a clone, try to use parent controls
+            if needs_parent_controls:
+                parent_rom = None
+                
+                # Check explicit parent field (should be there from load_gamedata_json)
+                if 'parent' in game_data:
+                    parent_rom = game_data['parent']
+                    print(f"Found parent {parent_rom} via direct reference")
+                
+                # Also check parent lookup table for redundancy
+                elif hasattr(self, 'parent_lookup') and romname in self.parent_lookup:
+                    parent_rom = self.parent_lookup[romname]
+                    print(f"Found parent {parent_rom} via lookup table")
+                
+                # If we found a parent, try to get its controls
+                if parent_rom and parent_rom in self.gamedata_json:
+                    parent_data = self.gamedata_json[parent_rom]
+                    if 'controls' in parent_data:
+                        controls = parent_data['controls']
+                        print(f"Using controls from parent {parent_rom} for clone {romname}")
             
+            # Now process the controls (either direct or inherited from parent)
             if controls:
                 # First pass - collect P1 button names to mirror to P2
                 p1_button_names = {}

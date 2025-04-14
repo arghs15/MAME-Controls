@@ -35,7 +35,8 @@ def main():
     parser.add_argument('--screen', type=int, default=2, help='Screen number to display preview on (default: 2)')
     parser.add_argument('--auto-close', action='store_true', help='Automatically close preview when MAME exits')
     parser.add_argument('--no-buttons', action='store_true', help='Hide buttons in preview mode (overrides settings)')
-    parser.add_argument('--use-qt', action='store_true', help='Use the PyQt5 version of the main GUI (default: Tkinter)')
+    # Change this line to make PyQt default and add Tkinter option
+    parser.add_argument('--tk', action='store_true', help='Use the Tkinter version of the main GUI (default: PyQt)')
     args = parser.parse_args()
     print("Arguments parsed.")
     
@@ -76,8 +77,8 @@ def main():
             print("PyQt5 or necessary modules not found for preview mode.")
             sys.exit(1)
     
-    # For the main application, check which UI to use
-    if args.use_qt:
+    # For the main application, check which UI to use - now defaulting to PyQt
+    if not args.tk:  # Changed condition to check for --tk flag
         # Initialize PyQt application
         try:
             from PyQt5.QtWidgets import QApplication
@@ -104,10 +105,10 @@ def main():
             sys.exit(app.exec_())
         except ImportError:
             print("PyQt5 not found, falling back to Tkinter version.")
-            args.use_qt = False
+            args.tk = True  # Fall back to Tkinter if PyQt fails
     
-    # If not using PyQt or if PyQt failed to import, use Tkinter
-    if not args.use_qt:
+    # If using Tkinter (either by flag or PyQt failure)
+    if args.tk:
         try:
             # Import the Tkinter version
             import customtkinter as ctk

@@ -189,10 +189,13 @@ class MAMEControlConfig(ctk.CTk):
         self.load_all_data()
     
     def get_game_data(self, romname):
-        """Get control data for a ROM from gamedata.json"""
+        """Get control data for a ROM from gamedata.json with improved clone handling"""
         if not hasattr(self, 'gamedata_json'):
             self.load_gamedata_json()
             
+        # Debug output
+        print(f"\nLooking up game data for: {romname}")
+        
         if romname in self.gamedata_json:
             game_data = self.gamedata_json[romname]
             
@@ -232,16 +235,40 @@ class MAMEControlConfig(ctk.CTk):
                 'players': []
             }
             
+            # Check if this is a clone and needs to inherit controls from parent
+            needs_parent_controls = False
+            
             # Find controls (direct or in a clone)
             controls = None
             if 'controls' in game_data:
                 controls = game_data['controls']
-            elif 'clones' in game_data:
-                for clone in game_data['clones'].values():
-                    if 'controls' in clone:
-                        controls = clone['controls']
-                        break
+                print(f"Found direct controls for {romname}")
+            else:
+                needs_parent_controls = True
+                print(f"No direct controls for {romname}, needs parent controls")
+                
+            # If no controls and this is a clone, try to use parent controls
+            if needs_parent_controls:
+                parent_rom = None
+                
+                # Check explicit parent field (should be there from load_gamedata_json)
+                if 'parent' in game_data:
+                    parent_rom = game_data['parent']
+                    print(f"Found parent {parent_rom} via direct reference")
+                
+                # Also check parent lookup table for redundancy
+                elif hasattr(self, 'parent_lookup') and romname in self.parent_lookup:
+                    parent_rom = self.parent_lookup[romname]
+                    print(f"Found parent {parent_rom} via lookup table")
+                
+                # If we found a parent, try to get its controls
+                if parent_rom and parent_rom in self.gamedata_json:
+                    parent_data = self.gamedata_json[parent_rom]
+                    if 'controls' in parent_data:
+                        controls = parent_data['controls']
+                        print(f"Using controls from parent {parent_rom} for clone {romname}")
             
+            # Now process the controls (either direct or inherited from parent)
             if controls:
                 # First pass - collect P1 button names to mirror to P2
                 p1_button_names = {}
@@ -806,7 +833,7 @@ class MAMEControlConfig(ctk.CTk):
         self.control_frame = ctk.CTkScrollableFrame(self.right_panel)
         self.control_frame.grid(row=2, column=0, columnspan=3, padx=5, pady=5, sticky="nsew")
 
-    def show_preview(self):
+    '''def show_preview(self):
         """Launch the PyQt preview window as a separate process"""
         if not self.current_game:
             messagebox.showinfo("No Game Selected", "Please select a game first")
@@ -828,6 +855,41 @@ class MAMEControlConfig(ctk.CTk):
                 "--game", self.current_game
             ])
             print(f"Launched preview process for {self.current_game}")
+        except Exception as e:
+            print(f"Error launching preview: {e}")
+            messagebox.showerror("Error", f"Failed to launch preview: {str(e)}")'''
+    
+    def show_preview(self):
+        """Launch the PyQt preview window as a separate process"""
+        if not self.current_game:
+            messagebox.showinfo("No Game Selected", "Please select a game first")
+            return
+            
+        # Get game data
+        game_data = self.get_game_data(self.current_game)
+        if not game_data:
+            messagebox.showinfo("No Control Data", f"No control data found for {self.current_game}")
+            return
+        
+        # Launch preview as a separate process
+        try:
+            script_path = os.path.join(get_application_path(), "mame_controls_main.py")
+            
+            # Build command with appropriate flags
+            command = [
+                sys.executable,
+                script_path,
+                "--preview-only",
+                "--game", self.current_game
+            ]
+            
+            # Add hide buttons flag if enabled
+            if hasattr(self, 'hide_preview_buttons') and self.hide_preview_buttons:
+                command.append("--no-buttons")
+                
+            # Launch the process
+            subprocess.Popen(command)
+            print(f"Launched preview process for {self.current_game} with command: {command}")
         except Exception as e:
             print(f"Error launching preview: {e}")
             messagebox.showerror("Error", f"Failed to launch preview: {str(e)}")
@@ -1638,12 +1700,13 @@ class MAMEControlConfig(ctk.CTk):
         return settings
     
     def load_gamedata_json(self):
-        """Load and parse the gamedata.json file for control data"""
+        """Load and parse the gamedata.json file for control data with improved clone handling"""
         if hasattr(self, 'gamedata_json') and self.gamedata_json:
             # Already loaded
             return self.gamedata_json
                 
         self.gamedata_json = {}
+        self.parent_lookup = {}  # Add a dedicated parent lookup table
             
         # Look for gamedata.json in common locations
         json_paths = [
@@ -1671,14 +1734,18 @@ class MAMEControlConfig(ctk.CTk):
             for rom_name, game_data in data.items():
                 self.gamedata_json[rom_name] = game_data
                     
-                # Also index clones for easier lookup
+                # Index clones with more explicit parent relationship
                 if 'clones' in game_data:
                     for clone_name, clone_data in game_data['clones'].items():
-                        # Store clone with reference to parent
+                        # Store explicit parent reference
                         clone_data['parent'] = rom_name
+                        # Also store in the parent lookup table
+                        self.parent_lookup[clone_name] = rom_name
                         self.gamedata_json[clone_name] = clone_data
+                        print(f"Indexed clone {clone_name} with parent {rom_name}")
                 
             print(f"Loaded {len(self.gamedata_json)} games from gamedata.json")
+            print(f"Indexed {len(self.parent_lookup)} parent-clone relationships")
             return self.gamedata_json
                 
         except Exception as e:

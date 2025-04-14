@@ -767,7 +767,7 @@ class PreviewWindow(QMainWindow):
         self.button_layout.addWidget(self.reset_button)'''
         
         self.save_button = QPushButton("Global Save")
-        self.save_button.clicked.connect(lambda: self.save_positions(is_global=False))
+        self.save_button.clicked.connect(lambda: self.save_positions(is_global=True))
         self.save_button.setStyleSheet(button_style)
         self.button_layout.addWidget(self.save_button)
 
@@ -1522,11 +1522,11 @@ class PreviewWindow(QMainWindow):
                 # Get the original pixmap
                 original_pixmap = self.bezel_label.pixmap()
                 
-                # Resize to fill window
+                # When scaling background or bezel images
                 scaled_pixmap = original_pixmap.scaled(
-                    window_width,
-                    window_height,
-                    Qt.IgnoreAspectRatio,  # Force it to fill the window
+                    self.canvas.width(),
+                    self.canvas.height(),
+                    Qt.IgnoreAspectRatio,  # This forces it to fill the entire space
                     Qt.SmoothTransformation
                 )
                 self.bezel_label.setPixmap(scaled_pixmap)
@@ -2779,40 +2779,47 @@ class PreviewWindow(QMainWindow):
     
     # Modify move_to_screen to ensure full screen
     def move_to_screen(self, screen_index):
-        """Move window to specified screen with better full screen handling"""
+        """Move window to specified screen with true fullscreen"""
         try:
             desktop = QDesktopWidget()
-            num_screens = desktop.screenCount()
+            screen_geometry = desktop.screenGeometry(screen_index - 1)  # Convert to 0-based index
             
-            print(f"Moving to screen {screen_index} (found {num_screens} screens)")
+            print(f"Screen geometry: {screen_geometry.width()}x{screen_geometry.height()}")
             
-            if screen_index < 1 or screen_index > num_screens:
-                screen_index = 1  # Default to first screen if invalid
-                print(f"Invalid screen index, defaulting to 1")
+            # For debugging - log the window and central widget sizes
+            print(f"Before fullscreen - Window: {self.width()}x{self.height()}, Canvas: {self.canvas.width()}x{self.canvas.height()}")
             
-            # Get geometry of the selected screen (0-indexed)
-            screen_geometry = desktop.screenGeometry(screen_index - 1)
-            print(f"Screen {screen_index} geometry: {screen_geometry.x()},{screen_geometry.y()} {screen_geometry.width()}x{screen_geometry.height()}")
-            
-            # Move window to that screen and true full screen
+            # Ensure truly fullscreen with no borders
+            self.setWindowFlags(Qt.FramelessWindowHint | Qt.WindowStaysOnTopHint)
             self.setGeometry(screen_geometry)
             
             # Store current screen
             self.current_screen = screen_index
             
-            # Update screen button text
-            if hasattr(self, 'screen_button'):
-                self.screen_button.setText(f"Screen {screen_index}")
-                
-            # Remove window frame for true full screen
-            self.setWindowFlags(self.windowFlags() | Qt.FramelessWindowHint)
+            # Ensure the canvas fills the entire space
+            self.canvas.setGeometry(0, 0, screen_geometry.width(), screen_geometry.height())
+            
+            # Show window to apply changes
             self.show()
             
-            print(f"Window moved to screen {screen_index} in full screen mode")
+            # Check actual sizes after showing
+            QTimer.singleShot(100, self.check_dimensions)
+            
+            print(f"Window moved to screen {screen_index} in fullscreen mode")
         except Exception as e:
             print(f"Error moving to screen: {e}")
             import traceback
             traceback.print_exc()
+            
+    def check_dimensions(self):
+        """Debug method to check actual dimensions after fullscreen is applied"""
+        print(f"After fullscreen - Window: {self.width()}x{self.height()}, Canvas: {self.canvas.width()}x{self.canvas.height()}")
+        print(f"Central widget: {self.central_widget.width()}x{self.central_widget.height()}")
+        
+        # If canvas isn't filling window, force its size
+        if self.canvas.width() < self.width() or self.canvas.height() < self.height():
+            print("Canvas smaller than window, forcing size match")
+            self.canvas.setGeometry(0, 0, self.width(), self.height())
     
     def toggle_screen(self):
         """Toggle between screens"""

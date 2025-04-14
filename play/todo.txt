@@ -1,16 +1,5 @@
-Positions
--global doesn't save correctly when using show all xinput, then placing them
--for some reason rom does, and I have to copy contents form rom to global file
-
-Missing controls
--I'm not sure clones is working correctly. xmenu has no controls but it should be taking them from parent in json which does contain controls
-
 Button frame in preview
 -not handling multiple buttons well. need to create more row if over a certain number. Or within a width range
-
-Preview image black bars on sides
--not covering full screen. two black bars down each side
--saved image is 1920x994 which is why - look into this and correct
 
 Add custom fonts
 
