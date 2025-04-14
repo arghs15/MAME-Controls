@@ -400,6 +400,9 @@ class TextSettingsDialog(QDialog):
         # Store parent reference for settings access
         self.parent = parent
         
+        # Store font file to family name mapping
+        self.font_file_to_family = {}
+        
         # Use provided settings or load defaults
         self.settings = settings or {
             "font_family": "Arial",
@@ -423,11 +426,48 @@ class TextSettingsDialog(QDialog):
         self.font_combo = QComboBox()
         # Add common fonts
         fonts = ["Arial", "Verdana", "Tahoma", "Times New Roman", "Courier New", "Segoe UI", 
-                 "Calibri", "Georgia", "Impact", "System"]
-        self.font_combo.addItems(fonts)
+                "Calibri", "Georgia", "Impact", "System"]
         
-        # Set current font
+        # Load custom fonts from preview/fonts directory
+        if parent and hasattr(parent, 'mame_dir'):
+            fonts_dir = os.path.join(parent.mame_dir, "preview", "fonts")
+            if os.path.exists(fonts_dir):
+                from PyQt5.QtGui import QFontDatabase
+                
+                print(f"Scanning for fonts in: {fonts_dir}")
+                for filename in os.listdir(fonts_dir):
+                    if filename.lower().endswith(('.ttf', '.otf')):
+                        font_path = os.path.join(fonts_dir, filename)
+                        
+                        # Load font into QFontDatabase to get proper family name
+                        font_id = QFontDatabase.addApplicationFont(font_path)
+                        if font_id >= 0:
+                            # Get the actual font family names
+                            font_families = QFontDatabase.applicationFontFamilies(font_id)
+                            if font_families:
+                                actual_family = font_families[0]
+                                print(f"Loaded font {filename}: family name = {actual_family}")
+                                
+                                # Add to our fonts list
+                                fonts.append(actual_family)
+                                
+                                # Store mapping from filename to family name
+                                base_name = os.path.splitext(filename)[0]
+                                self.font_file_to_family[base_name] = actual_family
+                            else:
+                                print(f"Could not get family name for {filename}")
+                        else:
+                            print(f"Failed to load font: {filename}")
+
+        self.font_combo.addItems(sorted(fonts))
+        
+        # Set current font - handle mapping from filename to family if needed
         current_font = self.settings.get("font_family", "Arial")
+        if current_font in self.font_file_to_family:
+            current_font = self.font_file_to_family[current_font]
+            # Update the settings with the proper family name
+            self.settings["font_family"] = current_font
+        
         index = self.font_combo.findText(current_font)
         if index >= 0:
             self.font_combo.setCurrentIndex(index)
@@ -776,7 +816,11 @@ class PreviewWindow(QMainWindow):
         self.rom_button.setStyleSheet(button_style)
         self.button_layout.addWidget(self.rom_button)
 
-        # Create button for XInput controls toggle
+        self.text_settings_button = QPushButton("Text Settings")
+        self.text_settings_button.clicked.connect(self.show_text_settings)
+        self.text_settings_button.setStyleSheet(button_style)
+        self.button_layout.addWidget(self.text_settings_button)
+
         self.xinput_controls_button = QPushButton("Show All XInput")
         self.xinput_controls_button.clicked.connect(self.toggle_xinput_controls)
         self.xinput_controls_button.setStyleSheet(button_style)
@@ -3159,23 +3203,26 @@ class PreviewWindow(QMainWindow):
         }
         
         try:
-            # Check for ROM-specific settings first
+            # First try global settings (prioritize global settings)
             preview_dir = os.path.join(self.mame_dir, "preview")
-            rom_settings_file = os.path.join(preview_dir, f"{self.rom_name}_text_settings.json")
             global_settings_file = os.path.join(preview_dir, "global_text_settings.json")
             
-            # First try ROM-specific settings
+            if os.path.exists(global_settings_file):
+                with open(global_settings_file, 'r') as f:
+                    loaded_settings = json.load(f)
+                    settings.update(loaded_settings)
+                    print(f"Loaded global text settings: {settings}")
+                
+                # Return immediately to prioritize global settings
+                return settings
+            
+            # If no global settings, try ROM-specific settings
+            rom_settings_file = os.path.join(preview_dir, f"{self.rom_name}_text_settings.json")
             if os.path.exists(rom_settings_file):
                 with open(rom_settings_file, 'r') as f:
                     loaded_settings = json.load(f)
                     settings.update(loaded_settings)
                     print(f"Loaded ROM-specific text settings for {self.rom_name}")
-            # Then try global settings
-            elif os.path.exists(global_settings_file):
-                with open(global_settings_file, 'r') as f:
-                    loaded_settings = json.load(f)
-                    settings.update(loaded_settings)
-                    print(f"Loaded global text settings")
             else:
                 # Backward compatibility - check old location
                 old_settings_file = os.path.join(self.mame_dir, "text_appearance_settings.json")
@@ -3600,43 +3647,54 @@ class PreviewWindow(QMainWindow):
     
     # Update the show_text_settings method to include a global save option
     def show_text_settings(self):
-        """Show dialog to configure text appearance"""
+        """Show dialog to configure text appearance with global saving"""
         dialog = TextSettingsDialog(self, self.text_settings)
         dialog.setWindowTitle("Text Appearance Settings")
         
-        # Add global save button to dialog
-        button_layout = dialog.findChild(QHBoxLayout, "button_layout")
-        if button_layout:
-            global_button = QPushButton("Save as Global")
-            global_button.clicked.connect(lambda: self.save_global_text_settings())
-            global_button.clicked.connect(dialog.accept)
-            button_layout.insertWidget(1, global_button)
-        
         if dialog.exec_() == QDialog.Accepted:
-            print("Text settings updated")
+            # Use the save_global_text_settings method instead
+            self.save_global_text_settings()
+            print("Text settings updated and saved globally")
     
     # Improved update_text_settings to ensure font size is applied to all controls
     def update_text_settings(self, settings):
-        """Update text settings and properly apply to all controls"""
+        """Update text settings and properly apply to all controls with global saving"""
         # Update local settings with merge
         self.text_settings.update(settings)
-        
-        # Save to file
-        self.save_text_settings(self.text_settings)
         
         # Apply to existing controls
         self.apply_text_settings()
         
+        # Save to global file
+        try:
+            # Create preview directory if it doesn't exist
+            preview_dir = os.path.join(self.mame_dir, "preview")
+            os.makedirs(preview_dir, exist_ok=True)
+            
+            # Save to global settings file
+            global_settings_file = os.path.join(preview_dir, "global_text_settings.json")
+            
+            with open(global_settings_file, 'w') as f:
+                json.dump(self.text_settings, f)
+            print(f"Saved GLOBAL text settings to {global_settings_file}: {self.text_settings}")
+        except Exception as e:
+            print(f"Error saving global text settings: {e}")
+            import traceback
+            traceback.print_exc()
+        
         print(f"Text settings updated and applied: {self.text_settings}")
     
     def apply_text_settings(self):
-        """Apply current text settings to all controls"""
+        """Apply current text settings to all controls with improved font handling"""
         # Extract settings
         font_family = self.text_settings.get("font_family", "Arial")
         font_size = self.text_settings.get("font_size", 28)
         bold_strength = self.text_settings.get("bold_strength", 2)
         use_uppercase = self.text_settings.get("use_uppercase", False)
         y_offset = self.text_settings.get("y_offset", -40)
+        
+        # Ensure the font is available in the Qt font database
+        self.ensure_font_loaded(font_family)
         
         # Create font
         font = QFont(font_family, font_size)
@@ -3667,6 +3725,70 @@ class PreviewWindow(QMainWindow):
             # Move the labels
             control_data['label'].move(label_x, label_y)
             shadow.move(label_x + 2, label_y + 2)  # Shadow offset
+
+    def ensure_font_loaded(self, font_family):
+        """Ensure the specified font is loaded into the application"""
+        from PyQt5.QtGui import QFontDatabase
+        
+        # Check if it's a system font
+        system_fonts = ["Arial", "Verdana", "Tahoma", "Times New Roman", "Courier New", 
+                    "Segoe UI", "Calibri", "Georgia", "Impact", "System"]
+        
+        if font_family in system_fonts:
+            return True  # System font, no need to load
+        
+        # Check custom fonts directory
+        fonts_dir = os.path.join(self.mame_dir, "preview", "fonts")
+        if not os.path.exists(fonts_dir):
+            print(f"Custom fonts directory not found: {fonts_dir}")
+            return False
+        
+        # Look for font files with matching family name
+        found = False
+        for filename in os.listdir(fonts_dir):
+            if filename.lower().endswith(('.ttf', '.otf')):
+                font_path = os.path.join(fonts_dir, filename)
+                
+                # Load font into QFontDatabase to check family name
+                font_id = QFontDatabase.addApplicationFont(font_path)
+                if font_id >= 0:
+                    font_families = QFontDatabase.applicationFontFamilies(font_id)
+                    if font_families and font_family in font_families:
+                        found = True
+                        print(f"Successfully loaded font {font_family} from {filename}")
+                        break
+        
+        if not found:
+            print(f"Warning: Could not find font file for '{font_family}' in {fonts_dir}")
+            
+        return found
+    
+    def debug_font_availability(self):
+        """Debug helper to check font availability"""
+        from PyQt5.QtGui import QFontDatabase
+        
+        # Get all available font families
+        font_families = QFontDatabase().families()
+        
+        # Check if our target font is available
+        current_font = self.text_settings.get("font_family", "Arial")
+        
+        print("\n--- Font Availability Debug ---")
+        print(f"Current font from settings: {current_font}")
+        print(f"Font exists in database: {current_font in font_families}")
+        
+        # Print some available custom fonts as examples
+        custom_fonts = [f for f in font_families if f not in ["Arial", "Verdana", "Tahoma"]]
+        print(f"Sample of available custom fonts: {custom_fonts[:5] if custom_fonts else 'None'}")
+        
+        # Check if any label is actually using the font
+        if hasattr(self, 'control_labels') and self.control_labels:
+            sample_label = next(iter(self.control_labels.values()))['label']
+            if hasattr(sample_label, 'font'):
+                current_label_font = sample_label.font().family()
+                print(f"Font actually being used in label: {current_label_font}")
+        
+        print("----------------------------")
     
 class LogoSettingsDialog(QDialog):
     """Dialog for configuring logo appearance and position"""
