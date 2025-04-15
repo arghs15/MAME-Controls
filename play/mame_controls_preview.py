@@ -6,15 +6,65 @@ import traceback
 from PyQt5.QtWidgets import (QAction, QGridLayout, QMainWindow, QMenu, QMessageBox, QSizePolicy, QSpinBox, QVBoxLayout, QHBoxLayout, QWidget, 
                             QLabel, QPushButton, QFrame, QApplication, QDesktopWidget,
                             QDialog, QGroupBox, QCheckBox, QSlider, QComboBox)
-from PyQt5.QtGui import QFontInfo, QImage, QPixmap, QFont, QColor, QPainter, QPen, QFontMetrics
+from PyQt5.QtGui import QFontInfo, QImage, QPalette, QPixmap, QFont, QColor, QPainter, QPen, QFontMetrics
 from PyQt5.QtCore import Qt, QPoint, QTimer, QRect, QEvent, QSize
 
-class DraggableLabel(QLabel):
-    """An enhanced draggable label with shadow, resizing and better visibility"""
-    def __init__(self, text, parent=None, shadow_offset=2, settings=None, initialized_font=None):
-        """Initialize the draggable label with enhanced resize behavior"""
+class EnhancedLabel(QLabel):
+    """A label with built-in shadow capabilities"""
+    def __init__(self, text, parent=None, shadow_offset=2, shadow_color=QColor(0, 0, 0)):
         super().__init__(text, parent)
         self.shadow_offset = shadow_offset
+        self.shadow_color = shadow_color
+        self.is_shadow_visible = True
+        
+        # Set transparent background
+        self.setStyleSheet("background-color: transparent;")
+        
+    def paintEvent(self, event):
+        """Override paint event to draw text with shadow in a single operation"""
+        if not self.text():
+            return
+            
+        painter = QPainter(self)
+        painter.setRenderHint(QPainter.Antialiasing)
+        painter.setRenderHint(QPainter.TextAntialiasing)
+        
+        # Get current font metrics
+        metrics = QFontMetrics(self.font())
+        text_rect = metrics.boundingRect(self.text())
+        
+        # Calculate text position (centered in the label) - convert to integers
+        x = int((self.width() - text_rect.width()) / 2)
+        y = int((self.height() + metrics.ascent() - metrics.descent()) / 2)
+        
+        # Draw shadow if enabled
+        if self.is_shadow_visible:
+            painter.setPen(self.shadow_color)
+            painter.drawText(int(x + self.shadow_offset), int(y + self.shadow_offset), self.text())
+        
+        # Draw main text
+        painter.setPen(self.palette().color(QPalette.WindowText))
+        painter.drawText(int(x), int(y), self.text())
+        
+    def setShadowVisible(self, visible):
+        """Toggle shadow visibility"""
+        self.is_shadow_visible = visible
+        self.update()  # Force repaint
+        
+    def setShadowOffset(self, offset):
+        """Set shadow offset"""
+        self.shadow_offset = offset
+        self.update()
+        
+    def setShadowColor(self, color):
+        """Set shadow color"""
+        self.shadow_color = color
+        self.update()
+
+class DraggableLabel(EnhancedLabel):
+    """An enhanced draggable label with built-in shadow"""
+    def __init__(self, text, parent=None, shadow_offset=2, settings=None, initialized_font=None):
+        super().__init__(text, parent, shadow_offset)
         self.settings = settings or {}
         self.initialized_font = initialized_font
         
@@ -325,26 +375,34 @@ class DraggableLabel(QLabel):
         if hasattr(self.parent(), "update_shadow_for_label"):
             self.parent().update_shadow_for_label(self)
     
-    # Add this method to PreviewWindow class
-    def update_shadow_for_label(self, label):
-        """Find and update the shadow for a label"""
-        for control_name, control_data in self.control_labels.items():
-            if control_data['label'] == label:
-                # Just update the shadow position to ensure it's behind
-                shadow = self.shadow_labels[control_name]
-                shadow.lower()  # Make sure shadow stays behind
-                shadow.move(label.pos().x() + 2, label.pos().y() + 2)
-                break
-    
     def toggle_shadow(self):
-        """Toggle visibility of shadow text"""
-        for shadow in self.shadow_labels.values():
-            shadow.setVisible(not shadow.isVisible())
+        """Toggle visibility of shadows for all labels"""
+        # If no control labels exist, just return
+        if not hasattr(self, 'control_labels') or not self.control_labels:
+            return
+        
+        # Get the current shadow state from the first label
+        first_label = next(iter(self.control_labels.values()))['label']
+        new_state = not first_label.is_shadow_visible
+        
+        # Update the button text if it exists
+        if hasattr(self, 'shadow_button'):
+            self.shadow_button.setText("Show Shadow" if not new_state else "Hide Shadow")
+        
+        # Apply the new shadow state to all labels
+        for control_name, control_data in self.control_labels.items():
+            if 'label' in control_data and control_data['label']:
+                control_data['label'].setShadowVisible(new_state)
+        
+        print(f"Shadow visibility set to: {new_state}")
 
     def update_shadow_color(self, color=QColor(0, 0, 0)):
         """Update shadow color for all labels"""
-        for shadow in self.shadow_labels.values():
-            shadow.setStyleSheet(f"color: {color.name()}; background-color: transparent; border: none;")
+        for control_data in self.control_labels.values():
+            if 'label' in control_data and control_data['label']:
+                label = control_data['label']
+                if hasattr(label, 'setShadowColor'):
+                    label.setShadowColor(color)
 
     # Add this method to update the duplicate_control_label function to better handle shadows
     def duplicate_control_label(self, label):
@@ -393,9 +451,6 @@ class DraggableLabel(QLabel):
                     'action': action_text,
                     'original_pos': new_pos
                 }
-                
-                # Store shadow label separately for convenience
-                self.shadow_labels[new_control_name] = shadow_label
                 
                 # Connect position update for shadow
                 original_mouseMoveEvent = new_label.mouseMoveEvent
@@ -681,7 +736,6 @@ class PreviewWindow(QMainWindow):
         self.game_data = game_data
         self.mame_dir = mame_dir
         self.control_labels = {}
-        self.shadow_labels = {}
         self.bg_label = None
         
         # Add clean preview mode parameters
@@ -860,41 +914,29 @@ class PreviewWindow(QMainWindow):
         if not hasattr(self, 'current_font'):
             print("No current font to apply")
             return
-            
+                
         if not hasattr(self, 'control_labels'):
             print("No controls to apply font to")
             return
-            
+                
         print(f"Applying font {self.current_font.family()} to {len(self.control_labels)} controls")
         for control_name, control_data in self.control_labels.items():
             if 'label' in control_data and control_data['label']:
                 label = control_data['label']
-                
+                    
                 # Apply the font
                 label.setFont(self.current_font)
-                
+                    
                 # CRITICAL: Adjust size to match new font
                 label.adjustSize()
-                
+                    
                 # Make sure we don't have any size restrictions
                 label.setMinimumSize(0, 0)
                 label.setMaximumSize(16777215, 16777215)  # Qt's QWIDGETSIZE_MAX
-                
+                    
                 # Also reset size policy to ensure it can grow
                 label.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)
-                
-                # Also update shadow with same settings
-                if control_name in self.shadow_labels:
-                    shadow = self.shadow_labels[control_name]
-                    shadow.setFont(self.current_font)
-                    shadow.adjustSize()
-                    shadow.setMinimumSize(0, 0)
-                    shadow.setMaximumSize(16777215, 16777215)
-                    shadow.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)
-                    
-                    # Update shadow position
-                    shadow.move(label.pos().x() + 2, label.pos().y() + 2)
-                    
+        
         print("Font applied and labels resized")
     
     def init_fonts(self):
@@ -1135,21 +1177,12 @@ class PreviewWindow(QMainWindow):
         # Apply standard positioning logic to all labels
         for control_name, control_data in self.control_labels.items():
             label = control_data['label']
-            shadow = self.shadow_labels[control_name]
-            
-            # Ensure shadow is exactly 2px offset from main label
-            shadow.move(label.pos().x() + 2, label.pos().y() + 2)
             
             # ADDED: Ensure labels can expand to fit text
             label.setMinimumSize(0, 0)
             label.setMaximumSize(16777215, 16777215)
             label.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)
             label.adjustSize()
-            
-            shadow.setMinimumSize(0, 0)
-            shadow.setMaximumSize(16777215, 16777215)
-            shadow.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)
-            shadow.adjustSize()
         
         print("Applied consistent text positioning to all controls")
     
@@ -1157,37 +1190,26 @@ class PreviewWindow(QMainWindow):
         """Force all control labels to resize according to their content"""
         if not hasattr(self, 'control_labels'):
             return
-            
+                
         print("Force resizing all control labels")
         for control_name, control_data in self.control_labels.items():
             if 'label' in control_data and control_data['label']:
                 label = control_data['label']
-                
+                    
                 # Make sure we don't have size restrictions
                 label.setMinimumSize(0, 0)
                 label.setMaximumSize(16777215, 16777215)
-                
+                    
                 # Reset size policy
                 label.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)
-                
+                    
                 # Adjust size to content
                 label.adjustSize()
-                
-                # Do the same for shadow
-                if control_name in self.shadow_labels:
-                    shadow = self.shadow_labels[control_name]
-                    shadow.setMinimumSize(0, 0)
-                    shadow.setMaximumSize(16777215, 16777215)
-                    shadow.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)
-                    shadow.adjustSize()
-                    
-                    # Update shadow position
-                    shadow.move(label.pos().x() + 2, label.pos().y() + 2)
         
         # Force a repaint
         if hasattr(self, 'canvas'):
             self.canvas.update()
-            
+                
         print("All labels resized")
     
     # Add bezel-related attributes and initial setup to __init__
@@ -1433,13 +1455,6 @@ class PreviewWindow(QMainWindow):
             self.bezel_label.raise_()  # Then raise above background
             print("Positioned bezel above background")
         
-        # Raise all shadow labels above bezel but below real labels
-        if hasattr(self, 'shadow_labels'):
-            for shadow_label in self.shadow_labels.values():
-                if shadow_label.isVisible():
-                    shadow_label.raise_()
-            print(f"Raised {len(self.shadow_labels)} shadow labels above bezel")
-        
         # Raise all control labels to the top
         if hasattr(self, 'control_labels'):
             for control_data in self.control_labels.values():
@@ -1596,13 +1611,10 @@ class PreviewWindow(QMainWindow):
                 if control_name in self.control_labels:
                     self.control_labels[control_name]['label'].deleteLater()
                     del self.control_labels[control_name]
-                if control_name in self.shadow_labels:
-                    self.shadow_labels[control_name].deleteLater()
-                    del self.shadow_labels[control_name]
-            
+
             # Clear collections
             self.control_labels = {}
-            self.shadow_labels = {}
+            print("Cleared all existing controls")
             print("Cleared all existing controls")
             
             # Default grid layout
@@ -1668,9 +1680,6 @@ class PreviewWindow(QMainWindow):
                     'original_pos': original_pos  # Store without offset for reset
                 }
                 
-                # Store shadow label separately for convenience
-                self.shadow_labels[control_name] = shadow_label
-                
                 # Connect position update for shadow
                 original_mouseMoveEvent = label.mouseMoveEvent
                 label.mouseMoveEvent = lambda event, label=label, shadow=shadow_label, orig_func=original_mouseMoveEvent: self.on_label_move(event, label, shadow, orig_func)
@@ -1713,13 +1722,9 @@ class PreviewWindow(QMainWindow):
                 if control_name in self.control_labels:
                     self.control_labels[control_name]['label'].deleteLater()
                     del self.control_labels[control_name]
-                if control_name in self.shadow_labels:
-                    self.shadow_labels[control_name].deleteLater()
-                    del self.shadow_labels[control_name]
-            
+
             # Clear collections
             self.control_labels = {}
-            self.shadow_labels = {}
             
             # Update button text
             if hasattr(self, 'xinput_controls_button'):
@@ -1745,7 +1750,6 @@ class PreviewWindow(QMainWindow):
                 # Only update if needed
                 if control_data['label'].isVisible() != is_visible:
                     control_data['label'].setVisible(is_visible)
-                    self.shadow_labels[control_name].setVisible(is_visible)
                     controls_updated += 1
         
         print(f"Applied joystick visibility ({self.joystick_visible}) to {controls_updated} controls")
@@ -1776,7 +1780,6 @@ class PreviewWindow(QMainWindow):
             if "JOYSTICK" in control_name:
                 is_visible = self.texts_visible and self.joystick_visible
                 control_data['label'].setVisible(is_visible)
-                self.shadow_labels[control_name].setVisible(is_visible)
         
         print(f"Initialized joystick visibility to: {self.joystick_visible}")
 
@@ -2608,27 +2611,6 @@ class PreviewWindow(QMainWindow):
             
         # Move logo to position
         self.logo_label.move(x, y)
-    
-    # Add these methods to your PreviewWindow class to support the enhanced draggable labels
-    def update_shadow_position(self, label):
-        """Update the shadow position when the main label moves"""
-        # Find which control this label belongs to
-        for control_name, control_data in self.control_labels.items():
-            if control_data['label'] == label:
-                # Update shadow position
-                shadow = self.shadow_labels[control_name]
-                shadow.move(label.pos().x() + 2, label.pos().y() + 2)
-                break
-
-    def update_shadow_font(self, label):
-        """Update the shadow font when the main label font changes"""
-        # Find which control this label belongs to
-        for control_name, control_data in self.control_labels.items():
-            if control_data['label'] == label:
-                # Update shadow font
-                shadow = self.shadow_labels[control_name]
-                shadow.setFont(label.font())
-                break
 
     def duplicate_control_label(self, label):
         """Duplicate a control label"""
@@ -2671,9 +2653,6 @@ class PreviewWindow(QMainWindow):
                     'action': action_text,
                     'original_pos': new_pos
                 }
-                
-                # Store shadow label separately for convenience
-                self.shadow_labels[new_control_name] = shadow_label
                 
                 # Connect position update for shadow
                 original_mouseMoveEvent = new_label.mouseMoveEvent
@@ -2869,36 +2848,38 @@ class PreviewWindow(QMainWindow):
                 if logo_pixmap and not logo_pixmap.isNull():
                     painter.drawPixmap(self.logo_label.pos(), logo_pixmap)
             
-            # Draw control labels - CRITICAL CHANGE: Use the same relative positioning
+            # Draw control labels with integrated shadows
             if hasattr(self, 'control_labels'):
                 for control_name, control_data in self.control_labels.items():
                     label = control_data['label']
-                    shadow = self.shadow_labels[control_name]
                     
                     # Skip if not visible
                     if not label.isVisible():
                         continue
                     
-                    # IMPORTANT: Get the exact font from the label
+                    # Get font and position information 
                     font = label.font()
                     metrics = QFontMetrics(font)
+                    pos = label.pos()
                     
-                    # CRITICAL FIX: Draw shadow first using EXACT same position logic as in the UI
-                    # Draw shadow first with exact +2,+2 offset
-                    shadow_pos = label.pos() + QPoint(2, 2)
+                    # Set the font for the painter
                     painter.setFont(font)
-                    painter.setPen(Qt.black)
-                    painter.drawText(
-                        shadow_pos.x(),
-                        shadow_pos.y() + metrics.ascent(),  # This is the key fix - using ascent() 
-                        label.text()
-                    )
                     
-                    # Then draw main text
+                    # Draw shadow if the label has shadow enabled
+                    if hasattr(label, 'is_shadow_visible') and label.is_shadow_visible:
+                        painter.setPen(Qt.black)
+                        shadow_offset = getattr(label, 'shadow_offset', 2)
+                        painter.drawText(
+                            int(pos.x() + shadow_offset),
+                            int(pos.y() + metrics.ascent() + shadow_offset),
+                            label.text()
+                        )
+                    
+                    # Draw main text
                     painter.setPen(Qt.white)
                     painter.drawText(
-                        label.pos().x(),
-                        label.pos().y() + metrics.ascent(),  # This is the key fix - using ascent()
+                        int(pos.x()),
+                        int(pos.y() + metrics.ascent()),
                         label.text()
                     )
             
@@ -3608,7 +3589,8 @@ class PreviewWindow(QMainWindow):
                 # Create label based on mode
                 if clean_mode:
                     # Simple label without drag features in clean mode
-                    label = QLabel(action_text, self.canvas)
+                    # Use EnhancedLabel instead of QLabel
+                    label = EnhancedLabel(action_text, self.canvas, shadow_offset=2)
                     
                     # IMPORTANT: Apply the initialized font if available
                     if hasattr(self, 'current_font'):
@@ -3644,46 +3626,19 @@ class PreviewWindow(QMainWindow):
                     # Position the draggable label
                     label.move(x, y)
                 
-                # Create shadow with matching font
-                shadow_label = QLabel(action_text, self.canvas)
-                shadow_label.setStyleSheet("color: black; background-color: transparent; border: none;")
-                
-                # Copy font directly from main label
-                shadow_label.setFont(label.font())
-                
-                # Position the shadow - IMPORTANT: Use exact offset (2,2)
-                shadow_label.move(x + 2, y + 2)
-                
-                # Make shadow label go behind the main label
-                shadow_label.lower()
-                
                 # Apply visibility immediately
                 label.setVisible(is_visible)
-                shadow_label.setVisible(is_visible)
                 
-                # Store the labels
-                if clean_mode:
-                    self.control_labels[control_name] = {
-                        'label': label,
-                        'shadow': shadow_label,
-                        'action': action_text,
-                        'original_pos': original_pos  # IMPORTANT: Store position for reset in clean mode too
-                    }
-                else:
-                    self.control_labels[control_name] = {
-                        'label': label,
-                        'shadow': shadow_label,
-                        'action': action_text,
-                        'original_pos': original_pos  # Store without offset for reset
-                    }
-                
-                # Store shadow label separately for convenience
-                self.shadow_labels[control_name] = shadow_label
-                
-                # Connect position update for shadow (only for draggable labels)
-                if not clean_mode:
-                    original_mouseMoveEvent = label.mouseMoveEvent
-                    label.mouseMoveEvent = lambda event, label=label, shadow=shadow_label, orig_func=original_mouseMoveEvent: self.on_label_move(event, label, shadow, orig_func)
+                # Store the label
+                self.control_labels[control_name] = {
+                    'label': label,
+                    'action': action_text,
+                    'original_pos': original_pos  # IMPORTANT: Store position for reset
+                }
+        
+        # Force a canvas update
+        self.canvas.update()
+        print(f"Created {len(self.control_labels)} control labels")
                 
     def ensure_clean_layout(self):
         """Ensure all controls are properly laid out in clean mode"""
@@ -3749,22 +3704,6 @@ class PreviewWindow(QMainWindow):
         
         return positions
     
-    def on_label_move(self, event, label, shadow, original_func):
-        """Custom mouseMoveEvent to keep shadow with main label"""
-        # Call the original mouseMoveEvent to handle dragging
-        original_func(event)
-        
-        # CRITICAL CHANGE: Use exact 2px offset rather than calculating
-        shadow.move(label.pos().x() + 2, label.pos().y() + 2)
-
-        # Now update the shadow position
-        if hasattr(label, 'dragging') and label.dragging:
-            shadow.move(label.pos().x() + 2, label.pos().y() + 2)
-        # If resizing, update the shadow font too
-        elif hasattr(label, 'resizing') and label.resizing:
-            shadow.setFont(label.font())
-            shadow.move(label.pos().x() + 2, label.pos().y() + 2)
-    
     def update_control_positions(self):
         """Update control positions when canvas resizes"""
         # This would be used to maintain relative positions on resize
@@ -3781,7 +3720,10 @@ class PreviewWindow(QMainWindow):
         # Toggle visibility for each control
         for control_name, control_data in self.control_labels.items():
             control_data['label'].setVisible(self.texts_visible)
-            self.shadow_labels[control_name].setVisible(self.texts_visible)
+        
+        # Force update to ensure proper rendering
+        if hasattr(self, 'canvas'):
+            self.canvas.update()
     
     # Update toggle_joystick_controls to save settings
     def toggle_joystick_controls(self):
@@ -3796,7 +3738,6 @@ class PreviewWindow(QMainWindow):
             if "JOYSTICK" in control_name:
                 is_visible = self.texts_visible and self.joystick_visible
                 control_data['label'].setVisible(is_visible)
-                self.shadow_labels[control_name].setVisible(is_visible)
         
         # Save the joystick visibility setting (globally)
         self.save_bezel_settings(is_global=True)
@@ -3818,7 +3759,6 @@ class PreviewWindow(QMainWindow):
                 
                 # Move the labels
                 control_data['label'].move(new_pos)
-                self.shadow_labels[control_name].move(new_pos.x() + 2, new_pos.y() + 2)
             
             print(f"Reset {len(self.control_labels)} control positions to original values")
             
@@ -4024,7 +3964,7 @@ class PreviewWindow(QMainWindow):
         # Extract settings
         font_family = self.text_settings.get("font_family", "Arial")
         font_size = self.text_settings.get("font_size", 28)
-        bold_strength = self.text_settings.get("bold_strength", 2)
+        bold_strength = self.text_settings.get("bold_strength", 2) > 0
         use_uppercase = self.text_settings.get("use_uppercase", False)
         y_offset = self.text_settings.get("y_offset", -40)
         
@@ -4162,19 +4102,12 @@ class PreviewWindow(QMainWindow):
                 # FORCE SPECIFIC FONT NAME as fallback with stylesheet (as a second approach)
                 label.setStyleSheet(f"color: white; background-color: transparent; border: none; font-family: '{font.family()}';")
                 
-                # CRITICALLY IMPORTANT: Update shadow
-                shadow = self.shadow_labels[control_name]
-                shadow.setText(display_text)
-                shadow.setFont(font)
-                shadow.setStyleSheet(f"color: black; background-color: transparent; border: none; font-family: '{font.family()}';")
-                
                 # Update positions
                 original_pos = control_data.get('original_pos', QPoint(100, 100))
                 label_x, label_y = original_pos.x(), original_pos.y() + y_offset
                 
-                # Move the labels
+                # Move the label
                 label.move(label_x, label_y)
-                shadow.move(label_x + 2, label_y + 2)
         
         # Force a repaint
         if hasattr(self, 'canvas'):
@@ -4543,7 +4476,7 @@ class LogoSettingsDialog(QDialog):
     # Add this simple save_image implementation if you don't have the SaveUtility
     # Replace the save_image method to properly include bezel
     def save_image(self):
-        """Save current preview as an image with bezel support and better quality"""
+        """Save current preview as an image with consistent text positioning"""
         try:
             # Create preview directory if it doesn't exist
             preview_dir = os.path.join(self.mame_dir, "preview")
@@ -4565,7 +4498,8 @@ class LogoSettingsDialog(QDialog):
             
             # Create a new image with the same size as the canvas
             image = QImage(
-                self.canvas.size(),
+                self.canvas.width(),
+                self.canvas.height(),
                 QImage.Format_ARGB32
             )
             # Fill with black background
@@ -4577,8 +4511,8 @@ class LogoSettingsDialog(QDialog):
             painter.setRenderHint(QPainter.TextAntialiasing)
             painter.setRenderHint(QPainter.SmoothPixmapTransform)
             
-            # Draw the background image if available (using the saved high-quality pixmap)
-            if hasattr(self, 'background_pixmap') and not self.background_pixmap.isNull():
+            # Draw the background image
+            if hasattr(self, 'background_pixmap') and self.background_pixmap and not self.background_pixmap.isNull():
                 bg_pixmap = self.background_pixmap
                 
                 # Calculate position to center the pixmap
@@ -4587,60 +4521,51 @@ class LogoSettingsDialog(QDialog):
                 
                 # Draw the pixmap
                 painter.drawPixmap(x, y, bg_pixmap)
-                print(f"Background drawn at {x},{y}, size {bg_pixmap.width()}x{bg_pixmap.height()}")
-            elif hasattr(self, 'bg_label') and self.bg_label and self.bg_label.pixmap():
-                # Fallback to current bg_label pixmap if needed
-                bg_pixmap = self.bg_label.pixmap()
-                painter.drawPixmap(self.bg_label.pos(), bg_pixmap)
-                print(f"Background drawn via bg_label at {self.bg_label.pos()}, size {bg_pixmap.width()}x{bg_pixmap.height()}")
             
             # Draw the bezel if it's visible
-            if hasattr(self, 'bezel_visible') and self.bezel_visible and hasattr(self, 'bezel_label') and self.bezel_label:
-                bezel_pixmap = self.bezel_label.pixmap()
-                if bezel_pixmap and not bezel_pixmap.isNull():
-                    # The bezel should typically cover the full canvas area
-                    painter.drawPixmap(0, 0, bezel_pixmap)
-                    print(f"Bezel drawn at 0,0, size {bezel_pixmap.width()}x{bezel_pixmap.height()}")
+            if hasattr(self, 'bezel_visible') and self.bezel_visible and hasattr(self, 'bezel_pixmap') and not self.bezel_pixmap.isNull():
+                bezel_pixmap = self.bezel_pixmap
+                # Position bezel in center
+                x = (self.canvas.width() - bezel_pixmap.width()) // 2
+                y = (self.canvas.height() - bezel_pixmap.height()) // 2
+                painter.drawPixmap(x, y, bezel_pixmap)
             
             # Draw the logo if visible
             if hasattr(self, 'logo_label') and self.logo_label and self.logo_label.isVisible():
                 logo_pixmap = self.logo_label.pixmap()
                 if logo_pixmap and not logo_pixmap.isNull():
                     painter.drawPixmap(self.logo_label.pos(), logo_pixmap)
-                    print(f"Logo drawn at {self.logo_label.pos()}, size {logo_pixmap.width()}x{logo_pixmap.height()}")
             
             # Draw control labels
             if hasattr(self, 'control_labels'):
                 for control_name, control_data in self.control_labels.items():
                     label = control_data['label']
                     
-                    # Skip if label is not visible
+                    # Skip if not visible
                     if not label.isVisible():
                         continue
                     
-                    # Draw shadow first if visible
-                    shadow = self.shadow_labels.get(control_name)
-                    if shadow and shadow.isVisible():
-                        shadow_font = shadow.font()
-                        painter.setFont(shadow_font)
+                    # Get font and metrics for text rendering
+                    font = label.font()
+                    metrics = QFontMetrics(font)
+                    painter.setFont(font)
+                    
+                    # Draw shadow if enabled
+                    if label.is_shadow_visible:
                         painter.setPen(Qt.black)
                         painter.drawText(
-                            shadow.pos().x(), 
-                            shadow.pos().y() + QFontMetrics(shadow_font).height(), 
-                            shadow.text()
+                            label.pos().x() + label.shadow_offset,
+                            label.pos().y() + metrics.ascent() + label.shadow_offset,
+                            label.text()
                         )
                     
-                    # Then draw the label text
-                    font = label.font()
-                    painter.setFont(font)
+                    # Draw main text
                     painter.setPen(Qt.white)
                     painter.drawText(
-                        label.pos().x(), 
-                        label.pos().y() + QFontMetrics(font).height(), 
+                        label.pos().x(),
+                        label.pos().y() + metrics.ascent(),
                         label.text()
                     )
-                    
-                print(f"Drew {len(self.control_labels)} control labels")
             
             # End painting
             painter.end()
