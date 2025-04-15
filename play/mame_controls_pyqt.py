@@ -140,6 +140,11 @@ class MAMEControlConfig(QMainWindow):
             self.load_settings()  # Still need settings for preview
             self.load_gamedata_json()  # Need game data for preview
             self.hide()  # Hide the main window
+
+        # Ensure the window is maximizable
+        from PyQt5.QtWidgets import QSizePolicy
+        self.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)
+        self.setMinimumSize(800, 600)  # Set a reasonable minimum size
     
     def get_application_path(self):
         """Get the base path for the application (handles PyInstaller bundling)"""
@@ -879,12 +884,16 @@ class MAMEControlConfig(QMainWindow):
     def create_layout(self):
         """Create the main application layout"""
         # Main central widget
+        from PyQt5.QtWidgets import QSizePolicy
         central_widget = QWidget()
+        central_widget.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)
         self.setCentralWidget(central_widget)
         
         # Main horizontal layout with splitter
         main_layout = QHBoxLayout(central_widget)
+        main_layout.setContentsMargins(10, 10, 10, 10)
         main_splitter = QSplitter(Qt.Horizontal)
+        main_splitter.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)
         main_layout.addWidget(main_splitter)
         
         # Left panel (game list)
@@ -1533,14 +1542,16 @@ class MAMEControlConfig(QMainWindow):
 if __name__ == "__main__":
     import sys
     from PyQt5.QtWidgets import QApplication
+    from PyQt5.QtCore import Qt, QTimer
+    
     app = QApplication(sys.argv)
-
     window = MAMEControlConfig()
     
-    # Dynamic full screen fallback
-    screen_geometry = app.primaryScreen().geometry()
-    window.setGeometry(screen_geometry)
-    window.move(0, 0)
+    # Show window first
     window.show()
-
+    
+    # Then maximize it with multiple approaches for reliability
+    window.setWindowState(Qt.WindowMaximized)
+    QTimer.singleShot(100, window.showMaximized)
+    
     sys.exit(app.exec_())

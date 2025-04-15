@@ -1016,7 +1016,7 @@ class PreviewWindow(QMainWindow):
         print("--- FONT INITIALIZATION COMPLETE ---\n")
 
     def create_floating_button_frame(self):
-        """Create clean, simple floating button frame with Tkinter-like styling"""
+        """Create clean, simple floating button frame with obvious drag handle"""
         # Create a floating button frame
         self.button_frame = QFrame(self)
         
@@ -1029,13 +1029,38 @@ class PreviewWindow(QMainWindow):
             }
         """)
         
-        # Adjust height for single row of buttons
-        self.button_frame.setFixedHeight(50)
+        # Use a vertical layout to contain all elements
+        from PyQt5.QtWidgets import QVBoxLayout, QHBoxLayout, QLabel
+        main_layout = QVBoxLayout(self.button_frame)
+        main_layout.setContentsMargins(10, 5, 10, 10)
+        main_layout.setSpacing(5)
         
-        # Add layout to button frame with better spacing
-        self.button_layout = QHBoxLayout(self.button_frame)
-        self.button_layout.setContentsMargins(10, 5, 10, 5)
-        self.button_layout.setSpacing(8)
+        # Add a visible drag handle at the top
+        handle_layout = QHBoxLayout()
+        handle_layout.setContentsMargins(0, 0, 0, 0)
+        
+        # Create a drag handle label with grip dots
+        handle_label = QLabel("•••")
+        handle_label.setStyleSheet("""
+            color: #888888;
+            font-size: 14px;
+            font-weight: bold;
+            padding: 0px;
+        """)
+        handle_label.setAlignment(Qt.AlignCenter)
+        handle_label.setCursor(Qt.OpenHandCursor)
+        handle_layout.addWidget(handle_label)
+        
+        # Add the handle to the main layout
+        main_layout.addLayout(handle_layout)
+        
+        # Create two horizontal rows for buttons
+        top_row = QHBoxLayout()
+        bottom_row = QHBoxLayout()
+        
+        # Add rows to main layout
+        main_layout.addLayout(top_row)
+        main_layout.addLayout(bottom_row)
         
         # Clean, Tkinter-like button style
         button_style = """
@@ -1058,96 +1083,138 @@ class PreviewWindow(QMainWindow):
             }
         """
         
-        # Create a single row of essential buttons (minimize the number of buttons)
+        # First row buttons
         self.close_button = QPushButton("Close")
         self.close_button.clicked.connect(self.close)
         self.close_button.setStyleSheet(button_style)
-        self.button_layout.addWidget(self.close_button)
+        top_row.addWidget(self.close_button)
         
-        '''self.reset_button = QPushButton("Reset")
-        self.reset_button.clicked.connect(self.reset_positions)
-        self.reset_button.setStyleSheet(button_style)
-        self.button_layout.addWidget(self.reset_button)'''
+        self.global_save_button = QPushButton("Global Save")
+        self.global_save_button.clicked.connect(lambda: self.save_positions(is_global=True))
+        self.global_save_button.setStyleSheet(button_style)
+        top_row.addWidget(self.global_save_button)
         
-        self.save_button = QPushButton("Global Save")
-        self.save_button.clicked.connect(lambda: self.save_positions(is_global=True))
-        self.save_button.setStyleSheet(button_style)
-        self.button_layout.addWidget(self.save_button)
-
-        self.rom_button = QPushButton("ROM Save")
-        self.rom_button.clicked.connect(lambda: self.save_positions(is_global=False))
-        self.rom_button.setStyleSheet(button_style)
-        self.button_layout.addWidget(self.rom_button)
-
+        self.rom_save_button = QPushButton("ROM Save")
+        self.rom_save_button.clicked.connect(lambda: self.save_positions(is_global=False))
+        self.rom_save_button.setStyleSheet(button_style)
+        top_row.addWidget(self.rom_save_button)
+        
         self.text_settings_button = QPushButton("Text Settings")
         self.text_settings_button.clicked.connect(self.show_text_settings)
         self.text_settings_button.setStyleSheet(button_style)
-        self.button_layout.addWidget(self.text_settings_button)
-
+        top_row.addWidget(self.text_settings_button)
+        
         self.xinput_controls_button = QPushButton("Show All XInput")
         self.xinput_controls_button.clicked.connect(self.toggle_xinput_controls)
         self.xinput_controls_button.setStyleSheet(button_style)
-        self.button_layout.addWidget(self.xinput_controls_button)
+        top_row.addWidget(self.xinput_controls_button)
         
+        # Second row buttons
         self.toggle_texts_button = QPushButton("Hide Texts")
         self.toggle_texts_button.clicked.connect(self.toggle_texts)
         self.toggle_texts_button.setStyleSheet(button_style)
-        self.button_layout.addWidget(self.toggle_texts_button)
+        bottom_row.addWidget(self.toggle_texts_button)
         
         self.joystick_button = QPushButton("Joystick")
         self.joystick_button.clicked.connect(self.toggle_joystick_controls)
         self.joystick_button.setStyleSheet(button_style)
-        self.button_layout.addWidget(self.joystick_button)
+        bottom_row.addWidget(self.joystick_button)
         
         # Logo toggle
         logo_text = "Hide Logo" if self.logo_visible else "Show Logo"
         self.logo_button = QPushButton(logo_text)
         self.logo_button.clicked.connect(self.toggle_logo)
         self.logo_button.setStyleSheet(button_style)
-        self.button_layout.addWidget(self.logo_button)
+        bottom_row.addWidget(self.logo_button)
         
         # Screen toggle with number indicator
         self.screen_button = QPushButton(f"Screen {getattr(self, 'current_screen', 1)}")
         self.screen_button.clicked.connect(self.toggle_screen)
         self.screen_button.setStyleSheet(button_style)
-        self.button_layout.addWidget(self.screen_button)
+        bottom_row.addWidget(self.screen_button)
         
         # Add save image button
         self.save_image_button = QPushButton("Save Image")
         self.save_image_button.clicked.connect(self.save_image)
         self.save_image_button.setStyleSheet(button_style)
-        self.button_layout.addWidget(self.save_image_button)
+        bottom_row.addWidget(self.save_image_button)
+        
+        # Add dragging functionality
+        self.button_frame.mousePressEvent = self.button_frame_mouse_press
+        self.button_frame.mouseMoveEvent = self.button_frame_mouse_move
+        self.button_frame.mouseReleaseEvent = self.button_frame_mouse_release
+        self.button_frame.setCursor(Qt.OpenHandCursor)
+        self.button_dragging = False
+        self.button_drag_pos = None
         
         # Determine button frame position
         self.position_button_frame()
         
         # Show button frame
         self.button_frame.show()
-        
-        # Setup resize handler to reposition button frame
-        self.resizeEvent = self.on_resize_with_buttons
 
-    def position_button_frame(self):
-        """Position the button frame at the bottom of the window"""
-        if hasattr(self, 'button_frame'):
-            # Calculate width and position - with int conversion
-            frame_width = int(min(1000, self.width() * 0.9))  # 90% of window width, max 1000px
-            x_pos = (self.width() - frame_width) // 2
-            y_pos = self.height() - self.button_frame.height() - 20  # 20px from bottom
+    def button_frame_mouse_press(self, event):
+        """Handle mouse press on button frame for dragging"""
+        if event.button() == Qt.LeftButton:
+            self.button_dragging = True
+            self.button_drag_pos = event.pos()
+            self.button_frame.setCursor(Qt.ClosedHandCursor)
+            event.accept()  # Accept the event to prevent buttons from receiving it
+
+    def button_frame_mouse_move(self, event):
+        """Handle mouse move for button frame dragging"""
+        if self.button_dragging and self.button_drag_pos:
+            delta = event.pos() - self.button_drag_pos
+            new_pos = self.button_frame.pos() + delta
             
-            # Set width and position
-            self.button_frame.setFixedWidth(frame_width)
-            self.button_frame.move(x_pos, y_pos)
+            # Keep within window bounds
+            new_pos.setX(max(0, min(self.width() - self.button_frame.width(), new_pos.x())))
+            new_pos.setY(max(0, min(self.height() - self.button_frame.height(), new_pos.y())))
+            
+            self.button_frame.move(new_pos)
+            event.accept()
 
-    # 4. Override the resize event to reposition the button frame
+    def button_frame_mouse_release(self, event):
+        """Handle mouse release to end button frame dragging"""
+        if event.button() == Qt.LeftButton:
+            self.button_dragging = False
+            self.button_frame.setCursor(Qt.OpenHandCursor)
+            event.accept()
+
+    def position_button_frame(self, initial_position=None):
+        """Position the button frame with option for custom initial position"""
+        if hasattr(self, 'button_frame'):
+            # Calculate width and position
+            frame_width = int(min(1000, self.width() * 0.9))  # 90% of window width, max 1000px
+            
+            # Set width first so we can get the correct height
+            self.button_frame.setFixedWidth(frame_width)
+            self.button_frame.adjustSize()
+            button_height = self.button_frame.height()
+            
+            # If initial position is specified, use it
+            if initial_position:
+                x_pos, y_pos = initial_position
+            else:
+                # Default position - change these values to adjust initial position
+                x_pos = self.width() - frame_width - 20  # 20px from right edge
+                y_pos = 20  # 20px from top
+            
+            # Keep within window bounds
+            x_pos = max(0, min(self.width() - frame_width, x_pos))
+            y_pos = max(0, min(self.height() - button_height, y_pos))
+            
+            # Move to position
+            self.button_frame.move(x_pos, y_pos)
 
     def on_resize_with_buttons(self, event):
         """Handle resize events and reposition the button frame"""
         # Let the normal resize event happen first
         super().resizeEvent(event)
         
-        # Reposition the button frame
-        self.position_button_frame()
+        # Reposition the button frame with a short delay to ensure geometry is updated
+        from PyQt5.QtCore import QTimer
+        QTimer.singleShot(50, self.position_button_frame)
         
         # Also handle bezel resizing if needed
         if hasattr(self, 'on_resize_with_bezel'):
