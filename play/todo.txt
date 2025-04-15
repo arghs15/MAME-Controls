@@ -1,6 +1,3 @@
-Button frame in preview
--not handling multiple buttons well. need to create more row if over a certain number. Or within a width range
-
 Text alignment
 
 Text colour picker and gradient

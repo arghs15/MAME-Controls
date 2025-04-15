@@ -88,19 +88,21 @@ def main():
             app = QApplication(sys.argv)
             app.setApplicationName("MAME Control Configuration (PyQt)")
             app.setApplicationVersion("1.0")
-            
+
             # Apply dark theme
             set_dark_theme(app)
-            
+
             # Create main window
             window = MAMEControlConfig()
-            
-            # Set window size to full screen
-            screen_geometry = QApplication.primaryScreen().geometry()
-            window.setGeometry(screen_geometry)
-            window.move(0, 0)
+
+            # First make window visible
             window.show()
-            
+
+            # Then maximize it - using multiple methods for redundancy
+            from PyQt5.QtCore import QTimer, Qt
+            window.setWindowState(Qt.WindowMaximized)
+            QTimer.singleShot(100, window.showMaximized)
+
             # Run application
             sys.exit(app.exec_())
         except ImportError:
