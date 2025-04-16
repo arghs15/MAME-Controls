@@ -1757,7 +1757,55 @@ class PreviewWindow(QMainWindow):
                 QTimer.singleShot(100, self.show_bezel_with_background)
                 print("Bezel initialized as visible based on settings")
     
-    # Improved show_all_xinput_controls method that avoids duplicates
+    # First, add the missing on_label_move method to the PreviewWindow class
+    def on_label_move(self, event, label, shadow, orig_func):
+        """Handle label movement and update shadow position"""
+        # Call the original mouseMoveEvent method for the label
+        orig_func(event)
+        
+        # Update shadow position to match the label with offset
+        if shadow:
+            shadow_pos = label.pos()
+            shadow.move(shadow_pos.x() + 2, shadow_pos.y() + 2)
+
+    # Update the show_all_xinput_controls method to fix text truncation in RS/LS buttons
+    # Fixed show_all_xinput_controls method to ensure consistent text positioning
+    # Add this helper method to presizing labels before positioning
+    def create_presized_label(self, text, font, control_name=""):
+        """Create a properly sized label before positioning it"""
+        from PyQt5.QtWidgets import QSizePolicy
+        from PyQt5.QtCore import Qt
+        
+        # Create the label
+        label = DraggableLabel(text, self.canvas, settings=self.text_settings.copy())
+        
+        # Apply font directly
+        label.setFont(font)
+        
+        # Important text display fixes
+        label.setWordWrap(False)  # Prevent wrapping
+        label.setTextFormat(Qt.PlainText)  # Simple text format
+        
+        # Remove any constraints
+        label.setMinimumSize(0, 0)
+        label.setMaximumSize(16777215, 16777215)  # Qt's maximum
+        
+        # Set expanding size policy
+        label.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)
+        
+        # Force size calculation
+        label.adjustSize()
+        
+        # Track the actual size used
+        width = label.width()
+        height = label.height()
+        
+        if control_name:
+            print(f"Presized {control_name}: {width}x{height}")
+        
+        return label, width, height
+
+    # Completely rewritten show_all_xinput_controls with a new approach
     def show_all_xinput_controls(self):
         """Show all possible P1 XInput controls for global positioning without duplicates"""
         # Standard XInput controls for positioning - P1 ONLY
@@ -1786,6 +1834,11 @@ class PreviewWindow(QMainWindow):
         }
         
         try:
+            from PyQt5.QtGui import QFont, QFontInfo
+            from PyQt5.QtCore import QPoint, Qt
+            from PyQt5.QtWidgets import QLabel
+            import os
+            
             print("\n--- Showing all P1 XInput controls for positioning ---")
             
             # Save existing control positions
@@ -1799,103 +1852,141 @@ class PreviewWindow(QMainWindow):
                     }
                 print(f"Backed up {len(self.original_controls_backup)} original controls")
             
-            # Get canvas dimensions for positioning
-            canvas_width = self.canvas.width()
-            canvas_height = self.canvas.height()
-            
             # Clear ALL existing controls first
             for control_name in list(self.control_labels.keys()):
                 # Remove the control from the canvas
                 if control_name in self.control_labels:
-                    self.control_labels[control_name]['label'].deleteLater()
+                    if 'label' in self.control_labels[control_name]:
+                        self.control_labels[control_name]['label'].deleteLater()
+                    if 'shadow' in self.control_labels[control_name]:
+                        self.control_labels[control_name]['shadow'].deleteLater()
                     del self.control_labels[control_name]
 
             # Clear collections
             self.control_labels = {}
             print("Cleared all existing controls")
-            print("Cleared all existing controls")
+            
+            # Load saved global positions
+            saved_positions = self.load_saved_positions()
+            
+            # Get font - either from current_font or settings
+            font_family = self.text_settings.get("font_family", "Arial")
+            font_size = self.text_settings.get("font_size", 28)
+            bold_strength = self.text_settings.get("bold_strength", 2) > 0
+            
+            if hasattr(self, 'current_font') and self.current_font:
+                font = QFont(self.current_font)
+            else:
+                font = QFont(font_family, font_size)
+                font.setBold(bold_strength)
+            
+            # Apply text settings
+            y_offset = self.text_settings.get("y_offset", -40)
+            use_uppercase = self.text_settings.get("use_uppercase", False)
+            show_prefix = self.text_settings.get("show_button_prefix", True)
             
             # Default grid layout
             grid_x, grid_y = 0, 0
             
-            # Apply text settings
-            y_offset = self.text_settings.get("y_offset", -40)
-            
             # Create all P1 XInput controls
             for control_name, action_text in xinput_controls.items():
-                # Apply text settings - uppercase if enabled
-                if self.text_settings.get("use_uppercase", False):
+                # Apply uppercase if needed
+                if use_uppercase:
                     action_text = action_text.upper()
                 
-                # Check if we have a saved position for this control
-                saved_position = None
-                if control_name in self.original_controls_backup:
-                    saved_position = self.original_controls_backup[control_name]['position']
+                # Get button prefix
+                button_prefix = self.get_button_prefix(control_name)
                 
-                # Create a draggable label with current text settings
-                label = DraggableLabel(action_text, self.canvas, settings=self.text_settings)
+                # Add prefix if enabled
+                display_text = action_text
+                if show_prefix and button_prefix:
+                    display_text = f"{button_prefix}: {action_text}"
                 
-                # Create shadow effect for better visibility
-                shadow_label = QLabel(action_text, self.canvas)
-                shadow_label.setStyleSheet("color: black; background-color: transparent; border: none;")
+                # COMPLETELY DIFFERENT APPROACH:
+                # 1. Create presized labels with final dimensions
+                label, width, height = self.create_presized_label(display_text, font, control_name)
                 
-                # Copy font settings from main label
-                shadow_label.setFont(label.font())
+                # 2. Create shadow with exact same dimensions
+                shadow = QLabel(display_text, self.canvas)
+                shadow.setFont(font)
+                shadow.setStyleSheet("color: black; background-color: transparent; border: none;")
+                shadow.resize(width, height)  # Use exact same size
                 
-                if saved_position:
-                    # Use the saved position
-                    x, y = saved_position.x(), saved_position.y()
-                    # Use original position without offset for reset
+                # 3. Determine position - now completely separated from creation
+                x, y = 0, 0
+                
+                # Check for saved position in the following order:
+                # a) Global positions from saved_positions
+                # b) Backup positions from original_controls_backup
+                # c) Default grid-based position
+                if saved_positions and control_name in saved_positions:
+                    # Use the EXACT coordinates from global positions
+                    pos_x, pos_y = saved_positions[control_name]
+                    x, y = pos_x, pos_y + y_offset
+                    original_pos = QPoint(pos_x, pos_y)
+                    print(f"Using global position for {control_name}: ({pos_x}, {pos_y})")
+                
+                elif control_name in self.original_controls_backup:
+                    # Use backup position exactly as stored
+                    backup_pos = self.original_controls_backup[control_name]['position']
+                    x, y = backup_pos.x(), backup_pos.y()
                     original_pos = self.original_controls_backup[control_name]['original_pos']
+                    print(f"Using backup position for {control_name}: ({x}, {y})")
+                
                 else:
-                    # Use default grid position
-                    x = 100 + (grid_x * 150)
-                    y = 100 + (grid_y * 40)
-                    
-                    # Apply y-offset from text settings
-                    y += y_offset
-                    
-                    # Store original position without offset
+                    # Use grid position with fixed spacing
+                    x = 100 + (grid_x * 200)
+                    y = 100 + (grid_y * 60) + y_offset
                     original_pos = QPoint(x, y - y_offset)
                     
-                    # Update grid position
-                    grid_x = (grid_x + 1) % 5
+                    # Update grid
+                    grid_x = (grid_x + 1) % 4
                     if grid_x == 0:
                         grid_y += 1
+                    print(f"Using grid position for {control_name}: ({x}, {y})")
                 
-                # Position the labels - shadow goes behind
-                shadow_label.move(x + 2, y + 2)  # Shadow offset
+                # 4. CRITICAL - Position without any adjustments
+                # Apply position DIRECTLY - no calculations after this point
+                shadow.move(x + 2, y + 2)
                 label.move(x, y)
                 
-                # Make shadow label go behind the main label
-                shadow_label.lower()
+                # 5. Stack shadow behind
+                shadow.lower()
                 
-                # Store the labels
+                # 6. Store in control_labels with original position
                 self.control_labels[control_name] = {
                     'label': label,
-                    'shadow': shadow_label,
+                    'shadow': shadow,
                     'action': action_text,
-                    'original_pos': original_pos  # Store without offset for reset
+                    'prefix': button_prefix,
+                    'original_pos': original_pos
                 }
                 
-                # Connect position update for shadow
+                # 7. Connect shadow movement handler
                 original_mouseMoveEvent = label.mouseMoveEvent
-                label.mouseMoveEvent = lambda event, label=label, shadow=shadow_label, orig_func=original_mouseMoveEvent: self.on_label_move(event, label, shadow, orig_func)
+                label.mouseMoveEvent = lambda event, label=label, shadow=shadow, orig_func=original_mouseMoveEvent: self.on_label_move(event, label, shadow, orig_func)
                 
-                # Show control (respect joystick visibility)
+                # 8. Apply visibility based on joystick settings
                 is_visible = True
                 if "JOYSTICK" in control_name and hasattr(self, 'joystick_visible'):
                     is_visible = self.joystick_visible
                 
                 label.setVisible(is_visible)
-                shadow_label.setVisible(is_visible)
+                shadow.setVisible(is_visible)
+                
+                # Record final position
+                final_x, final_y = label.pos().x(), label.pos().y()
+                print(f"Final position for {control_name}: ({final_x}, {final_y})")
             
-            # Update button to allow going back to regular mode
+            # Update button text
             if hasattr(self, 'xinput_controls_button'):
                 self.xinput_controls_button.setText("Normal Controls")
             
-            # Set flag to indicate we're in XInput mode
+            # Set XInput mode flag
             self.showing_all_xinput_controls = True
+            
+            # Force update
+            self.canvas.update()
             
             print(f"Created and displayed {len(xinput_controls)} P1 XInput controls for positioning")
             return True
