@@ -619,11 +619,11 @@ class GradientPrefixLabel(EnhancedLabel):
             prefix_rect.moveLeft(int(x))
             prefix_rect.moveTop(int(y - metrics.ascent()))
             
-            if self.use_prefix_gradient and self.settings.get("use_prefix_gradient", False):
+            if self.use_prefix_gradient:
                 # Create linear gradient for prefix
                 gradient = QLinearGradient(
                     prefix_rect.left(), prefix_rect.top(),
-                    prefix_rect.right(), prefix_rect.bottom()
+                    prefix_rect.left(), prefix_rect.bottom()
                 )
                 gradient.setColorAt(0, self.prefix_gradient_start)
                 gradient.setColorAt(1, self.prefix_gradient_end)
@@ -1091,7 +1091,6 @@ class TextSettingsDialog(QDialog):
             
     
     def get_current_settings(self):
-        """Get the current settings from dialog controls"""
         return {
             "font_family": self.font_combo.currentText(),
             "font_size": self.size_slider.value(),
@@ -1100,8 +1099,15 @@ class TextSettingsDialog(QDialog):
             "show_button_prefix": self.prefix_check.isChecked(),
             "y_offset": self.offset_slider.value(),
             "prefix_color": self.prefix_color_edit.text(),
-            "action_color": self.action_color_edit.text()
+            "action_color": self.action_color_edit.text(),
+            "use_prefix_gradient": self.prefix_gradient_check.isChecked(),
+            "prefix_gradient_start": self.prefix_gradient_start.text(),
+            "prefix_gradient_end": self.prefix_gradient_end.text(),
+            "use_action_gradient": self.action_gradient_check.isChecked(),
+            "action_gradient_start": self.action_gradient_start.text(),
+            "action_gradient_end": self.action_gradient_end.text()
         }
+
     
     def apply_settings(self):
         """Apply the current settings without closing dialog"""
@@ -4104,142 +4110,96 @@ class PreviewWindow(QMainWindow):
 
     # Improved create_control_labels method that respects joystick visibility
     def create_control_labels(self, clean_mode=False):
-        """Create control labels with option for clean mode and joystick visibility support"""
+        """Create control labels using GradientPrefixLabel with full gradient support"""
         if not self.game_data or 'players' not in self.game_data:
             return
-        
-        # Load saved positions - this should happen regardless of mode
+
         saved_positions = self.load_saved_positions()
-        
-        # Make sure joystick_visible is set before we start creating controls
+
+        # Initialize joystick visibility early if not already
         if not hasattr(self, 'joystick_visible'):
-            # Load from settings if possible
             bezel_settings = self.load_bezel_settings() if hasattr(self, 'load_bezel_settings') else {}
             self.joystick_visible = bezel_settings.get("joystick_visible", True)
-            print(f"Pre-initialized joystick visibility to: {self.joystick_visible}")
-        
-        # Process controls
+
+        grid_x, grid_y = 0, 0
+
         for player in self.game_data.get('players', []):
-            if player['number'] != 1:  # Only show Player 1 controls
+            if player['number'] != 1:
                 continue
-                    
-            # Create a label for each control
-            grid_x, grid_y = 0, 0
+
             for control in player.get('labels', []):
                 control_name = control['name']
                 action_text = control['value']
-                
-                # Get button prefix based on control_name
                 button_prefix = self.get_button_prefix(control_name)
-                
-                # Determine visibility BEFORE creating the control
+
+                # Visibility toggle for joystick labels
                 is_visible = True
                 if "JOYSTICK" in control_name:
-                    is_visible = getattr(self, 'joystick_visible', True)
-                
-                # Apply text settings
+                    is_visible = self.joystick_visible
+
                 if self.text_settings.get("use_uppercase", False):
                     action_text = action_text.upper()
-                
-                # Add prefix if enabled in settings
+
                 display_text = action_text
                 if self.text_settings.get("show_button_prefix", True) and button_prefix:
                     display_text = f"{button_prefix}: {action_text}"
-                
-                # Get position - use saved position or default grid position
-                # IMPORTANT: This same position logic should be used for both modes
+
+                # Determine position
                 if control_name in saved_positions:
-                    # Get saved position
                     pos_x, pos_y = saved_positions[control_name]
-                    
-                    # Apply y-offset from text settings
                     y_offset = self.text_settings.get("y_offset", -40)
-                    
-                    # Use saved position
                     x, y = pos_x, pos_y + y_offset
-                    original_pos = QPoint(pos_x, pos_y)  # Store without offset
+                    original_pos = QPoint(pos_x, pos_y)
                 else:
-                    # Default position based on a grid layout
                     x = 100 + (grid_x * 150)
                     y = 100 + (grid_y * 40)
-                    
-                    # Apply y-offset from text settings
                     y_offset = self.text_settings.get("y_offset", -40)
                     y += y_offset
-                    
-                    # Store original position without offset
                     original_pos = QPoint(x, y - y_offset)
-                    
-                    # Update grid position
                     grid_x = (grid_x + 1) % 5
                     if grid_x == 0:
                         grid_y += 1
-                
-                # Create label based on mode
-                if clean_mode:
-                    # Use ColoredPrefixLabel instead of EnhancedLabel
-                    label = ColoredPrefixLabel(display_text, self.canvas, shadow_offset=2, settings=self.text_settings)
-                    
-                    # IMPORTANT: Apply the initialized font if available
-                    if hasattr(self, 'current_font'):
-                        label.setFont(self.current_font)
-                    elif hasattr(self, 'initialized_font'):
-                        label.setFont(self.initialized_font)
-                    else:
-                        # Fallback to standard approach
-                        font = QFont(self.text_settings.get("font_family", "Arial"), 
-                                    self.text_settings.get("font_size", 28))
-                        font.setBold(self.text_settings.get("bold_strength", 2) > 0)
-                        label.setFont(font)
-                    
-                    # Apply background styling only
-                    label.setStyleSheet("background-color: transparent; border: none;")
-                    
-                    # CRITICAL: Set exact position for clean mode - same as normal mode
-                    label.move(x, y)
+
+                # Create the label using GradientPrefixLabel
+                label = GradientPrefixLabel(display_text, self.canvas, settings=self.text_settings)
+
+                # Set font (current or fallback)
+                if hasattr(self, 'current_font'):
+                    label.setFont(self.current_font)
+                elif hasattr(self, 'initialized_font'):
+                    label.setFont(self.initialized_font)
                 else:
-                    # Create a custom DraggableLabel with color support
-                    if hasattr(self, 'current_font'):
-                        label = ColoredPrefixLabel(display_text, self.canvas,
-                                            settings=self.text_settings)
-                        label.setFont(self.current_font)
-                        label.draggable = True  # Flag to make it draggable
-                    elif hasattr(self, 'initialized_font'):
-                        label = ColoredPrefixLabel(display_text, self.canvas,
-                                            settings=self.text_settings)
-                        label.setFont(self.initialized_font)
-                        label.draggable = True
-                    else:
-                        label = ColoredPrefixLabel(display_text, self.canvas,
-                                            settings=self.text_settings)
-                        font = QFont(self.text_settings.get("font_family", "Arial"), 
+                    font = QFont(self.text_settings.get("font_family", "Arial"),
                                 self.text_settings.get("font_size", 28))
-                        font.setBold(self.text_settings.get("bold_strength", 2) > 0)
-                        label.setFont(font)
-                        label.draggable = True
-                    
-                    # Position the label
-                    label.move(x, y)
-                    
-                    # Add drag events
+                    font.setBold(self.text_settings.get("bold_strength", 2) > 0)
+                    label.setFont(font)
+
+                # Apply shared properties
+                label.setStyleSheet("background-color: transparent; border: none;")
+                label.move(x, y)
+                label.setVisible(is_visible)
+
+                # Add drag support in non-clean mode
+                if not clean_mode:
                     label.mousePressEvent = lambda event, lbl=label: self.on_label_press(event, lbl)
                     label.mouseMoveEvent = lambda event, lbl=label: self.on_label_move(event, lbl)
                     label.mouseReleaseEvent = lambda event, lbl=label: self.on_label_release(event, lbl)
-                
-                # Apply visibility immediately
-                label.setVisible(is_visible)
-                
-                # Store the label
+
+                # Store label
+                # Store label
                 self.control_labels[control_name] = {
                     'label': label,
                     'action': action_text,
                     'prefix': button_prefix,
                     'original_pos': original_pos
                 }
-        
-        # Force a canvas update
+
+                label.setVisible(is_visible)  # ✅ Show or hide immediately, no flicker
+
+
         self.canvas.update()
-        print(f"Created {len(self.control_labels)} control labels")
+        print(f"Created {len(self.control_labels)} control labels using GradientPrefixLabel")
+
                 
     def on_label_press(self, event, label):
         """Handle mouse press on label"""
