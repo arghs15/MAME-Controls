@@ -1,6 +1,12 @@
-Add back hide bezel buton
+WIP Gradient
+- doesn't load or save
+- color doesn't save to image
+x axis slightly off a few px when saving an image
+- show preview standalone shows colour which is good
 
-WIP - Text colour picker and gradient
+Add back hide bezel button
+
+Remove shadow - pointless
 
 Move all files to preview, and preview\settings
 
