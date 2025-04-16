@@ -1,8 +1,13 @@
+Revert to best working - alignment. and slowly add back
+
 WIP Gradient
-- doesn't load or save
 - color doesn't save to image
 x axis slightly off a few px when saving an image
 - show preview standalone shows colour which is good
+
+Show all Xinput breaks app
+
+Alignment missing - how??
 
 Add back hide bezel button
 
