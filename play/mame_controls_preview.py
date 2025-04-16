@@ -612,7 +612,7 @@ class TextSettingsDialog(QDialog):
     def __init__(self, parent=None, settings=None):
         super().__init__(parent)
         self.setWindowTitle("Text Appearance Settings")
-        self.resize(400, 500)
+        self.resize(400, 550)  # Increased height to accommodate new controls
         
         # Store parent reference for settings access
         self.parent = parent
@@ -626,6 +626,9 @@ class TextSettingsDialog(QDialog):
             "font_size": 28,
             "bold_strength": 2,
             "use_uppercase": False,
+            "show_button_prefix": True,  # New default setting
+            "prefix_color": "#FFFFFF",   # Default prefix color
+            "text_color": "#FFFFFF",     # Default text color
             "y_offset": -40
         }
         
@@ -742,6 +745,11 @@ class TextSettingsDialog(QDialog):
         self.uppercase_check.setChecked(self.settings.get("use_uppercase", False))
         options_layout.addWidget(self.uppercase_check)
         
+        # Button prefix option (NEW)
+        self.prefix_check = QCheckBox("Show button prefixes (e.g., A: Jump)")
+        self.prefix_check.setChecked(self.settings.get("show_button_prefix", True))
+        options_layout.addWidget(self.prefix_check)
+        
         # Y-offset slider for vertical positioning
         offset_row = QHBoxLayout()
         offset_label = QLabel("Y-Offset:")
@@ -761,11 +769,42 @@ class TextSettingsDialog(QDialog):
         
         layout.addWidget(options_group)
         
+        # Color options (NEW)
+        color_group = QGroupBox("Color Options")
+        color_layout = QVBoxLayout(color_group)
+        
+        # Info label
+        color_info = QLabel("Note: Color customization will be available in a future update.")
+        color_info.setStyleSheet("color: gray; font-style: italic;")
+        color_layout.addWidget(color_info)
+        
+        # Placeholder for future color picker functionality
+        color_row = QHBoxLayout()
+        color_label = QLabel("Text Color:")
+        color_button = QPushButton("Choose Color")
+        color_button.setEnabled(False)  # Disabled for now
+        
+        color_row.addWidget(color_label)
+        color_row.addWidget(color_button)
+        color_layout.addLayout(color_row)
+        
+        # Placeholder for prefix color picker
+        prefix_color_row = QHBoxLayout()
+        prefix_color_label = QLabel("Prefix Color:")
+        prefix_color_button = QPushButton("Choose Color")
+        prefix_color_button.setEnabled(False)  # Disabled for now
+        
+        prefix_color_row.addWidget(prefix_color_label)
+        prefix_color_row.addWidget(prefix_color_button)
+        color_layout.addLayout(prefix_color_row)
+        
+        layout.addWidget(color_group)
+        
         # Preview section
         preview_group = QGroupBox("Preview")
         preview_layout = QVBoxLayout(preview_group)
         
-        self.preview_label = QLabel("Preview Text")
+        self.preview_label = QLabel("A: Preview Text")
         self.preview_label.setAlignment(Qt.AlignCenter)
         self.preview_label.setMinimumHeight(100)
         self.preview_label.setStyleSheet("background-color: black; color: white;")
@@ -778,6 +817,7 @@ class TextSettingsDialog(QDialog):
         self.size_slider.valueChanged.connect(self.update_preview)
         self.bold_slider.valueChanged.connect(self.update_preview)
         self.uppercase_check.stateChanged.connect(self.update_preview)
+        self.prefix_check.stateChanged.connect(self.update_preview)
         
         # Initial preview update
         self.update_preview()
@@ -808,6 +848,7 @@ class TextSettingsDialog(QDialog):
         font_size = self.size_slider.value()
         bold_strength = self.bold_slider.value()
         use_uppercase = self.uppercase_check.isChecked()
+        show_prefix = self.prefix_check.isChecked()
         
         # Create font
         font = QFont(font_family, font_size)
@@ -822,7 +863,11 @@ class TextSettingsDialog(QDialog):
         if use_uppercase:
             preview_text = preview_text.upper()
         
-        self.preview_label.setText(preview_text)
+        # Apply prefix if enabled
+        if show_prefix:
+            self.preview_label.setText(f"A: {preview_text}")
+        else:
+            self.preview_label.setText(preview_text)
         
         # Apply shadow effect based on bold strength
         if bold_strength == 0:
@@ -840,6 +885,7 @@ class TextSettingsDialog(QDialog):
             "font_size": self.size_slider.value(),
             "bold_strength": self.bold_slider.value(),
             "use_uppercase": self.uppercase_check.isChecked(),
+            "show_button_prefix": self.prefix_check.isChecked(),  # NEW
             "y_offset": self.offset_slider.value()
         }
     
@@ -980,6 +1026,34 @@ class PreviewWindow(QMainWindow):
             QMessageBox.critical(self, "Error", f"Error initializing preview: {e}")
             self.close()
 
+    def get_button_prefix(self, control_name):
+        """Generate button prefix based on control name"""
+        prefixes = {
+            'P1_BUTTON1': 'A',
+            'P1_BUTTON2': 'B',
+            'P1_BUTTON3': 'X',
+            'P1_BUTTON4': 'Y',
+            'P1_BUTTON5': 'LB',
+            'P1_BUTTON6': 'RB', 
+            'P1_BUTTON7': 'LT',
+            'P1_BUTTON8': 'RT',
+            'P1_BUTTON9': 'LS',
+            'P1_BUTTON10': 'RS',
+            'P1_START': 'START',
+            'P1_SELECT': 'BACK',
+            'P1_JOYSTICK_UP': 'LS↑',
+            'P1_JOYSTICK_DOWN': 'LS↓',
+            'P1_JOYSTICK_LEFT': 'LS←',
+            'P1_JOYSTICK_RIGHT': 'LS→',
+            'P1_JOYSTICK2_UP': 'RS↑',
+            'P1_JOYSTICK2_DOWN': 'RS↓',
+            'P1_JOYSTICK2_LEFT': 'RS←',
+            'P1_JOYSTICK2_RIGHT': 'RS→',
+            # Add more mappings as needed
+        }
+        
+        return prefixes.get(control_name, "")
+    
     def load_and_register_fonts(self):
         """Load and register fonts from settings at startup"""
         from PyQt5.QtGui import QFontDatabase, QFont, QFontInfo
@@ -1259,6 +1333,14 @@ class PreviewWindow(QMainWindow):
         self.joystick_button.clicked.connect(self.toggle_joystick_controls)
         self.joystick_button.setStyleSheet(button_style)
         bottom_row.addWidget(self.joystick_button)
+        
+        # Add button prefix toggle button (NEW)
+        prefix_text = "Hide Prefixes" if self.text_settings.get("show_button_prefix", True) else "Show Prefixes"
+        self.prefix_button = QPushButton(prefix_text)
+        self.prefix_button.clicked.connect(self.toggle_button_prefixes)
+        self.prefix_button.setStyleSheet(button_style)
+        self.prefix_button.setToolTip("Toggle button prefixes (e.g., A: Jump)")
+        bottom_row.addWidget(self.prefix_button)
         
         # Logo toggle
         logo_text = "Hide Logo" if self.logo_visible else "Show Logo"
@@ -3809,7 +3891,9 @@ class PreviewWindow(QMainWindow):
             "font_size": 28,
             "bold_strength": 2,
             "use_uppercase": False,
-            "y_offset": -40
+            "y_offset": -40,
+            "show_button_prefix": True,  # Add this line for button prefix setting
+            "prefix_color": "#FFFFFF"    # Default color for prefix (white)
         }
         
         try:
@@ -3899,6 +3983,9 @@ class PreviewWindow(QMainWindow):
                 control_name = control['name']
                 action_text = control['value']
                 
+                # Get button prefix based on control_name
+                button_prefix = self.get_button_prefix(control_name)
+                
                 # Determine visibility BEFORE creating the control
                 is_visible = True
                 if "JOYSTICK" in control_name:
@@ -3907,6 +3994,11 @@ class PreviewWindow(QMainWindow):
                 # Apply text settings
                 if self.text_settings.get("use_uppercase", False):
                     action_text = action_text.upper()
+                
+                # Add prefix if enabled in settings
+                display_text = action_text
+                if self.text_settings.get("show_button_prefix", True) and button_prefix:
+                    display_text = f"{button_prefix}: {action_text}"
                 
                 # Get position - use saved position or default grid position
                 # IMPORTANT: This same position logic should be used for both modes
@@ -3941,7 +4033,7 @@ class PreviewWindow(QMainWindow):
                 if clean_mode:
                     # Simple label without drag features in clean mode
                     # Use EnhancedLabel instead of QLabel
-                    label = EnhancedLabel(action_text, self.canvas, shadow_offset=2)
+                    label = EnhancedLabel(display_text, self.canvas, shadow_offset=2)
                     
                     # IMPORTANT: Apply the initialized font if available
                     if hasattr(self, 'current_font'):
@@ -3963,15 +4055,15 @@ class PreviewWindow(QMainWindow):
                 else:
                     # For DraggableLabel, pass our initialized font
                     if hasattr(self, 'current_font'):
-                        label = DraggableLabel(action_text, self.canvas, 
+                        label = DraggableLabel(display_text, self.canvas, 
                                             settings=self.text_settings,
                                             initialized_font=self.current_font)
                     elif hasattr(self, 'initialized_font'):
-                        label = DraggableLabel(action_text, self.canvas, 
+                        label = DraggableLabel(display_text, self.canvas, 
                                             settings=self.text_settings,
                                             initialized_font=self.initialized_font)
                     else:
-                        label = DraggableLabel(action_text, self.canvas, 
+                        label = DraggableLabel(display_text, self.canvas, 
                                             settings=self.text_settings)
                     
                     # Position the draggable label
@@ -3980,10 +4072,11 @@ class PreviewWindow(QMainWindow):
                 # Apply visibility immediately
                 label.setVisible(is_visible)
                 
-                # Store the label
+                # Store the label and additional data
                 self.control_labels[control_name] = {
                     'label': label,
                     'action': action_text,
+                    'prefix': button_prefix,  # Store the prefix for later use
                     'original_pos': original_pos  # IMPORTANT: Store position for reset
                 }
         
@@ -3991,6 +4084,33 @@ class PreviewWindow(QMainWindow):
         self.canvas.update()
         print(f"Created {len(self.control_labels)} control labels")
                 
+    def get_button_prefix(self, control_name):
+        """Generate button prefix based on control name"""
+        prefixes = {
+            'P1_BUTTON1': 'A',
+            'P1_BUTTON2': 'B',
+            'P1_BUTTON3': 'X',
+            'P1_BUTTON4': 'Y',
+            'P1_BUTTON5': 'LB',
+            'P1_BUTTON6': 'RB', 
+            'P1_BUTTON7': 'LT',
+            'P1_BUTTON8': 'RT',
+            'P1_BUTTON9': 'LS',
+            'P1_BUTTON10': 'RS',
+            'P1_START': 'START',
+            'P1_SELECT': 'BACK',
+            'P1_JOYSTICK_UP': 'LS↑',
+            'P1_JOYSTICK_DOWN': 'LS↓',
+            'P1_JOYSTICK_LEFT': 'LS←',
+            'P1_JOYSTICK_RIGHT': 'LS→',
+            'P1_JOYSTICK2_UP': 'RS↑',
+            'P1_JOYSTICK2_DOWN': 'RS↓',
+            'P1_JOYSTICK2_LEFT': 'RS←',
+            'P1_JOYSTICK2_RIGHT': 'RS→',
+        }
+        
+        return prefixes.get(control_name, "")
+    
     def ensure_clean_layout(self):
         """Ensure all controls are properly laid out in clean mode"""
         # Force a redraw of the canvas
@@ -4238,43 +4358,81 @@ class PreviewWindow(QMainWindow):
             print("Text settings updated and saved globally")
     
     # Improved update_text_settings to ensure font size is applied to all controls
-    def update_text_settings(self, settings):
-        """Update text settings and properly apply to all controls with global saving"""
-        # Update local settings with merge
-        self.text_settings.update(settings)
+    def update_text(self, text):
+        """Update the displayed text, applying uppercase and prefix if needed"""
+        if self.settings.get("use_uppercase", False):
+            text = text.upper()
         
-        # Update font information
-        font_family = settings.get("font_family", "Arial")
-        font_size = settings.get("font_size", 28)
-        bold_strength = settings.get("bold_strength", 2)
+        # If there's a prefix in the label, preserve it
+        if ': ' in text:
+            prefix, content = text.split(': ', 1)
+            if self.settings.get("show_button_prefix", True):
+                self.setText(f"{prefix}: {content}")
+            else:
+                self.setText(content)
+        else:
+            self.setText(text)
+    
+    def toggle_button_prefixes(self):
+        """Toggle the visibility of button prefixes for all controls"""
+        # Toggle the setting
+        show_prefixes = not self.text_settings.get("show_button_prefix", True)
+        self.text_settings["show_button_prefix"] = show_prefixes
         
-        # Reload and register the font
-        self.load_and_register_fonts()
+        # Update all control labels
+        for control_name, control_data in self.control_labels.items():
+            if 'label' in control_data and control_data['label']:
+                label = control_data['label']
+                action_text = control_data['action']
+                prefix = control_data.get('prefix', '')
+                
+                # Apply uppercase if enabled
+                if self.text_settings.get("use_uppercase", False):
+                    action_text = action_text.upper()
+                
+                # Set label text based on prefix setting
+                if show_prefixes and prefix:
+                    label.setText(f"{prefix}: {action_text}")
+                else:
+                    label.setText(action_text)
         
-        # Apply to existing controls
-        self.apply_text_settings()
+        # Update button text
+        if hasattr(self, 'prefix_button'):
+            self.prefix_button.setText("Hide Prefixes" if show_prefixes else "Show Prefixes")
         
-        # Save to file
+        # Save the updated setting to file
         try:
             preview_dir = os.path.join(self.mame_dir, "preview")
             os.makedirs(preview_dir, exist_ok=True)
             
-            # Save to global settings to ensure persistence
+            # Try to load existing settings first
             settings_file = os.path.join(preview_dir, "global_text_settings.json")
+            current_settings = {}
             
-            # Update the font_family with actual family name if available
-            if hasattr(self, 'font_name') and self.font_name:
-                self.text_settings["font_family"] = self.font_name
+            if os.path.exists(settings_file):
+                try:
+                    with open(settings_file, 'r') as f:
+                        current_settings = json.load(f)
+                except:
+                    pass  # Use empty settings if file can't be read
             
+            # Update with our new setting
+            current_settings["show_button_prefix"] = show_prefixes
+            
+            # Save back to file
             with open(settings_file, 'w') as f:
-                json.dump(self.text_settings, f)
-            print(f"Saved text settings to {settings_file}: {self.text_settings}")
+                json.dump(current_settings, f)
+            
+            print(f"Saved button prefix setting: {show_prefixes}")
         except Exception as e:
-            print(f"Error saving text settings: {e}")
+            print(f"Error saving button prefix setting: {e}")
             import traceback
             traceback.print_exc()
         
-        print(f"Text settings updated and applied: {self.text_settings}")
+        # Force a canvas update
+        self.canvas.update()
+        
+        return show_prefixes
     
     def apply_specific_font(self, font_file_name, font_size, bold=False):
         """Load and apply a specific font from file"""
@@ -4317,6 +4475,7 @@ class PreviewWindow(QMainWindow):
         font_size = self.text_settings.get("font_size", 28)
         bold_strength = self.text_settings.get("bold_strength", 2) > 0
         use_uppercase = self.text_settings.get("use_uppercase", False)
+        show_button_prefix = self.text_settings.get("show_button_prefix", True)
         y_offset = self.text_settings.get("y_offset", -40)
         
         # Debug font information if available
@@ -4440,9 +4599,16 @@ class PreviewWindow(QMainWindow):
                 
                 # Get original action text
                 action_text = control_data['action']
+                prefix = control_data.get('prefix', '')
                 
                 # Apply uppercase if enabled
-                display_text = action_text.upper() if use_uppercase else action_text
+                if use_uppercase:
+                    action_text = action_text.upper()
+                
+                # Create the display text with or without prefix
+                display_text = action_text
+                if show_button_prefix and prefix:
+                    display_text = f"{prefix}: {action_text}"
                 
                 # Update the text
                 label.setText(display_text)
@@ -4459,6 +4625,10 @@ class PreviewWindow(QMainWindow):
                 
                 # Move the label
                 label.move(label_x, label_y)
+        
+        # If we have a prefix button, update its text
+        if hasattr(self, 'prefix_button'):
+            self.prefix_button.setText("Hide Prefixes" if show_button_prefix else "Show Prefixes")
         
         # Force a repaint
         if hasattr(self, 'canvas'):
