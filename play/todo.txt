@@ -1,6 +1,6 @@
-Text alignment
+Add back hide bezel buton
 
-Text colour picker and gradient
+WIP - Text colour picker and gradient
 
 Move all files to preview, and preview\settings
 

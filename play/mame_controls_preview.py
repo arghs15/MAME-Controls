@@ -3,7 +3,7 @@ import random
 import sys
 import json
 import traceback
-from PyQt5.QtWidgets import (QAction, QGridLayout, QMainWindow, QMenu, QMessageBox, QSizePolicy, QSpinBox, QVBoxLayout, QHBoxLayout, QWidget, 
+from PyQt5.QtWidgets import (QAction, QGridLayout, QLineEdit, QMainWindow, QMenu, QMessageBox, QSizePolicy, QSpinBox, QVBoxLayout, QHBoxLayout, QWidget, 
                             QLabel, QPushButton, QFrame, QApplication, QDesktopWidget,
                             QDialog, QGroupBox, QCheckBox, QSlider, QComboBox)
 from PyQt5.QtGui import QFontInfo, QImage, QPalette, QPixmap, QFont, QColor, QPainter, QPen, QFontMetrics
@@ -476,6 +476,82 @@ class DraggableLabel(EnhancedLabel):
         if hasattr(self.parent(), "duplicate_control_label"):
             self.parent().duplicate_control_label(self)
 
+class ColoredPrefixLabel(EnhancedLabel):
+    """A label that supports different colors for prefix and action text"""
+    def __init__(self, text, parent=None, shadow_offset=2, settings=None):
+        super().__init__(text, parent, shadow_offset)
+        self.settings = settings or {}
+        self.prefix = ""
+        self.action = ""
+        self.parse_text(text)
+    
+    def parse_text(self, text):
+        """Parse text into prefix and action components"""
+        if ": " in text:
+            parts = text.split(": ", 1)
+            self.prefix = parts[0]
+            self.action = parts[1]
+        else:
+            self.prefix = ""
+            self.action = text
+    
+    def paintEvent(self, event):
+        """Override paint event to draw text with different colors"""
+        if not self.text():
+            return
+            
+        painter = QPainter(self)
+        painter.setRenderHint(QPainter.Antialiasing)
+        painter.setRenderHint(QPainter.TextAntialiasing)
+        
+        # Get current font metrics
+        metrics = QFontMetrics(self.font())
+        
+        # Draw shadow if enabled
+        if self.is_shadow_visible:
+            painter.setPen(self.shadow_color)
+            
+            if self.prefix and ": " in self.text():
+                # Calculate positions
+                x = 8  # Starting position with some padding
+                y = int((self.height() + metrics.ascent() - metrics.descent()) / 2)
+                
+                # Draw shadow for full text
+                painter.drawText(int(x + self.shadow_offset), int(y + self.shadow_offset), self.text())
+            else:
+                # Single color text with shadow
+                x = int((self.width() - metrics.boundingRect(self.text()).width()) / 2)
+                y = int((self.height() + metrics.ascent() - metrics.descent()) / 2)
+                painter.drawText(int(x + self.shadow_offset), int(y + self.shadow_offset), self.text())
+        
+        # Get colors from settings
+        prefix_color = QColor(self.settings.get("prefix_color", "#FFC107"))
+        action_color = QColor(self.settings.get("action_color", "#FFFFFF"))
+        
+        if self.prefix and ": " in self.text():
+            # Draw prefix
+            x = 8  # Starting position with some padding
+            y = int((self.height() + metrics.ascent() - metrics.descent()) / 2)
+            
+            painter.setPen(prefix_color)
+            prefix_text = f"{self.prefix}: "
+            painter.drawText(int(x), int(y), prefix_text)
+            
+            # Calculate width of prefix for positioning action text
+            prefix_width = metrics.boundingRect(prefix_text).width()
+            
+            # Draw action text
+            painter.setPen(action_color)
+            painter.drawText(int(x + prefix_width), int(y), self.action)
+        else:
+            # Draw single color text (centered)
+            x = int((self.width() - metrics.boundingRect(self.text()).width()) / 2)
+            y = int((self.height() + metrics.ascent() - metrics.descent()) / 2)
+            
+            painter.setPen(action_color)
+            painter.drawText(int(x), int(y), self.text())
+
+
 class TextSettingsDialog(QDialog):
     """Dialog for configuring text appearance in preview"""
     def __init__(self, parent=None, settings=None):
@@ -638,35 +714,36 @@ class TextSettingsDialog(QDialog):
         
         layout.addWidget(options_group)
         
-        # Color options (NEW)
+        # Color options
         color_group = QGroupBox("Color Options")
         color_layout = QVBoxLayout(color_group)
-        
-        # Info label
-        color_info = QLabel("Note: Color customization will be available in a future update.")
-        color_info.setStyleSheet("color: gray; font-style: italic;")
-        color_layout.addWidget(color_info)
-        
-        # Placeholder for future color picker functionality
-        color_row = QHBoxLayout()
-        color_label = QLabel("Text Color:")
-        color_button = QPushButton("Choose Color")
-        color_button.setEnabled(False)  # Disabled for now
-        
-        color_row.addWidget(color_label)
-        color_row.addWidget(color_button)
-        color_layout.addLayout(color_row)
-        
-        # Placeholder for prefix color picker
+
+        # Prefix color
         prefix_color_row = QHBoxLayout()
         prefix_color_label = QLabel("Prefix Color:")
-        prefix_color_button = QPushButton("Choose Color")
-        prefix_color_button.setEnabled(False)  # Disabled for now
-        
+        self.prefix_color_edit = QLineEdit(self.settings.get("prefix_color", "#FFC107"))
+        self.prefix_color_edit.setMaximumWidth(100)
+        self.prefix_color_edit.setPlaceholderText("#RRGGBB")
+        self.prefix_color_edit.textChanged.connect(self.update_preview)
+
         prefix_color_row.addWidget(prefix_color_label)
-        prefix_color_row.addWidget(prefix_color_button)
+        prefix_color_row.addWidget(self.prefix_color_edit)
+        prefix_color_row.addStretch()
         color_layout.addLayout(prefix_color_row)
-        
+
+        # Action color
+        action_color_row = QHBoxLayout()
+        action_color_label = QLabel("Action Color:")
+        self.action_color_edit = QLineEdit(self.settings.get("action_color", "#FFFFFF"))
+        self.action_color_edit.setMaximumWidth(100)
+        self.action_color_edit.setPlaceholderText("#RRGGBB")
+        self.action_color_edit.textChanged.connect(self.update_preview)
+
+        action_color_row.addWidget(action_color_label)
+        action_color_row.addWidget(self.action_color_edit)
+        action_color_row.addStretch()
+        color_layout.addLayout(action_color_row)
+
         layout.addWidget(color_group)
         
         # Preview section
@@ -718,6 +795,8 @@ class TextSettingsDialog(QDialog):
         bold_strength = self.bold_slider.value()
         use_uppercase = self.uppercase_check.isChecked()
         show_prefix = self.prefix_check.isChecked()
+        prefix_color = self.prefix_color_edit.text()
+        action_color = self.action_color_edit.text()
         
         # Create font
         font = QFont(font_family, font_size)
@@ -734,17 +813,25 @@ class TextSettingsDialog(QDialog):
         
         # Apply prefix if enabled
         if show_prefix:
-            self.preview_label.setText(f"A: {preview_text}")
+            display_text = f"A: {preview_text}"
+            self.preview_label.setText(display_text)
+            
+            # Apply colors using HTML
+            styled_text = f"<span style='color: {prefix_color}'>A: </span><span style='color: {action_color}'>{preview_text}</span>"
+            self.preview_label.setText(styled_text)
+            self.preview_label.setTextFormat(Qt.RichText)
         else:
             self.preview_label.setText(preview_text)
+            self.preview_label.setStyleSheet(f"background-color: black; color: {action_color};")
+            self.preview_label.setTextFormat(Qt.PlainText)
         
         # Apply shadow effect based on bold strength
         if bold_strength == 0:
-            self.preview_label.setStyleSheet("background-color: black; color: white;")
+            self.preview_label.setStyleSheet(f"background-color: black;")
         else:
             # Advanced shadow effect needs to be implemented in actual rendering
             self.preview_label.setStyleSheet(
-                f"background-color: black; color: white; text-shadow: {bold_strength}px {bold_strength}px black;"
+                f"background-color: black; text-shadow: {bold_strength}px {bold_strength}px black;"
             )
     
     def get_current_settings(self):
@@ -754,8 +841,10 @@ class TextSettingsDialog(QDialog):
             "font_size": self.size_slider.value(),
             "bold_strength": self.bold_slider.value(),
             "use_uppercase": self.uppercase_check.isChecked(),
-            "show_button_prefix": self.prefix_check.isChecked(),  # NEW
-            "y_offset": self.offset_slider.value()
+            "show_button_prefix": self.prefix_check.isChecked(),
+            "y_offset": self.offset_slider.value(),
+            "prefix_color": self.prefix_color_edit.text(),
+            "action_color": self.action_color_edit.text()
         }
     
     def apply_settings(self):
@@ -3657,8 +3746,9 @@ class PreviewWindow(QMainWindow):
             "bold_strength": 2,
             "use_uppercase": False,
             "y_offset": -40,
-            "show_button_prefix": True,  # Add this line for button prefix setting
-            "prefix_color": "#FFFFFF"    # Default color for prefix (white)
+            "show_button_prefix": True,
+            "prefix_color": "#FFC107",  # Default prefix color (amber)
+            "action_color": "#FFFFFF"   # Default action text color (white)
         }
         
         try:
@@ -3796,9 +3886,8 @@ class PreviewWindow(QMainWindow):
                 
                 # Create label based on mode
                 if clean_mode:
-                    # Simple label without drag features in clean mode
-                    # Use EnhancedLabel instead of QLabel
-                    label = EnhancedLabel(display_text, self.canvas, shadow_offset=2)
+                    # Use ColoredPrefixLabel instead of EnhancedLabel
+                    label = ColoredPrefixLabel(display_text, self.canvas, shadow_offset=2, settings=self.text_settings)
                     
                     # IMPORTANT: Apply the initialized font if available
                     if hasattr(self, 'current_font'):
@@ -3812,43 +3901,81 @@ class PreviewWindow(QMainWindow):
                         font.setBold(self.text_settings.get("bold_strength", 2) > 0)
                         label.setFont(font)
                     
-                    # Apply styling without font family in stylesheet
-                    label.setStyleSheet("color: white; background-color: transparent; border: none;")
+                    # Apply background styling only
+                    label.setStyleSheet("background-color: transparent; border: none;")
                     
                     # CRITICAL: Set exact position for clean mode - same as normal mode
                     label.move(x, y)
                 else:
-                    # For DraggableLabel, pass our initialized font
+                    # Create a custom DraggableLabel with color support
                     if hasattr(self, 'current_font'):
-                        label = DraggableLabel(display_text, self.canvas, 
-                                            settings=self.text_settings,
-                                            initialized_font=self.current_font)
-                    elif hasattr(self, 'initialized_font'):
-                        label = DraggableLabel(display_text, self.canvas, 
-                                            settings=self.text_settings,
-                                            initialized_font=self.initialized_font)
-                    else:
-                        label = DraggableLabel(display_text, self.canvas, 
+                        label = ColoredPrefixLabel(display_text, self.canvas,
                                             settings=self.text_settings)
+                        label.setFont(self.current_font)
+                        label.draggable = True  # Flag to make it draggable
+                    elif hasattr(self, 'initialized_font'):
+                        label = ColoredPrefixLabel(display_text, self.canvas,
+                                            settings=self.text_settings)
+                        label.setFont(self.initialized_font)
+                        label.draggable = True
+                    else:
+                        label = ColoredPrefixLabel(display_text, self.canvas,
+                                            settings=self.text_settings)
+                        font = QFont(self.text_settings.get("font_family", "Arial"), 
+                                self.text_settings.get("font_size", 28))
+                        font.setBold(self.text_settings.get("bold_strength", 2) > 0)
+                        label.setFont(font)
+                        label.draggable = True
                     
-                    # Position the draggable label
+                    # Position the label
                     label.move(x, y)
+                    
+                    # Add drag events
+                    label.mousePressEvent = lambda event, lbl=label: self.on_label_press(event, lbl)
+                    label.mouseMoveEvent = lambda event, lbl=label: self.on_label_move(event, lbl)
+                    label.mouseReleaseEvent = lambda event, lbl=label: self.on_label_release(event, lbl)
                 
                 # Apply visibility immediately
                 label.setVisible(is_visible)
                 
-                # Store the label and additional data
+                # Store the label
                 self.control_labels[control_name] = {
                     'label': label,
                     'action': action_text,
-                    'prefix': button_prefix,  # Store the prefix for later use
-                    'original_pos': original_pos  # IMPORTANT: Store position for reset
+                    'prefix': button_prefix,
+                    'original_pos': original_pos
                 }
         
         # Force a canvas update
         self.canvas.update()
         print(f"Created {len(self.control_labels)} control labels")
                 
+    def on_label_press(self, event, label):
+        """Handle mouse press on label"""
+        if event.button() == Qt.LeftButton:
+            label.dragging = True
+            label.drag_start_pos = event.pos()
+            label.setCursor(Qt.ClosedHandCursor)
+            event.accept()
+
+    def on_label_move(self, event, label):
+        """Handle mouse move for dragging labels"""
+        if hasattr(label, 'dragging') and label.dragging:
+            # Calculate new position
+            delta = event.pos() - label.drag_start_pos
+            new_pos = label.pos() + delta
+            
+            # Apply the move
+            label.move(new_pos)
+            event.accept()
+
+    def on_label_release(self, event, label):
+        """Handle mouse release to end dragging"""
+        if event.button() == Qt.LeftButton and hasattr(label, 'dragging'):
+            label.dragging = False
+            label.setCursor(Qt.OpenHandCursor)
+            event.accept()
+    
     def get_button_prefix(self, control_name):
         """Generate button prefix based on control name"""
         prefixes = {
@@ -4205,6 +4332,12 @@ class PreviewWindow(QMainWindow):
         show_button_prefix = self.text_settings.get("show_button_prefix", True)
         y_offset = self.text_settings.get("y_offset", -40)
         
+        # Color and gradient settings
+        prefix_color = self.text_settings.get("prefix_color", "#FFC107")
+        action_color = self.text_settings.get("action_color", "#FFFFFF")
+        use_prefix_gradient = self.text_settings.get("use_prefix_gradient", False)
+        use_action_gradient = self.text_settings.get("use_action_gradient", False)
+        
         # Debug font information if available
         if hasattr(self, 'debug_font_settings'):
             self.debug_font_settings()
@@ -4340,11 +4473,20 @@ class PreviewWindow(QMainWindow):
                 # Update the text
                 label.setText(display_text)
                 
+                # If it's a ColoredPrefixLabel or GradientPrefixLabel, update parsed text and settings
+                if hasattr(label, 'parse_text'):
+                    label.parse_text(display_text)
+                    
+                # Update settings if available
+                if hasattr(label, 'settings'):
+                    label.settings = self.text_settings
+                
                 # Apply the font - TWO ways for redundancy
                 label.setFont(font)
                 
                 # FORCE SPECIFIC FONT NAME as fallback with stylesheet (as a second approach)
-                label.setStyleSheet(f"color: white; background-color: transparent; border: none; font-family: '{font.family()}';")
+                # We only set background-color in the stylesheet to avoid interfering with custom painting
+                label.setStyleSheet(f"background-color: transparent; border: none; font-family: '{font.family()}';")
                 
                 # Update positions
                 original_pos = control_data.get('original_pos', QPoint(100, 100))
