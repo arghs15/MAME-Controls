@@ -205,7 +205,7 @@ class DraggableLabel(EnhancedLabel):
         
     # Completely rewrite the mouseMoveEvent method to directly adjust text size
     def mouseMoveEvent(self, event):
-        """Handle mouse move events for dragging and resizing with direct size adjustments"""
+        """Handle mouse move events for dragging and resizing with alignment guides"""
         # Update cursor when hovering over resize corner
         if not self.dragging and not self.resizing:
             if self.is_in_resize_corner(event.pos()):
@@ -213,12 +213,140 @@ class DraggableLabel(EnhancedLabel):
             else:
                 self.setCursor(Qt.OpenHandCursor)
         
-        # Handle dragging
+        # Handle dragging with alignment
         if self.dragging:
             new_pos = self.mapToParent(event.pos() - self.offset)
+            
+            # Initialize guide lines list
+            guide_lines = []
+            snapped = False
+            parent = self.parent()
+            
+            if parent:
+                # Get canvas dimensions
+                canvas_width = parent.width()
+                canvas_height = parent.height()
+                
+                # Get label center coordinates
+                label_center_x = new_pos.x() + self.width() // 2
+                label_center_y = new_pos.y() + self.height() // 2
+                
+                # Screen center alignment
+                screen_center_x = canvas_width // 2
+                if abs(label_center_x - screen_center_x) < 10:
+                    new_pos.setX(int(screen_center_x - self.width() / 2))
+                    guide_lines.append((screen_center_x, 0, screen_center_x, canvas_height))
+                    snapped = True
+                
+                screen_center_y = canvas_height // 2
+                if abs(label_center_y - screen_center_y) < 10:
+                    new_pos.setY(int(screen_center_y - self.height() / 2))
+                    guide_lines.append((0, screen_center_y, canvas_width, screen_center_y))
+                    snapped = True
+                
+                # Direct access to preview window for showing guides
+                preview_window = None
+                current = parent
+                while current and not preview_window:
+                    if hasattr(current, 'show_alignment_guides'):
+                        preview_window = current
+                    else:
+                        current = current.parent() if hasattr(current, 'parent') else None
+                
+                # Check alignment with other text elements
+                if preview_window and hasattr(preview_window, 'control_labels'):
+                    for control_name, control_data in preview_window.control_labels.items():
+                        other_label = control_data.get('label')
+                        if other_label is self or not other_label or not other_label.isVisible():
+                            continue
+                        
+                        # Visual text alignment - check the first character's actual position
+                        # This will handle different letter shapes like 'L' vs 'H'
+                        if self.text() and other_label.text():
+                            # Get text metrics for both labels
+                            self_metrics = QFontMetrics(self.font())
+                            other_metrics = QFontMetrics(other_label.font())
+                            
+                            # Calculate the space before the first visible pixel in each text
+                            # This accounts for differences in letter shapes
+                            self_first_char = self.text()[0]
+                            other_first_char = other_label.text()[0]
+                            
+                            # Get the left bearing (space before the glyph)
+                            self_left_bearing = self_metrics.leftBearing(self_first_char)
+                            other_left_bearing = other_metrics.leftBearing(other_first_char)
+                            
+                            # Calculate actual visual start positions
+                            self_visual_start = new_pos.x() + self_left_bearing
+                            other_visual_start = other_label.pos().x() + other_left_bearing
+                            
+                            # Check if visual starts are close
+                            if abs(self_visual_start - other_visual_start) < 10:
+                                # Adjust position to align first visible pixel
+                                adjusted_x = other_visual_start - self_left_bearing
+                                new_pos.setX(int(adjusted_x))
+                                guide_lines.append((other_visual_start, 0, other_visual_start, canvas_height))
+                                snapped = True
+                
+                # Check alignment with logo
+                if preview_window and hasattr(preview_window, 'logo_label') and preview_window.logo_label and preview_window.logo_label.isVisible():
+                    logo = preview_window.logo_label
+                    
+                    # Logo center coordinates
+                    logo_center_x = logo.pos().x() + logo.width() // 2
+                    logo_center_y = logo.pos().y() + logo.height() // 2
+                    
+                    # Horizontal center alignment with logo
+                    if abs(label_center_x - logo_center_x) < 10:
+                        new_pos.setX(int(logo_center_x - self.width() / 2))
+                        guide_lines.append((logo_center_x, 0, logo_center_x, canvas_height))
+                        snapped = True
+                    
+                    # Vertical center alignment with logo
+                    if abs(label_center_y - logo_center_y) < 10:
+                        new_pos.setY(int(logo_center_y - self.height() / 2))
+                        guide_lines.append((0, logo_center_y, canvas_width, logo_center_y))
+                        snapped = True
+                    
+                    # Edge alignments with logo
+                    # Left edge - aligns text with left edge of logo
+                    if abs(new_pos.x() - logo.pos().x()) < 10:
+                        new_pos.setX(logo.pos().x())
+                        guide_lines.append((logo.pos().x(), 0, logo.pos().x(), canvas_height))
+                        snapped = True
+                    
+                    # Right edge
+                    label_right = new_pos.x() + self.width()
+                    logo_right = logo.pos().x() + logo.width()
+                    if abs(label_right - logo_right) < 10:
+                        new_pos.setX(int(logo_right - self.width()))
+                        guide_lines.append((logo_right, 0, logo_right, canvas_height))
+                        snapped = True
+                    
+                    # Top edge
+                    if abs(new_pos.y() - logo.pos().y()) < 10:
+                        new_pos.setY(logo.pos().y())
+                        guide_lines.append((0, logo.pos().y(), canvas_width, logo.pos().y()))
+                        snapped = True
+                    
+                    # Bottom edge
+                    label_bottom = new_pos.y() + self.height()
+                    logo_bottom = logo.pos().y() + logo.height()
+                    if abs(label_bottom - logo_bottom) < 10:
+                        new_pos.setY(int(logo_bottom - self.height()))
+                        guide_lines.append((0, logo_bottom, canvas_width, logo_bottom))
+                        snapped = True
+                
+                # Show or hide alignment guides
+                if preview_window:
+                    if snapped and guide_lines and hasattr(preview_window, 'show_alignment_guides'):
+                        preview_window.show_alignment_guides(guide_lines)
+                    elif hasattr(preview_window, 'hide_alignment_guides'):
+                        preview_window.hide_alignment_guides()
+            
+            # Apply the move
             self.move(new_pos)
             
-            # Notify the parent to update shadow label if it exists
             # Notify the parent to update shadow label if it exists
             if hasattr(self.parent(), "update_shadow_position"):
                 self.parent().update_shadow_position(self)
@@ -269,6 +397,17 @@ class DraggableLabel(EnhancedLabel):
                 if hasattr(self.parent(), "update_shadow_font"):
                     self.parent().update_shadow_font(self)
             
+    def find_preview_window_parent(self):
+        """Find the PreviewWindow parent to access alignment guide methods"""
+        current = self.parent()
+        while current:
+            # Look for a parent that has both show_alignment_guides and hide_alignment_guides methods
+            if (hasattr(current, 'show_alignment_guides') and 
+                hasattr(current, 'hide_alignment_guides')):
+                return current
+            current = current.parent()
+        return None
+    
     # Fix the mouseReleaseEvent method in DraggableLabel to properly handle parent navigation
     def mouseReleaseEvent(self, event):
         """Handle mouse release without crashing on parent navigation"""
@@ -902,6 +1041,71 @@ class PreviewWindow(QMainWindow):
             QMessageBox.critical(self, "Error", f"Error initializing preview: {e}")
             self.close()
 
+    # 1. Add show_alignment_guides method to PreviewWindow
+    def show_alignment_guides(self, guide_lines):
+        """Show alignment guide lines with enhanced visibility"""
+        # Remove any existing guide lines
+        self.hide_alignment_guides()
+        
+        # Create guide lines
+        from PyQt5.QtWidgets import QFrame
+        from PyQt5.QtGui import QPalette, QColor
+        
+        self.guide_labels = []
+        
+        for x1, y1, x2, y2 in guide_lines:
+            guide = QFrame(self.canvas)
+            
+            # Ensure all values are integers
+            x1, y1, x2, y2 = int(x1), int(y1), int(x2), int(y2)
+            
+            # Set line style
+            if x1 == x2:  # Vertical line
+                guide.setFrameShape(QFrame.VLine)
+                guide.setFixedWidth(2)  # Make line thicker
+            else:  # Horizontal line
+                guide.setFrameShape(QFrame.HLine)
+                guide.setFixedHeight(2)  # Make line thicker
+            
+            guide.setFrameShadow(QFrame.Plain)
+            guide.setLineWidth(2)
+            
+            # Set bright color for visibility
+            palette = QPalette()
+            palette.setColor(QPalette.WindowText, QColor(0, 255, 255))  # Cyan color
+            guide.setPalette(palette)
+            
+            # Add a more visible style
+            guide.setStyleSheet("background-color: rgba(0, 255, 255, 180);")  # Semi-transparent cyan
+            
+            # Position and size the guide
+            if x1 == x2:  # Vertical line
+                guide.setGeometry(x1-1, y1, 2, y2-y1)  # Center line on position
+            else:  # Horizontal line
+                guide.setGeometry(x1, y1-1, x2-x1, 2)  # Center line on position
+            
+            # Make sure guide is on top
+            guide.raise_()
+            guide.show()
+            self.guide_labels.append(guide)
+        
+        # Set timer to auto-hide guides after a short period
+        from PyQt5.QtCore import QTimer
+        if hasattr(self, 'guide_timer'):
+            self.guide_timer.stop()
+        self.guide_timer = QTimer(self)
+        self.guide_timer.setSingleShot(True)
+        self.guide_timer.timeout.connect(self.hide_alignment_guides)
+        self.guide_timer.start(1500)  # Hide after 1.5 seconds (increased from 1s)
+
+    # 2. Add hide_alignment_guides method to PreviewWindow
+    def hide_alignment_guides(self):
+        """Hide alignment guide lines"""
+        if hasattr(self, 'guide_labels'):
+            for guide in self.guide_labels:
+                guide.deleteLater()
+            self.guide_labels = []
+    
     def toggle_button_prefixes(self):
         """Toggle the visibility of button prefixes for all controls"""
         # Toggle the setting
