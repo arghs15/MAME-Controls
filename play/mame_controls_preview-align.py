@@ -3,10 +3,11 @@ import random
 import sys
 import json
 import traceback
-from PyQt5.QtWidgets import (QAction, QGridLayout, QLineEdit, QMainWindow, QMenu, QMessageBox, QSizePolicy, QSpinBox, QVBoxLayout, QHBoxLayout, QWidget, 
+from PyQt5 import sip
+from PyQt5.QtWidgets import (QAction, QGridLayout, QMainWindow, QMenu, QMessageBox, QSizePolicy, QSpinBox, QVBoxLayout, QHBoxLayout, QWidget, 
                             QLabel, QPushButton, QFrame, QApplication, QDesktopWidget,
                             QDialog, QGroupBox, QCheckBox, QSlider, QComboBox)
-from PyQt5.QtGui import QBrush, QFontInfo, QImage, QLinearGradient, QPalette, QPixmap, QFont, QColor, QPainter, QPen, QFontMetrics
+from PyQt5.QtGui import QFontInfo, QImage, QPalette, QPixmap, QFont, QColor, QPainter, QPen, QFontMetrics
 from PyQt5.QtCore import Qt, QPoint, QTimer, QRect, QEvent, QSize
 
 class EnhancedLabel(QLabel):
@@ -157,6 +158,7 @@ class DraggableLabel(EnhancedLabel):
     def update_appearance(self):
         """Update appearance based on settings"""
         # If we have an initialized font, use it directly
+        from PyQt5.QtCore import Qt
         if self.initialized_font:
             self.setFont(self.initialized_font)
             print(f"DraggableLabel using initialized font: {self.initialized_font.family()}")
@@ -192,6 +194,7 @@ class DraggableLabel(EnhancedLabel):
     # Add this to mousePressEvent to store initial position for better resize calculations
     def mousePressEvent(self, event):
         """Handle mouse press events with better resize handling"""
+        from PyQt5.QtCore import Qt
         if event.button() == Qt.LeftButton:
             # Check if we're in the resize corner
             if self.is_in_resize_corner(event.pos()):
@@ -205,7 +208,8 @@ class DraggableLabel(EnhancedLabel):
         
     # Completely rewrite the mouseMoveEvent method to directly adjust text size
     def mouseMoveEvent(self, event):
-        """Handle mouse move events for dragging and resizing with direct size adjustments"""
+        """Enhanced mouseMoveEvent with improved snapping controls"""
+        from PyQt5.QtCore import Qt
         # Update cursor when hovering over resize corner
         if not self.dragging and not self.resizing:
             if self.is_in_resize_corner(event.pos()):
@@ -213,18 +217,166 @@ class DraggableLabel(EnhancedLabel):
             else:
                 self.setCursor(Qt.OpenHandCursor)
         
-        # Handle dragging
+        # Handle dragging with better snapping control
         if self.dragging:
-            new_pos = self.mapToParent(event.pos() - self.offset)
-            self.move(new_pos)
+            # Fix the import - QApplication is in QtWidgets, not QtCore
+            from PyQt5.QtWidgets import QApplication
             
-            # Notify the parent to update shadow label if it exists
-            # Notify the parent to update shadow label if it exists
-            if hasattr(self.parent(), "update_shadow_position"):
-                self.parent().update_shadow_position(self)
+            # Calculate new position based on mouse position
+            new_pos = self.mapToParent(event.pos() - self.offset)
+            original_pos = new_pos  # Store original position before any snapping
+            
+            # Initialize guide lines list and snapping variables
+            guide_lines = []
+            snapped = False
+            parent = self.parent()
+            
+            if parent:
+                # Get canvas dimensions
+                canvas_width = parent.width()
+                canvas_height = parent.height()
+                
+                # Find reference to preview window
+                preview_window = self.find_preview_window_parent()
+                
+                if preview_window:
+                    # Check if snapping is enabled and not overridden
+                    modifiers = QApplication.keyboardModifiers()
+                    disable_snap = bool(modifiers & Qt.ShiftModifier)  # Shift key disables snapping temporarily
+                    
+                    apply_snapping = (
+                        not disable_snap and
+                        hasattr(preview_window, 'snapping_enabled') and
+                        preview_window.snapping_enabled
+                    )
+                    
+                    # Get snap distance if available
+                    snap_distance = getattr(preview_window, 'snap_distance', 15)
+                    
+                    if apply_snapping:
+                        # Get label center coordinates
+                        label_center_x = new_pos.x() + self.width() // 2
+                        label_center_y = new_pos.y() + self.height() // 2
+                        
+                        # 1. Absolute grid position snapping (if enabled)
+                        if (hasattr(preview_window, 'snap_to_grid') and preview_window.snap_to_grid and
+                            hasattr(preview_window, 'grid_x_start') and hasattr(preview_window, 'grid_y_start')):
+                            
+                            grid_x_start = preview_window.grid_x_start
+                            grid_x_step = preview_window.grid_x_step
+                            
+                            # Snap to column X positions
+                            for col in range(preview_window.grid_columns):
+                                grid_x = grid_x_start + (col * grid_x_step)
+                                if abs(new_pos.x() - grid_x) < snap_distance:
+                                    new_pos.setX(grid_x)
+                                    guide_lines.append((grid_x, 0, grid_x, canvas_height))
+                                    snapped = True
+                                    break
+                            
+                            # Snap to row Y positions
+                            grid_y_start = preview_window.grid_y_start
+                            grid_y_step = preview_window.grid_y_step
+                            
+                            for row in range(preview_window.grid_rows):
+                                grid_y = grid_y_start + (row * grid_y_step)
+                                if abs(new_pos.y() - grid_y) < snap_distance:
+                                    new_pos.setY(grid_y)
+                                    guide_lines.append((0, grid_y, canvas_width, grid_y))
+                                    snapped = True
+                                    break
+                        
+                        # 2. Screen center alignment (if enabled)
+                        if hasattr(preview_window, 'snap_to_screen_center') and preview_window.snap_to_screen_center:
+                            # Horizontal center
+                            screen_center_x = canvas_width // 2
+                            if abs(label_center_x - screen_center_x) < snap_distance:
+                                new_pos.setX(int(screen_center_x - self.width() / 2))
+                                guide_lines.append((screen_center_x, 0, screen_center_x, canvas_height))
+                                snapped = True
+                            
+                            # Vertical center
+                            screen_center_y = canvas_height // 2
+                            if abs(label_center_y - screen_center_y) < snap_distance:
+                                new_pos.setY(int(screen_center_y - self.height() / 2))
+                                guide_lines.append((0, screen_center_y, canvas_width, screen_center_y))
+                                snapped = True
+                        
+                        # 3. Check alignment with other controls (if enabled)
+                        if (hasattr(preview_window, 'snap_to_controls') and preview_window.snap_to_controls and
+                            hasattr(preview_window, 'control_labels')):
+                            
+                            for control_name, control_data in preview_window.control_labels.items():
+                                other_label = control_data.get('label')
+                                if other_label is self or not other_label or not other_label.isVisible():
+                                    continue
+                                
+                                # X-position alignment - snap to left edge of other labels
+                                other_x = other_label.pos().x()
+                                if abs(new_pos.x() - other_x) < snap_distance:
+                                    new_pos.setX(other_x)
+                                    guide_lines.append((other_x, 0, other_x, canvas_height))
+                                    snapped = True
+                                
+                                # Y-position alignment - snap to top edge of other labels
+                                other_y = other_label.pos().y()
+                                if abs(new_pos.y() - other_y) < snap_distance:
+                                    new_pos.setY(other_y)
+                                    guide_lines.append((0, other_y, canvas_width, other_y))
+                                    snapped = True
+                        
+                        # 4. Check alignment with logo (if enabled)
+                        if (hasattr(preview_window, 'snap_to_logo') and preview_window.snap_to_logo and
+                            hasattr(preview_window, 'logo_label') and preview_window.logo_label and
+                            preview_window.logo_label.isVisible()):
+                            
+                            logo = preview_window.logo_label
+                            
+                            # Left edge alignment (absolute X position)
+                            logo_left = logo.pos().x()
+                            if abs(new_pos.x() - logo_left) < snap_distance:
+                                new_pos.setX(logo_left)
+                                guide_lines.append((logo_left, 0, logo_left, canvas_height))
+                                snapped = True
+                            
+                            # Top edge alignment
+                            logo_top = logo.pos().y()
+                            if abs(new_pos.y() - logo_top) < snap_distance:
+                                new_pos.setY(logo_top)
+                                guide_lines.append((0, logo_top, canvas_width, logo_top))
+                                snapped = True
+                    
+                    # 5. Calculate distance indicators for display
+                    # Show dynamic measurement guides
+                    if hasattr(preview_window, 'show_measurement_guides'):
+                        preview_window.show_measurement_guides(
+                            new_pos.x(), new_pos.y(), 
+                            self.width(), self.height()
+                        )
+
+                    # Add snapping status info if needed
+                    if disable_snap and hasattr(preview_window, 'show_position_indicator'):
+                        preview_window.show_position_indicator(
+                            new_pos.x(), new_pos.y(), 
+                            "Snapping temporarily disabled (Shift)"
+                        )
+                    
+                    # Show alignment guides if snapped
+                    if snapped and guide_lines and hasattr(preview_window, 'show_alignment_guides'):
+                        preview_window.show_alignment_guides(guide_lines)
+                    elif hasattr(preview_window, 'hide_alignment_guides'):
+                        preview_window.hide_alignment_guides()
+                
+                # Apply the move
+                self.move(new_pos)
+                
+                # Notify the parent to update shadow label if it exists
+                if hasattr(parent, "update_shadow_position"):
+                    parent.update_shadow_position(self)
         
         # Handle resizing with direct font size control
         elif self.resizing:
+            # [Keep existing resizing code from the original implementation]
             self.was_resizing = True
             
             # Calculate the relative change based on mouse movement
@@ -269,6 +421,17 @@ class DraggableLabel(EnhancedLabel):
                 if hasattr(self.parent(), "update_shadow_font"):
                     self.parent().update_shadow_font(self)
             
+    def find_preview_window_parent(self):
+        """Find the PreviewWindow parent to access alignment guide methods"""
+        current = self.parent()
+        while current:
+            # Look for a parent that has both show_alignment_guides and hide_alignment_guides methods
+            if (hasattr(current, 'show_alignment_guides') and 
+                hasattr(current, 'hide_alignment_guides')):
+                return current
+            current = current.parent()
+        return None
+    
     # Fix the mouseReleaseEvent method in DraggableLabel to properly handle parent navigation
     def mouseReleaseEvent(self, event):
         """Handle mouse release without crashing on parent navigation"""
@@ -476,224 +639,6 @@ class DraggableLabel(EnhancedLabel):
         if hasattr(self.parent(), "duplicate_control_label"):
             self.parent().duplicate_control_label(self)
 
-class ColoredPrefixLabel(EnhancedLabel):
-    """A label that supports different colors for prefix and action text"""
-    def __init__(self, text, parent=None, shadow_offset=2, settings=None):
-        super().__init__(text, parent, shadow_offset)
-        self.settings = settings or {}
-        self.prefix = ""
-        self.action = ""
-        self.parse_text(text)
-    
-    def parse_text(self, text):
-        """Parse text into prefix and action components"""
-        if ": " in text:
-            parts = text.split(": ", 1)
-            self.prefix = parts[0]
-            self.action = parts[1]
-        else:
-            self.prefix = ""
-            self.action = text
-    
-    def paintEvent(self, event):
-        """Override paint event to draw text with different colors"""
-        if not self.text():
-            return
-            
-        painter = QPainter(self)
-        painter.setRenderHint(QPainter.Antialiasing)
-        painter.setRenderHint(QPainter.TextAntialiasing)
-        
-        # Get current font metrics
-        metrics = QFontMetrics(self.font())
-        
-        # Draw shadow if enabled
-        if self.is_shadow_visible:
-            painter.setPen(self.shadow_color)
-            
-            if self.prefix and ": " in self.text():
-                # Calculate positions
-                x = 8  # Starting position with some padding
-                y = int((self.height() + metrics.ascent() - metrics.descent()) / 2)
-                
-                # Draw shadow for full text
-                painter.drawText(int(x + self.shadow_offset), int(y + self.shadow_offset), self.text())
-            else:
-                # Single color text with shadow
-                x = int((self.width() - metrics.boundingRect(self.text()).width()) / 2)
-                y = int((self.height() + metrics.ascent() - metrics.descent()) / 2)
-                painter.drawText(int(x + self.shadow_offset), int(y + self.shadow_offset), self.text())
-        
-        # Get colors from settings
-        prefix_color = QColor(self.settings.get("prefix_color", "#FFC107"))
-        action_color = QColor(self.settings.get("action_color", "#FFFFFF"))
-        
-        if self.prefix and ": " in self.text():
-            # Draw prefix
-            x = 8  # Starting position with some padding
-            y = int((self.height() + metrics.ascent() - metrics.descent()) / 2)
-            
-            painter.setPen(prefix_color)
-            prefix_text = f"{self.prefix}: "
-            painter.drawText(int(x), int(y), prefix_text)
-            
-            # Calculate width of prefix for positioning action text
-            prefix_width = metrics.boundingRect(prefix_text).width()
-            
-            # Draw action text
-            painter.setPen(action_color)
-            painter.drawText(int(x + prefix_width), int(y), self.action)
-        else:
-            # Draw single color text (centered)
-            x = int((self.width() - metrics.boundingRect(self.text()).width()) / 2)
-            y = int((self.height() + metrics.ascent() - metrics.descent()) / 2)
-            
-            painter.setPen(action_color)
-            painter.drawText(int(x), int(y), self.text())
-
-# Update the ColoredPrefixLabel to support gradients
-class GradientPrefixLabel(EnhancedLabel):
-    """A label that supports gradient text for prefix and action text"""
-    def __init__(self, text, parent=None, shadow_offset=2, settings=None):
-        super().__init__(text, parent, shadow_offset)
-        self.settings = settings or {}
-        self.prefix = ""
-        self.action = ""
-        self.parse_text(text)
-        
-        # Initialize gradient settings
-        self.use_prefix_gradient = self.settings.get("use_prefix_gradient", False)
-        self.use_action_gradient = self.settings.get("use_action_gradient", False)
-        self.prefix_gradient_start = QColor(self.settings.get("prefix_gradient_start", "#FFC107"))
-        self.prefix_gradient_end = QColor(self.settings.get("prefix_gradient_end", "#FF5722"))
-        self.action_gradient_start = QColor(self.settings.get("action_gradient_start", "#2196F3"))
-        self.action_gradient_end = QColor(self.settings.get("action_gradient_end", "#4CAF50"))
-    def parse_text(self, text):
-        """Parse text into prefix and action components"""
-        if ": " in text:
-            parts = text.split(": ", 1)
-            self.prefix = parts[0]
-            self.action = parts[1]
-        else:
-            self.prefix = ""
-            self.action = text
-    
-    def paintEvent(self, event):
-        """Override paint event to draw text with gradients and colors"""
-        if not self.text():
-            return
-            
-        painter = QPainter(self)
-        painter.setRenderHint(QPainter.Antialiasing)
-        painter.setRenderHint(QPainter.TextAntialiasing)
-        
-        # Get current font metrics
-        metrics = QFontMetrics(self.font())
-        
-        # Draw shadow if enabled
-        if self.is_shadow_visible:
-            painter.setPen(self.shadow_color)
-            
-            if self.prefix and ": " in self.text():
-                # Calculate positions
-                x = 8  # Starting position with some padding
-                y = int((self.height() + metrics.ascent() - metrics.descent()) / 2)
-                
-                # Draw shadow for full text
-                painter.drawText(int(x + self.shadow_offset), int(y + self.shadow_offset), self.text())
-            else:
-                # Single color text with shadow
-                x = int((self.width() - metrics.boundingRect(self.text()).width()) / 2)
-                y = int((self.height() + metrics.ascent() - metrics.descent()) / 2)
-                painter.drawText(int(x + self.shadow_offset), int(y + self.shadow_offset), self.text())
-        
-        # Draw text
-        if self.prefix and ": " in self.text():
-            # Draw prefix with gradient or solid color
-            x = 8  # Starting position with some padding
-            y = int((self.height() + metrics.ascent() - metrics.descent()) / 2)
-            
-            # Calculate prefix rectangle for gradient
-            prefix_text = f"{self.prefix}: "
-            prefix_rect = metrics.boundingRect(prefix_text)
-            prefix_rect.moveLeft(int(x))
-            prefix_rect.moveTop(int(y - metrics.ascent()))
-            
-            if self.use_prefix_gradient:
-                # Create linear gradient for prefix
-                gradient = QLinearGradient(
-                    prefix_rect.left(), prefix_rect.top(),
-                    prefix_rect.left(), prefix_rect.bottom()
-                )
-                gradient.setColorAt(0, self.prefix_gradient_start)
-                gradient.setColorAt(1, self.prefix_gradient_end)
-                
-                # Apply gradient
-                painter.setPen(QPen(QBrush(gradient), 1))
-            else:
-                # Solid color
-                prefix_color = QColor(self.settings.get("prefix_color", "#FFC107"))
-                painter.setPen(prefix_color)
-                
-            # Draw prefix text
-            painter.drawText(int(x), int(y), prefix_text)
-            
-            # Calculate width of prefix for positioning action text
-            prefix_width = metrics.boundingRect(prefix_text).width()
-            
-            # Calculate action rectangle for gradient
-            action_rect = metrics.boundingRect(self.action)
-            action_rect.moveLeft(int(x + prefix_width))
-            action_rect.moveTop(int(y - metrics.ascent()))
-            
-            # Draw action text with gradient or solid color
-            if self.use_action_gradient and self.settings.get("use_action_gradient", False):
-                # Create linear gradient for action
-                gradient = QLinearGradient(
-                    action_rect.left(), action_rect.top(),
-                    action_rect.right(), action_rect.bottom()
-                )
-                gradient.setColorAt(0, self.action_gradient_start)
-                gradient.setColorAt(1, self.action_gradient_end)
-                
-                # Apply gradient
-                painter.setPen(QPen(QBrush(gradient), 1))
-            else:
-                # Solid color
-                action_color = QColor(self.settings.get("action_color", "#FFFFFF"))
-                painter.setPen(action_color)
-                
-            # Draw action text
-            painter.drawText(int(x + prefix_width), int(y), self.action)
-        else:
-            # Draw single color or gradient text (centered)
-            x = int((self.width() - metrics.boundingRect(self.text()).width()) / 2)
-            y = int((self.height() + metrics.ascent() - metrics.descent()) / 2)
-            
-            # Calculate text rectangle for gradient
-            text_rect = metrics.boundingRect(self.text())
-            text_rect.moveLeft(int(x))
-            text_rect.moveTop(int(y - metrics.ascent()))
-            
-            if self.use_action_gradient and self.settings.get("use_action_gradient", False):
-                # Create linear gradient
-                gradient = QLinearGradient(
-                    text_rect.left(), text_rect.top(),
-                    text_rect.right(), text_rect.bottom()
-                )
-                gradient.setColorAt(0, self.action_gradient_start)
-                gradient.setColorAt(1, self.action_gradient_end)
-                
-                # Apply gradient
-                painter.setPen(QPen(QBrush(gradient), 1))
-            else:
-                # Solid color
-                action_color = QColor(self.settings.get("action_color", "#FFFFFF"))
-                painter.setPen(action_color)
-                
-            # Draw text
-            painter.drawText(int(x), int(y), self.text())
-
 class TextSettingsDialog(QDialog):
     """Dialog for configuring text appearance in preview"""
     def __init__(self, parent=None, settings=None):
@@ -856,114 +801,36 @@ class TextSettingsDialog(QDialog):
         
         layout.addWidget(options_group)
         
-        # Color options
+        # Color options (NEW)
         color_group = QGroupBox("Color Options")
         color_layout = QVBoxLayout(color_group)
-
-        # Prefix color
+        
+        # Info label
+        color_info = QLabel("Note: Color customization will be available in a future update.")
+        color_info.setStyleSheet("color: gray; font-style: italic;")
+        color_layout.addWidget(color_info)
+        
+        # Placeholder for future color picker functionality
+        color_row = QHBoxLayout()
+        color_label = QLabel("Text Color:")
+        color_button = QPushButton("Choose Color")
+        color_button.setEnabled(False)  # Disabled for now
+        
+        color_row.addWidget(color_label)
+        color_row.addWidget(color_button)
+        color_layout.addLayout(color_row)
+        
+        # Placeholder for prefix color picker
         prefix_color_row = QHBoxLayout()
         prefix_color_label = QLabel("Prefix Color:")
-        self.prefix_color_edit = QLineEdit(self.settings.get("prefix_color", "#FFC107"))
-        self.prefix_color_edit.setMaximumWidth(100)
-        self.prefix_color_edit.setPlaceholderText("#RRGGBB")
-        self.prefix_color_edit.textChanged.connect(self.update_preview)
-
-        prefix_color_row.addWidget(prefix_color_label)
-        prefix_color_row.addWidget(self.prefix_color_edit)
-        prefix_color_row.addStretch()
-        color_layout.addLayout(prefix_color_row)
-
-        # Action color
-        action_color_row = QHBoxLayout()
-        action_color_label = QLabel("Action Color:")
-        self.action_color_edit = QLineEdit(self.settings.get("action_color", "#FFFFFF"))
-        self.action_color_edit.setMaximumWidth(100)
-        self.action_color_edit.setPlaceholderText("#RRGGBB")
-        self.action_color_edit.textChanged.connect(self.update_preview)
-
-        action_color_row.addWidget(action_color_label)
-        action_color_row.addWidget(self.action_color_edit)
-        action_color_row.addStretch()
-        color_layout.addLayout(action_color_row)
-
-        layout.addWidget(color_group)
+        prefix_color_button = QPushButton("Choose Color")
+        prefix_color_button.setEnabled(False)  # Disabled for now
         
-        # Gradient options
-        gradient_group = QGroupBox("Gradient Options")
-        gradient_layout = QVBoxLayout(gradient_group)
-
-        # Prefix gradient toggle
-        prefix_gradient_row = QHBoxLayout()
-        self.prefix_gradient_check = QCheckBox("Use Gradient for Prefix")
-        self.prefix_gradient_check.setChecked(self.settings.get("use_prefix_gradient", False))
-        self.prefix_gradient_check.stateChanged.connect(self.update_preview)
-        prefix_gradient_row.addWidget(self.prefix_gradient_check)
-        gradient_layout.addLayout(prefix_gradient_row)
-
-        # Prefix gradient colors
-        prefix_gradient_colors = QHBoxLayout()
-        prefix_gradient_start_label = QLabel("Start:")
-        self.prefix_gradient_start = QLineEdit(self.settings.get("prefix_gradient_start", "#FFC107"))
-        self.prefix_gradient_start.setMaximumWidth(80)
-        prefix_gradient_end_label = QLabel("End:")
-        self.prefix_gradient_end = QLineEdit(self.settings.get("prefix_gradient_end", "#FF5722"))
-        self.prefix_gradient_end.setMaximumWidth(80)
-
-        self.prefix_gradient_start.textChanged.connect(self.update_preview)
-        self.prefix_gradient_end.textChanged.connect(self.update_preview)
-
-        prefix_gradient_colors.addWidget(prefix_gradient_start_label)
-        prefix_gradient_colors.addWidget(self.prefix_gradient_start)
-        prefix_gradient_colors.addWidget(prefix_gradient_end_label)
-        prefix_gradient_colors.addWidget(self.prefix_gradient_end)
-        prefix_gradient_colors.addStretch()
-        gradient_layout.addLayout(prefix_gradient_colors)
-
-        # Action gradient toggle
-        action_gradient_row = QHBoxLayout()
-        self.action_gradient_check = QCheckBox("Use Gradient for Action Text")
-        self.action_gradient_check.setChecked(self.settings.get("use_action_gradient", False))
-        self.action_gradient_check.stateChanged.connect(self.update_preview)
-        action_gradient_row.addWidget(self.action_gradient_check)
-        gradient_layout.addLayout(action_gradient_row)
-
-        # Action gradient colors
-        action_gradient_colors = QHBoxLayout()
-        action_gradient_start_label = QLabel("Start:")
-        self.action_gradient_start = QLineEdit(self.settings.get("action_gradient_start", "#2196F3"))
-        self.action_gradient_start.setMaximumWidth(80)
-        action_gradient_end_label = QLabel("End:")
-        self.action_gradient_end = QLineEdit(self.settings.get("action_gradient_end", "#4CAF50"))
-        self.action_gradient_end.setMaximumWidth(80)
-
-        self.action_gradient_start.textChanged.connect(self.update_preview)
-        self.action_gradient_end.textChanged.connect(self.update_preview)
-
-        action_gradient_colors.addWidget(action_gradient_start_label)
-        action_gradient_colors.addWidget(self.action_gradient_start)
-        action_gradient_colors.addWidget(action_gradient_end_label)
-        action_gradient_colors.addWidget(self.action_gradient_end)
-        action_gradient_colors.addStretch()
-        gradient_layout.addLayout(action_gradient_colors)
-
-        # Add preset gradient buttons
-        preset_row = QHBoxLayout()
-        preset_label = QLabel("Presets:")
-        preset_fire = QPushButton("Fire")
-        preset_fire.clicked.connect(lambda: self.apply_preset("fire"))
-        preset_ice = QPushButton("Ice")
-        preset_ice.clicked.connect(lambda: self.apply_preset("ice"))
-        preset_rainbow = QPushButton("Rainbow")
-        preset_rainbow.clicked.connect(lambda: self.apply_preset("rainbow"))
-
-        preset_row.addWidget(preset_label)
-        preset_row.addWidget(preset_fire)
-        preset_row.addWidget(preset_ice)
-        preset_row.addWidget(preset_rainbow)
-        preset_row.addStretch()
-        gradient_layout.addLayout(preset_row)
-
-        layout.addWidget(gradient_group)
+        prefix_color_row.addWidget(prefix_color_label)
+        prefix_color_row.addWidget(prefix_color_button)
+        color_layout.addLayout(prefix_color_row)
+        
+        layout.addWidget(color_group)
         
         # Preview section
         preview_group = QGroupBox("Preview")
@@ -1015,16 +882,6 @@ class TextSettingsDialog(QDialog):
         use_uppercase = self.uppercase_check.isChecked()
         show_prefix = self.prefix_check.isChecked()
         
-        # Color and gradient settings
-        prefix_color = self.prefix_color_edit.text()
-        action_color = self.action_color_edit.text()
-        use_prefix_gradient = self.prefix_gradient_check.isChecked()
-        prefix_gradient_start = self.prefix_gradient_start.text()
-        prefix_gradient_end = self.prefix_gradient_end.text()
-        use_action_gradient = self.action_gradient_check.isChecked()
-        action_gradient_start = self.action_gradient_start.text()
-        action_gradient_end = self.action_gradient_end.text()
-        
         # Create font
         font = QFont(font_family, font_size)
         font.setBold(bold_strength > 0)
@@ -1038,76 +895,31 @@ class TextSettingsDialog(QDialog):
         if use_uppercase:
             preview_text = preview_text.upper()
         
-        # Create HTML-based preview with colors and gradients
+        # Apply prefix if enabled
         if show_prefix:
-            # Create prefix style
-            prefix_style = ""
-            if use_prefix_gradient:
-                # For simplicity, we'll use a background linear gradient as approximation
-                prefix_style = f"background: linear-gradient(to right, {prefix_gradient_start}, {prefix_gradient_end}); " + \
-                            "background-clip: text; -webkit-background-clip: text; color: transparent;"
-            else:
-                prefix_style = f"color: {prefix_color};"
-            
-            # Create action style
-            action_style = ""
-            if use_action_gradient:
-                action_style = f"background: linear-gradient(to right, {action_gradient_start}, {action_gradient_end}); " + \
-                            "background-clip: text; -webkit-background-clip: text; color: transparent;"
-            else:
-                action_style = f"color: {action_color};"
-            
-            # Create composite HTML
-            html = f"<div style='background-color: black; padding: 10px;'>" + \
-                f"<span style='{prefix_style}'>A: </span>" + \
-                f"<span style='{action_style}'>{preview_text}</span>" + \
-                "</div>"
-            
-            # Apply to preview label
-            self.preview_label.setText(html)
-            self.preview_label.setTextFormat(Qt.RichText)
+            self.preview_label.setText(f"A: {preview_text}")
         else:
-            # Single text style without prefix
-            if use_action_gradient:
-                style = f"background: linear-gradient(to right, {action_gradient_start}, {action_gradient_end}); " + \
-                    "background-clip: text; -webkit-background-clip: text; color: transparent;"
-            else:
-                style = f"color: {action_color};"
-            
-            html = f"<div style='background-color: black; padding: 10px;'>" + \
-                f"<span style='{style}'>{preview_text}</span>" + \
-                "</div>"
-            
-            self.preview_label.setText(html)
-            self.preview_label.setTextFormat(Qt.RichText)
+            self.preview_label.setText(preview_text)
         
         # Apply shadow effect based on bold strength
-        if bold_strength > 0:
-            # Add text shadow to preview label
-            shadow_style = f"text-shadow: {bold_strength}px {bold_strength}px {bold_strength}px #000000;"
-            self.preview_label.setStyleSheet(f"background-color: black; {shadow_style}")
+        if bold_strength == 0:
+            self.preview_label.setStyleSheet("background-color: black; color: white;")
         else:
-            self.preview_label.setStyleSheet("background-color: black;")
-            
+            # Advanced shadow effect needs to be implemented in actual rendering
+            self.preview_label.setStyleSheet(
+                f"background-color: black; color: white; text-shadow: {bold_strength}px {bold_strength}px black;"
+            )
     
     def get_current_settings(self):
+        """Get the current settings from dialog controls"""
         return {
             "font_family": self.font_combo.currentText(),
             "font_size": self.size_slider.value(),
             "bold_strength": self.bold_slider.value(),
             "use_uppercase": self.uppercase_check.isChecked(),
-            "show_button_prefix": self.prefix_check.isChecked(),
-            "y_offset": self.offset_slider.value(),
-            "prefix_color": self.prefix_color_edit.text(),
-            "action_color": self.action_color_edit.text(),
-            "use_prefix_gradient": self.prefix_gradient_check.isChecked(),
-            "prefix_gradient_start": self.prefix_gradient_start.text(),
-            "prefix_gradient_end": self.prefix_gradient_end.text(),
-            "use_action_gradient": self.action_gradient_check.isChecked(),
-            "action_gradient_start": self.action_gradient_start.text(),
-            "action_gradient_end": self.action_gradient_end.text()
+            "show_button_prefix": self.prefix_check.isChecked(),  # NEW
+            "y_offset": self.offset_slider.value()
         }
-
     
     def apply_settings(self):
         """Apply the current settings without closing dialog"""
@@ -1120,41 +932,6 @@ class TextSettingsDialog(QDialog):
         if self.parent and hasattr(self.parent, 'update_text_settings'):
             self.parent.update_text_settings(settings)
     
-    def apply_preset(self, preset_name):
-        """Apply a preset gradient configuration"""
-        presets = {
-            "fire": {
-                "prefix": ("#FFEB3B", "#FF5722"),  # Yellow to Orange-Red
-                "action": ("#FF9800", "#F44336")   # Orange to Red
-            },
-            "ice": {
-                "prefix": ("#E1F5FE", "#0277BD"),  # Light Blue to Deep Blue
-                "action": ("#B3E5FC", "#01579B")   # Pale Blue to Navy
-            },
-            "rainbow": {
-                "prefix": ("#FF5722", "#2196F3"),  # Red-Orange to Blue
-                "action": ("#4CAF50", "#9C27B0")   # Green to Purple
-            }
-        }
-        
-        if preset_name in presets:
-            preset = presets[preset_name]
-            
-            # Set prefix gradient
-            self.prefix_gradient_start.setText(preset["prefix"][0])
-            self.prefix_gradient_end.setText(preset["prefix"][1])
-            
-            # Set action gradient
-            self.action_gradient_start.setText(preset["action"][0])
-            self.action_gradient_end.setText(preset["action"][1])
-            
-            # Enable gradient checkboxes
-            self.prefix_gradient_check.setChecked(True)
-            self.action_gradient_check.setChecked(True)
-            
-            # Update preview
-            self.update_preview()
-    
     def accept_settings(self):
         """Save settings and close dialog"""
         self.apply_settings()
@@ -1163,6 +940,310 @@ class TextSettingsDialog(QDialog):
 """
 Modifications to the PreviewWindow class in mame_controls_preview.py
 """
+
+class GridSettingsDialog(QDialog):
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self.setWindowTitle("Alignment Grid Settings")
+        self.resize(350, 300)
+        
+        # Store reference to preview window
+        self.preview = parent
+        
+        layout = QVBoxLayout(self)
+        
+        # Grid Origin group
+        origin_group = QGroupBox("Grid Origin")
+        origin_layout = QVBoxLayout(origin_group)
+        
+        # X Start position
+        x_start_layout = QHBoxLayout()
+        x_start_label = QLabel("X Start Position:")
+        self.x_start_spin = QSpinBox()
+        self.x_start_spin.setRange(0, 1000)
+        self.x_start_spin.setValue(parent.grid_x_start)
+        x_start_layout.addWidget(x_start_label)
+        x_start_layout.addWidget(self.x_start_spin)
+        origin_layout.addLayout(x_start_layout)
+        
+        # Y Start position
+        y_start_layout = QHBoxLayout()
+        y_start_label = QLabel("Y Start Position:")
+        self.y_start_spin = QSpinBox()
+        self.y_start_spin.setRange(0, 1000)
+        self.y_start_spin.setValue(parent.grid_y_start)
+        y_start_layout.addWidget(y_start_label)
+        y_start_layout.addWidget(self.y_start_spin)
+        origin_layout.addLayout(y_start_layout)
+        
+        layout.addWidget(origin_group)
+        
+        # Grid Spacing group
+        spacing_group = QGroupBox("Grid Spacing")
+        spacing_layout = QVBoxLayout(spacing_group)
+        
+        # X Step
+        x_step_layout = QHBoxLayout()
+        x_step_label = QLabel("X Step Size:")
+        self.x_step_spin = QSpinBox()
+        self.x_step_spin.setRange(20, 500)
+        self.x_step_spin.setValue(parent.grid_x_step)
+        x_step_layout.addWidget(x_step_label)
+        x_step_layout.addWidget(self.x_step_spin)
+        spacing_layout.addLayout(x_step_layout)
+        
+        # Y Step
+        y_step_layout = QHBoxLayout()
+        y_step_label = QLabel("Y Step Size:")
+        self.y_step_spin = QSpinBox()
+        self.y_step_spin.setRange(20, 500)
+        self.y_step_spin.setValue(parent.grid_y_step)
+        y_step_layout.addWidget(y_step_label)
+        y_step_layout.addWidget(self.y_step_spin)
+        spacing_layout.addLayout(y_step_layout)
+        
+        layout.addWidget(spacing_group)
+        
+        # Grid Size group
+        size_group = QGroupBox("Grid Size")
+        size_layout = QVBoxLayout(size_group)
+        
+        # Columns
+        columns_layout = QHBoxLayout()
+        columns_label = QLabel("Number of Columns:")
+        self.columns_spin = QSpinBox()
+        self.columns_spin.setRange(1, 10)
+        self.columns_spin.setValue(parent.grid_columns)
+        columns_layout.addWidget(columns_label)
+        columns_layout.addWidget(self.columns_spin)
+        size_layout.addLayout(columns_layout)
+        
+        # Rows
+        rows_layout = QHBoxLayout()
+        rows_label = QLabel("Number of Rows:")
+        self.rows_spin = QSpinBox()
+        self.rows_spin.setRange(1, 20)
+        self.rows_spin.setValue(parent.grid_rows)
+        rows_layout.addWidget(rows_label)
+        rows_layout.addWidget(self.rows_spin)
+        size_layout.addLayout(rows_layout)
+        
+        layout.addWidget(size_group)
+        
+        # Buttons
+        button_layout = QHBoxLayout()
+        
+        apply_button = QPushButton("Apply")
+        apply_button.clicked.connect(self.apply_settings)
+        
+        ok_button = QPushButton("OK")
+        ok_button.clicked.connect(self.accept_settings)
+        
+        cancel_button = QPushButton("Cancel")
+        cancel_button.clicked.connect(self.reject)
+        
+        button_layout.addWidget(apply_button)
+        button_layout.addStretch()
+        button_layout.addWidget(ok_button)
+        button_layout.addWidget(cancel_button)
+        
+        layout.addLayout(button_layout)
+    
+    def apply_settings(self):
+        """Apply grid settings to preview window"""
+        self.preview.grid_x_start = self.x_start_spin.value()
+        self.preview.grid_y_start = self.y_start_spin.value()
+        self.preview.grid_x_step = self.x_step_spin.value()
+        self.preview.grid_y_step = self.y_step_spin.value()
+        self.preview.grid_columns = self.columns_spin.value()
+        self.preview.grid_rows = self.rows_spin.value()
+        
+        # Update the grid if it's visible
+        if self.preview.alignment_grid_visible:
+            self.preview.show_alignment_grid()
+        
+        # Save settings to a file
+        self.preview.save_grid_settings()
+    
+    def accept_settings(self):
+        """Apply settings and close dialog"""
+        self.apply_settings()
+        self.accept()
+
+        # Store the dialog class for later use
+        self.GridSettingsDialog = GridSettingsDialog
+
+        # Add a button to open grid settings
+        if hasattr(self, 'bottom_row') and not hasattr(self, 'grid_settings_button'):
+            from PyQt5.QtWidgets import QPushButton
+            
+            button_style = """
+                QPushButton {
+                    background-color: #404050;
+                    color: white;
+                    border: none;
+                    border-radius: 4px;
+                    padding: 6px 10px;
+                    font-weight: bold;
+                    font-size: 12px;
+                    min-width: 80px;
+                }
+                QPushButton:hover {
+                    background-color: #555565;
+                }
+                QPushButton:pressed {
+                    background-color: #303040;
+                }
+            """
+            
+            self.grid_settings_button = QPushButton("Grid Settings")
+            self.grid_settings_button.clicked.connect(self.show_grid_settings)
+            self.grid_settings_button.setStyleSheet(button_style)
+            self.bottom_row.addWidget(self.grid_settings_button)
+
+    def show_grid_settings(self):
+        """Show the grid settings dialog"""
+        if hasattr(self, 'GridSettingsDialog'):
+            dialog = self.GridSettingsDialog(self)
+            dialog.exec_()
+
+    def save_grid_settings(self):
+        """Save grid settings to file"""
+        try:
+            import os
+            import json
+            
+            # Create preview directory if it doesn't exist
+            preview_dir = os.path.join(self.mame_dir, "preview")
+            os.makedirs(preview_dir, exist_ok=True)
+            
+            # Create settings object
+            settings = {
+                "grid_x_start": self.grid_x_start,
+                "grid_y_start": self.grid_y_start,
+                "grid_x_step": self.grid_x_step,
+                "grid_y_step": self.grid_y_step,
+                "grid_columns": self.grid_columns,
+                "grid_rows": self.grid_rows
+            }
+            
+            # Save to global settings file
+            settings_file = os.path.join(preview_dir, "grid_settings.json")
+            with open(settings_file, 'w') as f:
+                json.dump(settings, f)
+            
+            print(f"Saved grid settings to {settings_file}: {settings}")
+            return True
+        except Exception as e:
+            print(f"Error saving grid settings: {e}")
+            import traceback
+            traceback.print_exc()
+            return False
+
+    def load_grid_settings(self):
+        """Load grid settings from file"""
+        try:
+            import os
+            import json
+            
+            # Path to settings file
+            preview_dir = os.path.join(self.mame_dir, "preview")
+            settings_file = os.path.join(preview_dir, "grid_settings.json")
+            
+            # Check if file exists
+            if os.path.exists(settings_file):
+                with open(settings_file, 'r') as f:
+                    settings = json.load(f)
+                
+                # Apply settings
+                self.grid_x_start = settings.get("grid_x_start", 200)
+                self.grid_y_start = settings.get("grid_y_start", 100)
+                self.grid_x_step = settings.get("grid_x_step", 300)
+                self.grid_y_step = settings.get("grid_y_step", 60)
+                self.grid_columns = settings.get("grid_columns", 3)
+                self.grid_rows = settings.get("grid_rows", 8)
+                
+                print(f"Loaded grid settings from {settings_file}")
+                return True
+        except Exception as e:
+            print(f"Error loading grid settings: {e}")
+            import traceback
+            traceback.print_exc()
+        
+        return False
+
+# Also add the position indicator class
+class PositionIndicator(QLabel):
+    """Label that displays position information during dragging"""
+    def __init__(self, parent):
+        super().__init__(parent)
+        self.setStyleSheet("""
+            background-color: rgba(0, 0, 0, 180);
+            color: #00FFFF;
+            border: 1px solid #00FFFF;
+            border-radius: 4px;
+            padding: 4px 8px;
+            font-family: 'Consolas', monospace;
+            font-size: 12px;
+        """)
+        self.setAlignment(Qt.AlignCenter)
+        self.setFixedSize(200, 45)  # Enough space for multiple lines of text
+        self.hide()
+
+# And the position indicator methods
+def show_position_indicator(self, x, y, extra_info=None):
+    """Show a position indicator with coordinates"""
+    if not hasattr(self, 'position_indicator'):
+        self.position_indicator = PositionIndicator(self.canvas)
+    
+    # Format the text with X and Y coordinates
+    text = f"X: {x}px, Y: {y}px"
+    
+    # Add extra info like distance if provided
+    if extra_info:
+        text += f"\n{extra_info}"
+    
+    self.position_indicator.setText(text)
+    
+    # Position the indicator near the mouse but ensure it's visible
+    indicator_x = min(x + 20, self.canvas.width() - self.position_indicator.width() - 10)
+    indicator_y = max(y - 50, 10)  # Above the cursor, but not off-screen
+    
+    self.position_indicator.move(indicator_x, indicator_y)
+    self.position_indicator.show()
+    self.position_indicator.raise_()
+    
+    # Auto-hide after a delay
+    if hasattr(self, 'indicator_timer'):
+        self.indicator_timer.stop()
+    else:
+        from PyQt5.QtCore import QTimer
+        self.indicator_timer = QTimer(self)
+        self.indicator_timer.setSingleShot(True)
+        self.indicator_timer.timeout.connect(lambda: self.position_indicator.hide())
+    
+    self.indicator_timer.start(2000)  # Hide after 2 seconds
+
+def hide_position_indicator(self):
+    """Hide the position indicator"""
+    if hasattr(self, 'position_indicator'):
+        self.position_indicator.hide()
+
+def create_absolute_alignment_lines(self, x=None, y=None):
+    """Create absolute alignment lines at specified X or Y positions"""
+    guide_lines = []
+    canvas_width = self.canvas.width()
+    canvas_height = self.canvas.height()
+    
+    if x is not None:
+        # Create vertical guide line at fixed X
+        guide_lines.append((x, 0, x, canvas_height))
+    
+    if y is not None:
+        # Create horizontal guide line at fixed Y
+        guide_lines.append((0, y, canvas_width, y))
+    
+    self.show_alignment_guides(guide_lines)
 
 class PreviewWindow(QMainWindow):
     """Window for displaying game controls preview"""
@@ -1222,18 +1303,22 @@ class PreviewWindow(QMainWindow):
             self.central_widget = QWidget()
             self.central_widget.setStyleSheet("background-color: black;")
             self.setCentralWidget(self.central_widget)
-            
-            # Main layout - just holds the canvas, no buttons in this layout
+
+            # Main layout
             self.main_layout = QVBoxLayout(self.central_widget)
             self.main_layout.setContentsMargins(0, 0, 0, 0)
-            
-            # Create canvas area where the background image and controls will be displayed
+            self.main_layout.setSpacing(0)
+
+            # Canvas area for background + controls
             self.canvas = QWidget()
             self.canvas.setStyleSheet("background-color: black;")
-            self.main_layout.addWidget(self.canvas, 1)  # 1 stretch factor for most space
-            
-            # Load the background image
+            self.canvas.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)
+
+            self.main_layout.addWidget(self.canvas, 1)
+
+            # Load background
             self.load_background_image_fullscreen()
+
             
             # Create control labels - WITH clean mode parameter
             self.create_control_labels(clean_mode=self.clean_mode)
@@ -1279,7 +1364,14 @@ class PreviewWindow(QMainWindow):
             #QTimer.singleShot(200, self.load_and_register_fonts)
             QTimer.singleShot(300, self.force_resize_all_labels)
 
+            # Add this line at the end of __init__, just before self.setVisible(True)
+            self.enhance_preview_window_init()
+
             self.setVisible(True)  # Now show the fully prepared window
+
+            print(f"Window size: {self.width()}x{self.height()}")
+            print(f"Canvas size: {self.canvas.width()}x{self.canvas.height()}")
+
             
         except Exception as e:
             print(f"Error in PreviewWindow initialization: {e}")
@@ -1288,6 +1380,657 @@ class PreviewWindow(QMainWindow):
             QMessageBox.critical(self, "Error", f"Error initializing preview: {e}")
             self.close()
 
+    def show_measurement_guides(self, x, y, width, height):
+        """Show dynamic measurement guides with pixel distances"""
+        # Remove any existing measurement guides
+        self.hide_measurement_guides()
+        
+        # Store current element position
+        if not hasattr(self, 'measurement_guides'):
+            self.measurement_guides = []
+        
+        from PyQt5.QtWidgets import QLabel, QFrame
+        from PyQt5.QtCore import Qt
+        from PyQt5.QtGui import QColor, QPalette
+        
+        # Get canvas dimensions
+        canvas_width = self.canvas.width()
+        canvas_height = self.canvas.height()
+        
+        # 1. Create vertical guide at element's X position
+        v_line = QFrame(self.canvas)
+        v_line.setFrameShape(QFrame.VLine)
+        v_line.setFixedWidth(1)
+        v_line.setGeometry(x, 0, 1, canvas_height)
+        v_line.setStyleSheet("background-color: rgba(255, 100, 100, 180);")  # Red-ish
+        v_line.raise_()
+        v_line.show()
+        self.measurement_guides.append(v_line)
+        
+        # 2. Create horizontal guide at element's Y position
+        h_line = QFrame(self.canvas)
+        h_line.setFrameShape(QFrame.HLine)
+        h_line.setFixedHeight(1)
+        h_line.setGeometry(0, y, canvas_width, 1)
+        h_line.setStyleSheet("background-color: rgba(255, 100, 100, 180);")  # Red-ish
+        h_line.raise_()
+        h_line.show()
+        self.measurement_guides.append(h_line)
+        
+        # 3. Create distance indicator for X position (from left edge)
+        x_indicator = QLabel(f"{x}px", self.canvas)
+        x_indicator.setStyleSheet("""
+            background-color: rgba(255, 100, 100, 200);
+            color: white;
+            padding: 2px 6px;
+            border-radius: 4px;
+            font-family: 'Arial';
+            font-size: 10px;
+        """)
+        x_indicator.adjustSize()
+
+        # Position horizontally centered, just BELOW the element (e.g., 10px below)
+        x_indicator.move(x - x_indicator.width() // 2, y + height + 8)
+        x_indicator.raise_()
+        x_indicator.show()
+        self.measurement_guides.append(x_indicator)
+
+        # 4. Create distance indicator for Y position (from top edge)
+        y_indicator = QLabel(f"{y}px", self.canvas)
+        y_indicator.setStyleSheet("""
+            background-color: rgba(255, 100, 100, 200);
+            color: white;
+            padding: 2px 6px;
+            border-radius: 4px;
+            font-family: 'Arial';
+            font-size: 10px;
+        """)
+        y_indicator.adjustSize()
+
+        # Position vertically centered, just to the RIGHT of the element (e.g., 10px to the right)
+        y_indicator.move(x + width + 8, y - y_indicator.height() // 2)
+        y_indicator.raise_()
+        y_indicator.show()
+        self.measurement_guides.append(y_indicator)
+
+        
+        # 5. Create distance indicators from grid origin (if available)
+        if hasattr(self, 'grid_x_start') and hasattr(self, 'grid_y_start'):
+            x_offset = x - self.grid_x_start
+            y_offset = y - self.grid_y_start
+            
+            if x_offset != 0:  # Only show if there's an actual offset
+                offset_x_indicator = QLabel(f"Offset: {x_offset}px", self.canvas)
+                offset_x_indicator.setStyleSheet("""
+                    background-color: rgba(100, 100, 255, 200);
+                    color: white;
+                    padding: 2px 6px;
+                    border-radius: 4px;
+                    font-family: 'Arial';
+                    font-size: 10px;
+                """)
+                offset_x_indicator.adjustSize()
+                offset_x_indicator.move(self.grid_x_start + x_offset//2 - offset_x_indicator.width()//2, 30)
+                offset_x_indicator.raise_()
+                offset_x_indicator.show()
+                self.measurement_guides.append(offset_x_indicator)
+            
+            if y_offset != 0:  # Only show if there's an actual offset
+                offset_y_indicator = QLabel(f"Offset: {y_offset}px", self.canvas)
+                offset_y_indicator.setStyleSheet("""
+                    background-color: rgba(100, 100, 255, 200);
+                    color: white;
+                    padding: 2px 6px;
+                    border-radius: 4px;
+                    font-family: 'Arial';
+                    font-size: 10px;
+                """)
+                offset_y_indicator.adjustSize()
+                offset_y_indicator.move(30, self.grid_y_start + y_offset//2 - offset_y_indicator.height()//2)
+                offset_y_indicator.raise_()
+                offset_y_indicator.show()
+                self.measurement_guides.append(offset_y_indicator)
+
+    def hide_measurement_guides(self):
+        """Hide all measurement guides"""
+        if hasattr(self, 'measurement_guides'):
+            for guide in self.measurement_guides:
+                try:
+                    if guide and not sip.isdeleted(guide):
+                        guide.deleteLater()
+                except Exception as e:
+                    print(f"Warning: Failed to delete guide: {e}")
+            self.measurement_guides = []
+
+
+    
+    # 5. Add integration to the PreviewWindow initialization
+    def enhance_preview_window_init(self):
+        """Call this in PreviewWindow.__init__ after setting up controls"""
+        # Set up alignment features - grid, snapping, etc.
+        self.setup_alignment_features()
+        self.setup_snapping_controls()
+        
+        # Load any saved settings
+        self.load_grid_settings()
+        self.load_snapping_settings()
+        
+        # Add a shortcut text to inform users about Shift key
+        from PyQt5.QtWidgets import QLabel
+        
+        self.shortcuts_label = QLabel("Hold Shift to temporarily disable snapping", self)
+        self.shortcuts_label.setStyleSheet("""
+            background-color: rgba(0, 0, 0, 180);
+            color: white;
+            padding: 5px;
+            border-radius: 3px;
+        """)
+        self.shortcuts_label.adjustSize()
+        self.shortcuts_label.move(10, self.height() - self.shortcuts_label.height() - 10)
+        self.shortcuts_label.show()
+        
+        # Hide after a delay
+        from PyQt5.QtCore import QTimer
+        QTimer.singleShot(5000, lambda: self.shortcuts_label.hide())
+    
+    # 1. Add these properties to PreviewWindow's initialization or setup_alignment_features method
+    def setup_snapping_controls(self):
+        """Initialize snapping control settings"""
+        # Default snapping settings
+        # Add this at the beginning of the method
+        print(f"Has bottom_row: {hasattr(self, 'bottom_row')}")
+        print("Setting up snapping controls")
+        
+        # Then add this after creating the button
+        if hasattr(self, 'snap_button'):
+            print(f"Snap button created and added to layout: {self.snap_button.text()}")
+        else:
+            print("Failed to create snap button!")
+        self.snapping_enabled = True
+        self.snap_distance = 15
+        self.snap_to_grid = True
+        self.snap_to_screen_center = True
+        self.snap_to_controls = True
+        self.snap_to_logo = True
+        
+        # Load any saved snapping settings
+        self.load_snapping_settings()
+        
+        # Add toggle button to the toolbar if we have button rows
+        if hasattr(self, 'bottom_row') and not hasattr(self, 'snap_button'):
+            from PyQt5.QtWidgets import QPushButton
+            
+            button_style = """
+                QPushButton {
+                    background-color: #404050;
+                    color: white;
+                    border: none;
+                    border-radius: 4px;
+                    padding: 6px 10px;
+                    font-weight: bold;
+                    font-family: 'Segoe UI', Arial, sans-serif;
+                    font-size: 12px;
+                    min-width: 80px;
+                }
+                QPushButton:hover {
+                    background-color: #555565;
+                }
+                QPushButton:pressed {
+                    background-color: #303040;
+                }
+            """
+            
+            self.snap_button = QPushButton("Disable Snap" if self.snapping_enabled else "Enable Snap")
+            self.snap_button.clicked.connect(self.toggle_snapping)
+            self.snap_button.setStyleSheet(button_style)
+            self.bottom_row.addWidget(self.snap_button)
+            
+            # Add a button for snapping settings
+            self.snap_settings_button = QPushButton("Snap Settings")
+            self.snap_settings_button.clicked.connect(self.show_snapping_settings)
+            self.snap_settings_button.setStyleSheet(button_style)
+            self.bottom_row.addWidget(self.snap_settings_button)
+
+    # 2. Add these methods to PreviewWindow for controlling snapping
+    def toggle_snapping(self):
+        """Toggle snapping on/off"""
+        self.snapping_enabled = not self.snapping_enabled
+        
+        # Update button text
+        if hasattr(self, 'snap_button'):
+            self.snap_button.setText("Enable Snap" if not self.snapping_enabled else "Disable Snap")
+        
+        # Save the setting
+        self.save_snapping_settings()
+        
+        print(f"Snapping {'enabled' if self.snapping_enabled else 'disabled'}")
+
+    def save_snapping_settings(self):
+        """Save snapping settings to file"""
+        try:
+            import os
+            import json
+            
+            # Create preview directory if it doesn't exist
+            preview_dir = os.path.join(self.mame_dir, "preview")
+            os.makedirs(preview_dir, exist_ok=True)
+            
+            # Create settings object
+            settings = {
+                "snapping_enabled": self.snapping_enabled,
+                "snap_distance": self.snap_distance,
+                "snap_to_grid": self.snap_to_grid,
+                "snap_to_screen_center": self.snap_to_screen_center, 
+                "snap_to_controls": self.snap_to_controls,
+                "snap_to_logo": self.snap_to_logo
+            }
+            
+            # Save to global settings file
+            settings_file = os.path.join(preview_dir, "snapping_settings.json")
+            with open(settings_file, 'w') as f:
+                json.dump(settings, f)
+            
+            print(f"Saved snapping settings: {settings}")
+            return True
+        except Exception as e:
+            print(f"Error saving snapping settings: {e}")
+            import traceback
+            traceback.print_exc()
+            return False
+
+    def load_snapping_settings(self):
+        """Load snapping settings from file"""
+        try:
+            import os
+            import json
+            
+            # Path to settings file
+            preview_dir = os.path.join(self.mame_dir, "preview")
+            settings_file = os.path.join(preview_dir, "snapping_settings.json")
+            
+            # Check if file exists
+            if os.path.exists(settings_file):
+                with open(settings_file, 'r') as f:
+                    settings = json.load(f)
+                
+                # Apply settings
+                self.snapping_enabled = settings.get("snapping_enabled", True)
+                self.snap_distance = settings.get("snap_distance", 15)
+                self.snap_to_grid = settings.get("snap_to_grid", True)
+                self.snap_to_screen_center = settings.get("snap_to_screen_center", True)
+                self.snap_to_controls = settings.get("snap_to_controls", True)
+                self.snap_to_logo = settings.get("snap_to_logo", True)
+                
+                print(f"Loaded snapping settings")
+                return True
+        except Exception as e:
+            print(f"Error loading snapping settings: {e}")
+            import traceback
+            traceback.print_exc()
+        
+        return False
+
+    # 3. Add a Snapping Settings dialog
+    def show_snapping_settings(self):
+        """Show dialog for snapping settings"""
+        from PyQt5.QtWidgets import (QDialog, QVBoxLayout, QHBoxLayout, QLabel, 
+                                    QPushButton, QSpinBox, QCheckBox, QGroupBox)
+        
+        class SnappingSettingsDialog(QDialog):
+            def __init__(self, parent=None):
+                super().__init__(parent)
+                self.setWindowTitle("Snapping Settings")
+                self.resize(350, 300)
+                
+                # Store reference to preview window
+                self.preview = parent
+                
+                layout = QVBoxLayout(self)
+                
+                # Main toggle
+                self.enable_snap = QCheckBox("Enable Snapping")
+                self.enable_snap.setChecked(parent.snapping_enabled)
+                layout.addWidget(self.enable_snap)
+                
+                # Snap distance
+                distance_layout = QHBoxLayout()
+                distance_label = QLabel("Snap Distance (pixels):")
+                self.distance_spin = QSpinBox()
+                self.distance_spin.setRange(1, 30)
+                self.distance_spin.setValue(parent.snap_distance)
+                self.distance_spin.setToolTip("Distance in pixels where snapping activates")
+                distance_layout.addWidget(distance_label)
+                distance_layout.addWidget(self.distance_spin)
+                layout.addLayout(distance_layout)
+                
+                # Snap types group
+                snap_types_group = QGroupBox("Snap Types")
+                snap_types_layout = QVBoxLayout(snap_types_group)
+                
+                self.snap_to_grid = QCheckBox("Snap to Grid")
+                self.snap_to_grid.setChecked(parent.snap_to_grid)
+                snap_types_layout.addWidget(self.snap_to_grid)
+                
+                self.snap_to_screen_center = QCheckBox("Snap to Screen Center")
+                self.snap_to_screen_center.setChecked(parent.snap_to_screen_center)
+                snap_types_layout.addWidget(self.snap_to_screen_center)
+                
+                self.snap_to_controls = QCheckBox("Snap to Other Controls")
+                self.snap_to_controls.setChecked(parent.snap_to_controls)
+                snap_types_layout.addWidget(self.snap_to_controls)
+                
+                self.snap_to_logo = QCheckBox("Snap to Logo")
+                self.snap_to_logo.setChecked(parent.snap_to_logo)
+                snap_types_layout.addWidget(self.snap_to_logo)
+                
+                layout.addWidget(snap_types_group)
+                
+                # Buttons
+                button_layout = QHBoxLayout()
+                
+                apply_button = QPushButton("Apply")
+                apply_button.clicked.connect(self.apply_settings)
+                
+                ok_button = QPushButton("OK")
+                ok_button.clicked.connect(self.accept_settings)
+                
+                cancel_button = QPushButton("Cancel")
+                cancel_button.clicked.connect(self.reject)
+                
+                button_layout.addWidget(apply_button)
+                button_layout.addStretch()
+                button_layout.addWidget(ok_button)
+                button_layout.addWidget(cancel_button)
+                
+                layout.addLayout(button_layout)
+            
+            def apply_settings(self):
+                """Apply settings to preview window"""
+                self.preview.snapping_enabled = self.enable_snap.isChecked()
+                self.preview.snap_distance = self.distance_spin.value()
+                self.preview.snap_to_grid = self.snap_to_grid.isChecked()
+                self.preview.snap_to_screen_center = self.snap_to_screen_center.isChecked()
+                self.preview.snap_to_controls = self.snap_to_controls.isChecked()
+                self.preview.snap_to_logo = self.snap_to_logo.isChecked()
+                
+                # Update snap button text
+                if hasattr(self.preview, 'snap_button'):
+                    self.preview.snap_button.setText(
+                        "Disable Snap" if self.preview.snapping_enabled else "Enable Snap"
+                    )
+                
+                # Save settings
+                self.preview.save_snapping_settings()
+            
+            def accept_settings(self):
+                """Apply settings and close dialog"""
+                self.apply_settings()
+                self.accept()
+        
+        # Create and show the dialog
+        dialog = SnappingSettingsDialog(self)
+        dialog.exec_()
+    
+    def load_grid_settings(self):
+        """Load grid settings from file"""
+        try:
+            import os
+            import json
+            
+            # Path to settings file
+            preview_dir = os.path.join(self.mame_dir, "preview")
+            settings_file = os.path.join(preview_dir, "grid_settings.json")
+            
+            # Check if file exists
+            if os.path.exists(settings_file):
+                with open(settings_file, 'r') as f:
+                    settings = json.load(f)
+                
+                # Apply settings
+                self.grid_x_start = settings.get("grid_x_start", 200)
+                self.grid_y_start = settings.get("grid_y_start", 100)
+                self.grid_x_step = settings.get("grid_x_step", 300)
+                self.grid_y_step = settings.get("grid_y_step", 60)
+                self.grid_columns = settings.get("grid_columns", 3)
+                self.grid_rows = settings.get("grid_rows", 8)
+                
+                print(f"Loaded grid settings from {settings_file}")
+                return True
+        except Exception as e:
+            print(f"Error loading grid settings: {e}")
+            import traceback
+            traceback.print_exc()
+        
+        return False
+    
+    # Add this method to PreviewWindow class
+    def setup_alignment_features(self):
+        """Set up alignment features in the PreviewWindow"""
+        # Initialize the alignment grid system
+        self.initialize_alignment_grid()
+        
+        # Add the grid toggle button to the floating control panel
+        if hasattr(self, 'bottom_row') and not hasattr(self, 'grid_button'):
+            from PyQt5.QtWidgets import QPushButton
+            from PyQt5.QtCore import Qt
+            
+            button_style = """
+                QPushButton {
+                    background-color: #404050;
+                    color: white;
+                    border: none;
+                    border-radius: 4px;
+                    padding: 6px 10px;
+                    font-weight: bold;
+                    font-size: 12px;
+                    min-width: 80px;
+                }
+                QPushButton:hover {
+                    background-color: #555565;
+                }
+                QPushButton:pressed {
+                    background-color: #303040;
+                }
+            """
+            
+            self.grid_button = QPushButton("Show Grid")
+            self.grid_button.clicked.connect(self.toggle_alignment_grid)
+            self.grid_button.setStyleSheet(button_style)
+            self.bottom_row.addWidget(self.grid_button)
+            
+        # Create a edit grid settings dialog
+        self.create_grid_settings_dialog()
+
+    def initialize_alignment_grid(self):
+        """Initialize the alignment grid system"""
+        self.alignment_grid_visible = False
+        self.grid_x_start = 200  # Default first column X-position
+        self.grid_x_step = 300   # Default X-spacing between columns
+        self.grid_y_start = 100  # Default first row Y-position
+        self.grid_y_step = 60    # Default Y-spacing between rows
+        self.grid_columns = 3    # Number of columns in grid
+        self.grid_rows = 8       # Number of rows in grid
+        
+        # Create a toggle button for the grid if we have a button frame
+        if hasattr(self, 'bottom_row'):
+            from PyQt5.QtWidgets import QPushButton
+            
+            button_style = """
+                QPushButton {
+                    background-color: #404050;
+                    color: white;
+                    border: none;
+                    border-radius: 4px;
+                    padding: 6px 10px;
+                    font-weight: bold;
+                    font-family: 'Segoe UI', Arial, sans-serif;
+                    font-size: 12px;
+                    min-width: 80px;
+                }
+                QPushButton:hover {
+                    background-color: #555565;
+                }
+                QPushButton:pressed {
+                    background-color: #303040;
+                }
+            """
+            
+            if not hasattr(self, 'grid_button'):
+                self.grid_button = QPushButton("Show Grid")
+                self.grid_button.clicked.connect(self.toggle_alignment_grid)
+                self.grid_button.setStyleSheet(button_style)
+                self.bottom_row.addWidget(self.grid_button)
+
+    def toggle_alignment_grid(self):
+        """Toggle the alignment grid visibility"""
+        self.alignment_grid_visible = not self.alignment_grid_visible
+        
+        if self.alignment_grid_visible:
+            self.show_alignment_grid()
+            # Only try to update the button text if the button exists
+            if hasattr(self, 'grid_button'):
+                self.grid_button.setText("Hide Grid")
+        else:
+            self.hide_alignment_grid()
+            # Only try to update the button text if the button exists
+            if hasattr(self, 'grid_button'):
+                self.grid_button.setText("Show Grid")
+
+    def show_alignment_grid(self):
+        """Show the alignment grid"""
+        if not hasattr(self, 'grid_lines'):
+            self.grid_lines = []
+        
+        # Hide any existing grid
+        self.hide_alignment_grid()
+        
+        from PyQt5.QtWidgets import QFrame, QLabel
+        from PyQt5.QtGui import QPalette, QColor
+        
+        canvas_width = self.canvas.width()
+        canvas_height = self.canvas.height()
+        
+        # Create vertical grid lines (columns)
+        # Vertical grid lines (columns)
+        num_columns = (canvas_width - self.grid_x_start) // self.grid_x_step + 1
+        for col in range(num_columns):
+            x = self.grid_x_start + col * self.grid_x_step
+            line = QFrame(self.canvas)
+            line.setFrameShape(QFrame.VLine)
+            line.setFixedWidth(1)
+            line.setGeometry(x, 0, 1, canvas_height)
+            
+            # Style for grid lines - more subtle than alignment guides
+            line.setStyleSheet("background-color: rgba(0, 180, 180, 120);")
+            
+            line.show()
+            self.grid_lines.append(line)
+            
+            # Add column number label
+            col_label = QLabel(f"{x}px", self.canvas)
+            col_label.setStyleSheet("color: rgba(0, 180, 180, 180); background: transparent;")
+            col_label.move(x + 5, 10)
+            col_label.show()
+            self.grid_lines.append(col_label)
+        
+        # Create horizontal grid lines (rows)
+        num_rows = (canvas_height - self.grid_y_start) // self.grid_y_step + 1
+        for row in range(num_rows):
+            y = self.grid_y_start + row * self.grid_y_step
+            line = QFrame(self.canvas)
+            line.setFrameShape(QFrame.HLine)
+            line.setFixedHeight(1)
+            line.setGeometry(0, y, canvas_width, 1)
+            
+            # Style for grid lines
+            line.setStyleSheet("background-color: rgba(0, 180, 180, 120);")
+            
+            line.show()
+            self.grid_lines.append(line)
+            
+            # Add row number label
+            row_label = QLabel(f"{y}px", self.canvas)
+            row_label.setStyleSheet("color: rgba(0, 180, 180, 180); background: transparent;")
+            row_label.move(10, y + 5)
+            row_label.show()
+            self.grid_lines.append(row_label)
+
+    def hide_alignment_grid(self):
+        """Hide the alignment grid"""
+        if hasattr(self, 'grid_lines'):
+            for line in self.grid_lines:
+                line.deleteLater()
+            self.grid_lines = []
+
+    def create_grid_settings_dialog(self):
+        """Create a dialog for editing grid settings"""
+        from PyQt5.QtWidgets import QDialog, QVBoxLayout, QHBoxLayout, QLabel, QSpinBox, QPushButton, QGroupBox
+    
+    # 1. Add show_alignment_guides method to PreviewWindow
+    def show_alignment_guides(self, guide_lines):
+        """Show alignment guide lines with enhanced visibility"""
+        # Remove any existing guide lines
+        self.hide_alignment_guides()
+        
+        # Create guide lines
+        from PyQt5.QtWidgets import QFrame
+        from PyQt5.QtGui import QPalette, QColor
+        
+        self.guide_labels = []
+        
+        for x1, y1, x2, y2 in guide_lines:
+            guide = QFrame(self.canvas)
+            
+            # Ensure all values are integers
+            x1, y1, x2, y2 = int(x1), int(y1), int(x2), int(y2)
+            
+            # Set line style
+            if x1 == x2:  # Vertical line
+                guide.setFrameShape(QFrame.VLine)
+                guide.setFixedWidth(2)  # Make line thicker
+            else:  # Horizontal line
+                guide.setFrameShape(QFrame.HLine)
+                guide.setFixedHeight(2)  # Make line thicker
+            
+            guide.setFrameShadow(QFrame.Plain)
+            guide.setLineWidth(2)
+            
+            # Set bright color for visibility
+            palette = QPalette()
+            palette.setColor(QPalette.WindowText, QColor(0, 255, 255))  # Cyan color
+            guide.setPalette(palette)
+            
+            # Add a more visible style
+            guide.setStyleSheet("background-color: rgba(0, 255, 255, 180);")  # Semi-transparent cyan
+            
+            # Position and size the guide
+            if x1 == x2:  # Vertical line
+                guide.setGeometry(x1-1, y1, 2, y2-y1)  # Center line on position
+            else:  # Horizontal line
+                guide.setGeometry(x1, y1-1, x2-x1, 2)  # Center line on position
+            
+            # Make sure guide is on top
+            guide.raise_()
+            guide.show()
+            self.guide_labels.append(guide)
+        
+        # Set timer to auto-hide guides after a short period
+        from PyQt5.QtCore import QTimer
+        if hasattr(self, 'guide_timer'):
+            self.guide_timer.stop()
+        self.guide_timer = QTimer(self)
+        self.guide_timer.setSingleShot(True)
+        self.guide_timer.timeout.connect(self.hide_alignment_guides)
+        self.guide_timer.start(1500)  # Hide after 1.5 seconds (increased from 1s)
+
+    # 2. Add hide_alignment_guides method to PreviewWindow
+    def hide_alignment_guides(self):
+        """Hide alignment guide lines"""
+        if hasattr(self, 'guide_labels'):
+            for guide in self.guide_labels:
+                guide.deleteLater()
+            self.guide_labels = []
+    
     def toggle_button_prefixes(self):
         """Toggle the visibility of button prefixes for all controls"""
         # Toggle the setting
@@ -1664,6 +2407,18 @@ class PreviewWindow(QMainWindow):
         self.button_dragging = False
         self.button_drag_pos = None
         
+        # Add Snap Toggle Button
+        self.snap_button = QPushButton("Toggle Snap", self)
+        self.snap_button.clicked.connect(self.toggle_snapping)
+        self.snap_button.setStyleSheet(button_style)
+        bottom_row.addWidget(self.snap_button)
+
+        # Add Grid Toggle Button
+        self.grid_button = QPushButton("Show Grid")
+        self.grid_button.clicked.connect(self.toggle_alignment_grid)
+        self.grid_button.setStyleSheet(button_style)
+        bottom_row.addWidget(self.grid_button)
+
         # Determine button frame position
         self.position_button_frame()
         
@@ -2143,7 +2898,55 @@ class PreviewWindow(QMainWindow):
                 QTimer.singleShot(100, self.show_bezel_with_background)
                 print("Bezel initialized as visible based on settings")
     
-    # Improved show_all_xinput_controls method that avoids duplicates
+    # First, add the missing on_label_move method to the PreviewWindow class
+    def on_label_move(self, event, label, shadow, orig_func):
+        """Handle label movement and update shadow position"""
+        # Call the original mouseMoveEvent method for the label
+        orig_func(event)
+        
+        # Update shadow position to match the label with offset
+        if shadow:
+            shadow_pos = label.pos()
+            shadow.move(shadow_pos.x() + 2, shadow_pos.y() + 2)
+
+    # Update the show_all_xinput_controls method to fix text truncation in RS/LS buttons
+    # Fixed show_all_xinput_controls method to ensure consistent text positioning
+    # Add this helper method to presizing labels before positioning
+    def create_presized_label(self, text, font, control_name=""):
+        """Create a properly sized label before positioning it"""
+        from PyQt5.QtWidgets import QSizePolicy
+        from PyQt5.QtCore import Qt
+        
+        # Create the label
+        label = DraggableLabel(text, self.canvas, settings=self.text_settings.copy())
+        
+        # Apply font directly
+        label.setFont(font)
+        
+        # Important text display fixes
+        label.setWordWrap(False)  # Prevent wrapping
+        label.setTextFormat(Qt.PlainText)  # Simple text format
+        
+        # Remove any constraints
+        label.setMinimumSize(0, 0)
+        label.setMaximumSize(16777215, 16777215)  # Qt's maximum
+        
+        # Set expanding size policy
+        label.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)
+        
+        # Force size calculation
+        label.adjustSize()
+        
+        # Track the actual size used
+        width = label.width()
+        height = label.height()
+        
+        if control_name:
+            print(f"Presized {control_name}: {width}x{height}")
+        
+        return label, width, height
+
+    # Completely rewritten show_all_xinput_controls with a new approach
     def show_all_xinput_controls(self):
         """Show all possible P1 XInput controls for global positioning without duplicates"""
         # Standard XInput controls for positioning - P1 ONLY
@@ -2172,6 +2975,11 @@ class PreviewWindow(QMainWindow):
         }
         
         try:
+            from PyQt5.QtGui import QFont, QFontInfo
+            from PyQt5.QtCore import QPoint, Qt
+            from PyQt5.QtWidgets import QLabel
+            import os
+            
             print("\n--- Showing all P1 XInput controls for positioning ---")
             
             # Save existing control positions
@@ -2185,103 +2993,141 @@ class PreviewWindow(QMainWindow):
                     }
                 print(f"Backed up {len(self.original_controls_backup)} original controls")
             
-            # Get canvas dimensions for positioning
-            canvas_width = self.canvas.width()
-            canvas_height = self.canvas.height()
-            
             # Clear ALL existing controls first
             for control_name in list(self.control_labels.keys()):
                 # Remove the control from the canvas
                 if control_name in self.control_labels:
-                    self.control_labels[control_name]['label'].deleteLater()
+                    if 'label' in self.control_labels[control_name]:
+                        self.control_labels[control_name]['label'].deleteLater()
+                    if 'shadow' in self.control_labels[control_name]:
+                        self.control_labels[control_name]['shadow'].deleteLater()
                     del self.control_labels[control_name]
 
             # Clear collections
             self.control_labels = {}
             print("Cleared all existing controls")
-            print("Cleared all existing controls")
+            
+            # Load saved global positions
+            saved_positions = self.load_saved_positions()
+            
+            # Get font - either from current_font or settings
+            font_family = self.text_settings.get("font_family", "Arial")
+            font_size = self.text_settings.get("font_size", 28)
+            bold_strength = self.text_settings.get("bold_strength", 2) > 0
+            
+            if hasattr(self, 'current_font') and self.current_font:
+                font = QFont(self.current_font)
+            else:
+                font = QFont(font_family, font_size)
+                font.setBold(bold_strength)
+            
+            # Apply text settings
+            y_offset = self.text_settings.get("y_offset", -40)
+            use_uppercase = self.text_settings.get("use_uppercase", False)
+            show_prefix = self.text_settings.get("show_button_prefix", True)
             
             # Default grid layout
             grid_x, grid_y = 0, 0
             
-            # Apply text settings
-            y_offset = self.text_settings.get("y_offset", -40)
-            
             # Create all P1 XInput controls
             for control_name, action_text in xinput_controls.items():
-                # Apply text settings - uppercase if enabled
-                if self.text_settings.get("use_uppercase", False):
+                # Apply uppercase if needed
+                if use_uppercase:
                     action_text = action_text.upper()
                 
-                # Check if we have a saved position for this control
-                saved_position = None
-                if control_name in self.original_controls_backup:
-                    saved_position = self.original_controls_backup[control_name]['position']
+                # Get button prefix
+                button_prefix = self.get_button_prefix(control_name)
                 
-                # Create a draggable label with current text settings
-                label = DraggableLabel(action_text, self.canvas, settings=self.text_settings)
+                # Add prefix if enabled
+                display_text = action_text
+                if show_prefix and button_prefix:
+                    display_text = f"{button_prefix}: {action_text}"
                 
-                # Create shadow effect for better visibility
-                shadow_label = QLabel(action_text, self.canvas)
-                shadow_label.setStyleSheet("color: black; background-color: transparent; border: none;")
+                # COMPLETELY DIFFERENT APPROACH:
+                # 1. Create presized labels with final dimensions
+                label, width, height = self.create_presized_label(display_text, font, control_name)
                 
-                # Copy font settings from main label
-                shadow_label.setFont(label.font())
+                # 2. Create shadow with exact same dimensions
+                shadow = QLabel(display_text, self.canvas)
+                shadow.setFont(font)
+                shadow.setStyleSheet("color: black; background-color: transparent; border: none;")
+                shadow.resize(width, height)  # Use exact same size
                 
-                if saved_position:
-                    # Use the saved position
-                    x, y = saved_position.x(), saved_position.y()
-                    # Use original position without offset for reset
+                # 3. Determine position - now completely separated from creation
+                x, y = 0, 0
+                
+                # Check for saved position in the following order:
+                # a) Global positions from saved_positions
+                # b) Backup positions from original_controls_backup
+                # c) Default grid-based position
+                if saved_positions and control_name in saved_positions:
+                    # Use the EXACT coordinates from global positions
+                    pos_x, pos_y = saved_positions[control_name]
+                    x, y = pos_x, pos_y + y_offset
+                    original_pos = QPoint(pos_x, pos_y)
+                    print(f"Using global position for {control_name}: ({pos_x}, {pos_y})")
+                
+                elif control_name in self.original_controls_backup:
+                    # Use backup position exactly as stored
+                    backup_pos = self.original_controls_backup[control_name]['position']
+                    x, y = backup_pos.x(), backup_pos.y()
                     original_pos = self.original_controls_backup[control_name]['original_pos']
+                    print(f"Using backup position for {control_name}: ({x}, {y})")
+                
                 else:
-                    # Use default grid position
-                    x = 100 + (grid_x * 150)
-                    y = 100 + (grid_y * 40)
-                    
-                    # Apply y-offset from text settings
-                    y += y_offset
-                    
-                    # Store original position without offset
+                    # Use grid position with fixed spacing
+                    x = 100 + (grid_x * 200)
+                    y = 100 + (grid_y * 60) + y_offset
                     original_pos = QPoint(x, y - y_offset)
                     
-                    # Update grid position
-                    grid_x = (grid_x + 1) % 5
+                    # Update grid
+                    grid_x = (grid_x + 1) % 4
                     if grid_x == 0:
                         grid_y += 1
+                    print(f"Using grid position for {control_name}: ({x}, {y})")
                 
-                # Position the labels - shadow goes behind
-                shadow_label.move(x + 2, y + 2)  # Shadow offset
+                # 4. CRITICAL - Position without any adjustments
+                # Apply position DIRECTLY - no calculations after this point
+                shadow.move(x + 2, y + 2)
                 label.move(x, y)
                 
-                # Make shadow label go behind the main label
-                shadow_label.lower()
+                # 5. Stack shadow behind
+                shadow.lower()
                 
-                # Store the labels
+                # 6. Store in control_labels with original position
                 self.control_labels[control_name] = {
                     'label': label,
-                    'shadow': shadow_label,
+                    'shadow': shadow,
                     'action': action_text,
-                    'original_pos': original_pos  # Store without offset for reset
+                    'prefix': button_prefix,
+                    'original_pos': original_pos
                 }
                 
-                # Connect position update for shadow
+                # 7. Connect shadow movement handler
                 original_mouseMoveEvent = label.mouseMoveEvent
-                label.mouseMoveEvent = lambda event, label=label, shadow=shadow_label, orig_func=original_mouseMoveEvent: self.on_label_move(event, label, shadow, orig_func)
+                label.mouseMoveEvent = lambda event, label=label, shadow=shadow, orig_func=original_mouseMoveEvent: self.on_label_move(event, label, shadow, orig_func)
                 
-                # Show control (respect joystick visibility)
+                # 8. Apply visibility based on joystick settings
                 is_visible = True
                 if "JOYSTICK" in control_name and hasattr(self, 'joystick_visible'):
                     is_visible = self.joystick_visible
                 
                 label.setVisible(is_visible)
-                shadow_label.setVisible(is_visible)
+                shadow.setVisible(is_visible)
+                
+                # Record final position
+                final_x, final_y = label.pos().x(), label.pos().y()
+                print(f"Final position for {control_name}: ({final_x}, {final_y})")
             
-            # Update button to allow going back to regular mode
+            # Update button text
             if hasattr(self, 'xinput_controls_button'):
                 self.xinput_controls_button.setText("Normal Controls")
             
-            # Set flag to indicate we're in XInput mode
+            # Set XInput mode flag
             self.showing_all_xinput_controls = True
+            
+            # Force update
+            self.canvas.update()
             
             print(f"Created and displayed {len(xinput_controls)} P1 XInput controls for positioning")
             return True
@@ -3922,6 +4768,10 @@ class PreviewWindow(QMainWindow):
             # Call the original resize handler if it exists
             if hasattr(self, 'on_canvas_resize_original'):
                 self.on_canvas_resize_original(event)
+
+            # Redraw grid if it's currently visible
+            if hasattr(self, 'alignment_grid_visible') and self.alignment_grid_visible:
+                self.show_alignment_grid()
                 
         except Exception as e:
             print(f"Error in canvas resize: {e}")
@@ -4043,9 +4893,8 @@ class PreviewWindow(QMainWindow):
             "bold_strength": 2,
             "use_uppercase": False,
             "y_offset": -40,
-            "show_button_prefix": True,
-            "prefix_color": "#FFC107",  # Default prefix color (amber)
-            "action_color": "#FFFFFF"   # Default action text color (white)
+            "show_button_prefix": True,  # Add this line for button prefix setting
+            "prefix_color": "#FFFFFF"    # Default color for prefix (white)
         }
         
         try:
@@ -4110,123 +4959,132 @@ class PreviewWindow(QMainWindow):
 
     # Improved create_control_labels method that respects joystick visibility
     def create_control_labels(self, clean_mode=False):
-        """Create control labels using GradientPrefixLabel with full gradient support"""
+        """Create control labels with option for clean mode and joystick visibility support"""
         if not self.game_data or 'players' not in self.game_data:
             return
-
+        
+        # Load saved positions - this should happen regardless of mode
         saved_positions = self.load_saved_positions()
-
-        # Initialize joystick visibility early if not already
+        
+        # Make sure joystick_visible is set before we start creating controls
         if not hasattr(self, 'joystick_visible'):
+            # Load from settings if possible
             bezel_settings = self.load_bezel_settings() if hasattr(self, 'load_bezel_settings') else {}
             self.joystick_visible = bezel_settings.get("joystick_visible", True)
-
-        grid_x, grid_y = 0, 0
-
+            print(f"Pre-initialized joystick visibility to: {self.joystick_visible}")
+        
+        # Process controls
         for player in self.game_data.get('players', []):
-            if player['number'] != 1:
+            if player['number'] != 1:  # Only show Player 1 controls
                 continue
-
+                    
+            # Create a label for each control
+            grid_x, grid_y = 0, 0
             for control in player.get('labels', []):
                 control_name = control['name']
                 action_text = control['value']
+                
+                # Get button prefix based on control_name
                 button_prefix = self.get_button_prefix(control_name)
-
-                # Visibility toggle for joystick labels
+                
+                # Determine visibility BEFORE creating the control
                 is_visible = True
                 if "JOYSTICK" in control_name:
-                    is_visible = self.joystick_visible
-
+                    is_visible = getattr(self, 'joystick_visible', True)
+                
+                # Apply text settings
                 if self.text_settings.get("use_uppercase", False):
                     action_text = action_text.upper()
-
+                
+                # Add prefix if enabled in settings
                 display_text = action_text
                 if self.text_settings.get("show_button_prefix", True) and button_prefix:
                     display_text = f"{button_prefix}: {action_text}"
-
-                # Determine position
+                
+                # Get position - use saved position or default grid position
+                # IMPORTANT: This same position logic should be used for both modes
                 if control_name in saved_positions:
+                    # Get saved position
                     pos_x, pos_y = saved_positions[control_name]
+                    
+                    # Apply y-offset from text settings
                     y_offset = self.text_settings.get("y_offset", -40)
+                    
+                    # Use saved position
                     x, y = pos_x, pos_y + y_offset
-                    original_pos = QPoint(pos_x, pos_y)
+                    original_pos = QPoint(pos_x, pos_y)  # Store without offset
                 else:
+                    # Default position based on a grid layout
                     x = 100 + (grid_x * 150)
                     y = 100 + (grid_y * 40)
+                    
+                    # Apply y-offset from text settings
                     y_offset = self.text_settings.get("y_offset", -40)
                     y += y_offset
+                    
+                    # Store original position without offset
                     original_pos = QPoint(x, y - y_offset)
+                    
+                    # Update grid position
                     grid_x = (grid_x + 1) % 5
                     if grid_x == 0:
                         grid_y += 1
-
-                # Create the label using GradientPrefixLabel
-                label = GradientPrefixLabel(display_text, self.canvas, settings=self.text_settings)
-
-                # Set font (current or fallback)
-                if hasattr(self, 'current_font'):
-                    label.setFont(self.current_font)
-                elif hasattr(self, 'initialized_font'):
-                    label.setFont(self.initialized_font)
+                
+                # Create label based on mode
+                if clean_mode:
+                    # Simple label without drag features in clean mode
+                    # Use EnhancedLabel instead of QLabel
+                    label = EnhancedLabel(display_text, self.canvas, shadow_offset=2)
+                    
+                    # IMPORTANT: Apply the initialized font if available
+                    if hasattr(self, 'current_font'):
+                        label.setFont(self.current_font)
+                    elif hasattr(self, 'initialized_font'):
+                        label.setFont(self.initialized_font)
+                    else:
+                        # Fallback to standard approach
+                        font = QFont(self.text_settings.get("font_family", "Arial"), 
+                                    self.text_settings.get("font_size", 28))
+                        font.setBold(self.text_settings.get("bold_strength", 2) > 0)
+                        label.setFont(font)
+                    
+                    # Apply styling without font family in stylesheet
+                    label.setStyleSheet("color: white; background-color: transparent; border: none;")
+                    
+                    # CRITICAL: Set exact position for clean mode - same as normal mode
+                    label.move(x, y)
                 else:
-                    font = QFont(self.text_settings.get("font_family", "Arial"),
-                                self.text_settings.get("font_size", 28))
-                    font.setBold(self.text_settings.get("bold_strength", 2) > 0)
-                    label.setFont(font)
-
-                # Apply shared properties
-                label.setStyleSheet("background-color: transparent; border: none;")
-                label.move(x, y)
+                    # For DraggableLabel, pass our initialized font
+                    if hasattr(self, 'current_font'):
+                        label = DraggableLabel(display_text, self.canvas, 
+                                            settings=self.text_settings,
+                                            initialized_font=self.current_font)
+                    elif hasattr(self, 'initialized_font'):
+                        label = DraggableLabel(display_text, self.canvas, 
+                                            settings=self.text_settings,
+                                            initialized_font=self.initialized_font)
+                    else:
+                        label = DraggableLabel(display_text, self.canvas, 
+                                            settings=self.text_settings)
+                    
+                    # Position the draggable label
+                    label.move(x, y)
+                
+                # Apply visibility immediately
                 label.setVisible(is_visible)
-
-                # Add drag support in non-clean mode
-                if not clean_mode:
-                    label.mousePressEvent = lambda event, lbl=label: self.on_label_press(event, lbl)
-                    label.mouseMoveEvent = lambda event, lbl=label: self.on_label_move(event, lbl)
-                    label.mouseReleaseEvent = lambda event, lbl=label: self.on_label_release(event, lbl)
-
-                # Store label
-                # Store label
+                
+                # Store the label and additional data
                 self.control_labels[control_name] = {
                     'label': label,
                     'action': action_text,
-                    'prefix': button_prefix,
-                    'original_pos': original_pos
+                    'prefix': button_prefix,  # Store the prefix for later use
+                    'original_pos': original_pos  # IMPORTANT: Store position for reset
                 }
-
-                label.setVisible(is_visible)  # ✅ Show or hide immediately, no flicker
-
-
+        
+        # Force a canvas update
         self.canvas.update()
-        print(f"Created {len(self.control_labels)} control labels using GradientPrefixLabel")
-
+        print(f"Created {len(self.control_labels)} control labels")
                 
-    def on_label_press(self, event, label):
-        """Handle mouse press on label"""
-        if event.button() == Qt.LeftButton:
-            label.dragging = True
-            label.drag_start_pos = event.pos()
-            label.setCursor(Qt.ClosedHandCursor)
-            event.accept()
-
-    def on_label_move(self, event, label):
-        """Handle mouse move for dragging labels"""
-        if hasattr(label, 'dragging') and label.dragging:
-            # Calculate new position
-            delta = event.pos() - label.drag_start_pos
-            new_pos = label.pos() + delta
-            
-            # Apply the move
-            label.move(new_pos)
-            event.accept()
-
-    def on_label_release(self, event, label):
-        """Handle mouse release to end dragging"""
-        if event.button() == Qt.LeftButton and hasattr(label, 'dragging'):
-            label.dragging = False
-            label.setCursor(Qt.OpenHandCursor)
-            event.accept()
-    
     def get_button_prefix(self, control_name):
         """Generate button prefix based on control name"""
         prefixes = {
@@ -4583,12 +5441,6 @@ class PreviewWindow(QMainWindow):
         show_button_prefix = self.text_settings.get("show_button_prefix", True)
         y_offset = self.text_settings.get("y_offset", -40)
         
-        # Color and gradient settings
-        prefix_color = self.text_settings.get("prefix_color", "#FFC107")
-        action_color = self.text_settings.get("action_color", "#FFFFFF")
-        use_prefix_gradient = self.text_settings.get("use_prefix_gradient", False)
-        use_action_gradient = self.text_settings.get("use_action_gradient", False)
-        
         # Debug font information if available
         if hasattr(self, 'debug_font_settings'):
             self.debug_font_settings()
@@ -4724,20 +5576,11 @@ class PreviewWindow(QMainWindow):
                 # Update the text
                 label.setText(display_text)
                 
-                # If it's a ColoredPrefixLabel or GradientPrefixLabel, update parsed text and settings
-                if hasattr(label, 'parse_text'):
-                    label.parse_text(display_text)
-                    
-                # Update settings if available
-                if hasattr(label, 'settings'):
-                    label.settings = self.text_settings
-                
                 # Apply the font - TWO ways for redundancy
                 label.setFont(font)
                 
                 # FORCE SPECIFIC FONT NAME as fallback with stylesheet (as a second approach)
-                # We only set background-color in the stylesheet to avoid interfering with custom painting
-                label.setStyleSheet(f"background-color: transparent; border: none; font-family: '{font.family()}';")
+                label.setStyleSheet(f"color: white; background-color: transparent; border: none; font-family: '{font.family()}';")
                 
                 # Update positions
                 original_pos = control_data.get('original_pos', QPoint(100, 100))
@@ -5050,20 +5893,14 @@ class LogoSettingsDialog(QDialog):
                 break
         
         return {
-            "font_family": self.font_combo.currentText(),
-            "font_size": self.size_slider.value(),
-            "bold_strength": self.bold_slider.value(),
-            "use_uppercase": self.uppercase_check.isChecked(),
-            "show_button_prefix": self.prefix_check.isChecked(),
-            "y_offset": self.offset_slider.value(),
-            "prefix_color": self.prefix_color_edit.text(),
-            "action_color": self.action_color_edit.text(),
-            "use_prefix_gradient": self.prefix_gradient_check.isChecked(),
-            "prefix_gradient_start": self.prefix_gradient_start.text(), 
-            "prefix_gradient_end": self.prefix_gradient_end.text(),
-            "use_action_gradient": self.action_gradient_check.isChecked(),
-            "action_gradient_start": self.action_gradient_start.text(),
-            "action_gradient_end": self.action_gradient_end.text()
+            "logo_position": selected_position,
+            "custom_position": self.custom_position_check.isChecked(),
+            "x_position": self.x_spin.value(),
+            "y_position": self.y_spin.value(),
+            "width_percentage": self.width_slider.value(),
+            "height_percentage": self.height_slider.value(),
+            "maintain_aspect": self.aspect_check.isChecked(),
+            "logo_visible": self.settings.get("logo_visible", True)  # Preserve visibility
         }
     
     def apply_settings(self):
