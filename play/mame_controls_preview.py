@@ -7,7 +7,7 @@ from PyQt5 import sip
 from PyQt5.QtWidgets import (QAction, QGridLayout, QLineEdit, QMainWindow, QMenu, QMessageBox, QSizePolicy, QSpinBox, QVBoxLayout, QHBoxLayout, QWidget, 
                             QLabel, QPushButton, QFrame, QApplication, QDesktopWidget,
                             QDialog, QGroupBox, QCheckBox, QSlider, QComboBox)
-from PyQt5.QtGui import QFontInfo, QImage, QPalette, QPixmap, QFont, QColor, QPainter, QPen, QFontMetrics
+from PyQt5.QtGui import QBrush, QFontInfo, QImage, QLinearGradient, QPalette, QPixmap, QFont, QColor, QPainter, QPen, QFontMetrics
 from PyQt5.QtCore import Qt, QPoint, QTimer, QRect, QEvent, QSize
 
 class EnhancedLabel(QLabel):
@@ -833,6 +833,83 @@ class TextSettingsDialog(QDialog):
 
         layout.addWidget(color_group)
         
+        # Gradient options
+        gradient_group = QGroupBox("Gradient Options")
+        gradient_layout = QVBoxLayout(gradient_group)
+
+        # Prefix gradient toggle
+        prefix_gradient_row = QHBoxLayout()
+        self.prefix_gradient_check = QCheckBox("Use Gradient for Prefix")
+        self.prefix_gradient_check.setChecked(self.settings.get("use_prefix_gradient", False))
+        self.prefix_gradient_check.stateChanged.connect(self.update_preview)
+        prefix_gradient_row.addWidget(self.prefix_gradient_check)
+        gradient_layout.addLayout(prefix_gradient_row)
+
+        # Prefix gradient colors
+        prefix_gradient_colors = QHBoxLayout()
+        prefix_gradient_start_label = QLabel("Start:")
+        self.prefix_gradient_start = QLineEdit(self.settings.get("prefix_gradient_start", "#FFC107"))
+        self.prefix_gradient_start.setMaximumWidth(80)
+        prefix_gradient_end_label = QLabel("End:")
+        self.prefix_gradient_end = QLineEdit(self.settings.get("prefix_gradient_end", "#FF5722"))
+        self.prefix_gradient_end.setMaximumWidth(80)
+
+        self.prefix_gradient_start.textChanged.connect(self.update_preview)
+        self.prefix_gradient_end.textChanged.connect(self.update_preview)
+
+        prefix_gradient_colors.addWidget(prefix_gradient_start_label)
+        prefix_gradient_colors.addWidget(self.prefix_gradient_start)
+        prefix_gradient_colors.addWidget(prefix_gradient_end_label)
+        prefix_gradient_colors.addWidget(self.prefix_gradient_end)
+        prefix_gradient_colors.addStretch()
+        gradient_layout.addLayout(prefix_gradient_colors)
+
+        # Action gradient toggle
+        action_gradient_row = QHBoxLayout()
+        self.action_gradient_check = QCheckBox("Use Gradient for Action Text")
+        self.action_gradient_check.setChecked(self.settings.get("use_action_gradient", False))
+        self.action_gradient_check.stateChanged.connect(self.update_preview)
+        action_gradient_row.addWidget(self.action_gradient_check)
+        gradient_layout.addLayout(action_gradient_row)
+
+        # Action gradient colors
+        action_gradient_colors = QHBoxLayout()
+        action_gradient_start_label = QLabel("Start:")
+        self.action_gradient_start = QLineEdit(self.settings.get("action_gradient_start", "#2196F3"))
+        self.action_gradient_start.setMaximumWidth(80)
+        action_gradient_end_label = QLabel("End:")
+        self.action_gradient_end = QLineEdit(self.settings.get("action_gradient_end", "#4CAF50"))
+        self.action_gradient_end.setMaximumWidth(80)
+
+        self.action_gradient_start.textChanged.connect(self.update_preview)
+        self.action_gradient_end.textChanged.connect(self.update_preview)
+
+        action_gradient_colors.addWidget(action_gradient_start_label)
+        action_gradient_colors.addWidget(self.action_gradient_start)
+        action_gradient_colors.addWidget(action_gradient_end_label)
+        action_gradient_colors.addWidget(self.action_gradient_end)
+        action_gradient_colors.addStretch()
+        gradient_layout.addLayout(action_gradient_colors)
+
+        # Add preset gradient buttons
+        preset_row = QHBoxLayout()
+        preset_label = QLabel("Presets:")
+        preset_fire = QPushButton("Fire")
+        preset_fire.clicked.connect(lambda: self.apply_preset("fire"))
+        preset_ice = QPushButton("Ice")
+        preset_ice.clicked.connect(lambda: self.apply_preset("ice"))
+        preset_rainbow = QPushButton("Rainbow")
+        preset_rainbow.clicked.connect(lambda: self.apply_preset("rainbow"))
+
+        preset_row.addWidget(preset_label)
+        preset_row.addWidget(preset_fire)
+        preset_row.addWidget(preset_ice)
+        preset_row.addWidget(preset_rainbow)
+        preset_row.addStretch()
+        gradient_layout.addLayout(preset_row)
+
+        layout.addWidget(gradient_group)
+        
         # Preview section
         preview_group = QGroupBox("Preview")
         preview_layout = QVBoxLayout(preview_group)
@@ -874,6 +951,41 @@ class TextSettingsDialog(QDialog):
         
         layout.addLayout(button_layout)
 
+    def apply_preset(self, preset_name):
+        """Apply a preset gradient configuration"""
+        presets = {
+            "fire": {
+                "prefix": ("#FFEB3B", "#FF5722"),  # Yellow to Orange-Red
+                "action": ("#FF9800", "#F44336")   # Orange to Red
+            },
+            "ice": {
+                "prefix": ("#E1F5FE", "#0277BD"),  # Light Blue to Deep Blue
+                "action": ("#B3E5FC", "#01579B")   # Pale Blue to Navy
+            },
+            "rainbow": {
+                "prefix": ("#FF5722", "#2196F3"),  # Red-Orange to Blue
+                "action": ("#4CAF50", "#9C27B0")   # Green to Purple
+            }
+        }
+        
+        if preset_name in presets:
+            preset = presets[preset_name]
+            
+            # Set prefix gradient
+            self.prefix_gradient_start.setText(preset["prefix"][0])
+            self.prefix_gradient_end.setText(preset["prefix"][1])
+            
+            # Set action gradient
+            self.action_gradient_start.setText(preset["action"][0])
+            self.action_gradient_end.setText(preset["action"][1])
+            
+            # Enable gradient checkboxes
+            self.prefix_gradient_check.setChecked(True)
+            self.action_gradient_check.setChecked(True)
+            
+            # Update preview
+            self.update_preview()
+    
     def update_preview(self):
         """Update the preview label with current settings"""
         # Get current settings
@@ -882,8 +994,16 @@ class TextSettingsDialog(QDialog):
         bold_strength = self.bold_slider.value()
         use_uppercase = self.uppercase_check.isChecked()
         show_prefix = self.prefix_check.isChecked()
+        
+        # Color and gradient settings
         prefix_color = self.prefix_color_edit.text()
         action_color = self.action_color_edit.text()
+        use_prefix_gradient = self.prefix_gradient_check.isChecked()
+        prefix_gradient_start = self.prefix_gradient_start.text()
+        prefix_gradient_end = self.prefix_gradient_end.text()
+        use_action_gradient = self.action_gradient_check.isChecked()
+        action_gradient_start = self.action_gradient_start.text()
+        action_gradient_end = self.action_gradient_end.text()
         
         # Create font
         font = QFont(font_family, font_size)
@@ -898,28 +1018,56 @@ class TextSettingsDialog(QDialog):
         if use_uppercase:
             preview_text = preview_text.upper()
         
-        # Apply prefix if enabled
+        # Create HTML-based preview with colors and gradients
         if show_prefix:
-            display_text = f"A: {preview_text}"
-            self.preview_label.setText(display_text)
+            # Create prefix style
+            prefix_style = ""
+            if use_prefix_gradient:
+                # For simplicity, we'll use a background linear gradient as approximation
+                prefix_style = f"background: linear-gradient(to right, {prefix_gradient_start}, {prefix_gradient_end}); " + \
+                            "background-clip: text; -webkit-background-clip: text; color: transparent;"
+            else:
+                prefix_style = f"color: {prefix_color};"
             
-            # Apply colors using HTML
-            styled_text = f"<span style='color: {prefix_color}'>A: </span><span style='color: {action_color}'>{preview_text}</span>"
-            self.preview_label.setText(styled_text)
+            # Create action style
+            action_style = ""
+            if use_action_gradient:
+                action_style = f"background: linear-gradient(to right, {action_gradient_start}, {action_gradient_end}); " + \
+                            "background-clip: text; -webkit-background-clip: text; color: transparent;"
+            else:
+                action_style = f"color: {action_color};"
+            
+            # Create composite HTML
+            html = f"<div style='background-color: black; padding: 10px;'>" + \
+                f"<span style='{prefix_style}'>A: </span>" + \
+                f"<span style='{action_style}'>{preview_text}</span>" + \
+                "</div>"
+            
+            # Apply to preview label
+            self.preview_label.setText(html)
             self.preview_label.setTextFormat(Qt.RichText)
         else:
-            self.preview_label.setText(preview_text)
-            self.preview_label.setStyleSheet(f"background-color: black; color: {action_color};")
-            self.preview_label.setTextFormat(Qt.PlainText)
+            # Single text style without prefix
+            if use_action_gradient:
+                style = f"background: linear-gradient(to right, {action_gradient_start}, {action_gradient_end}); " + \
+                    "background-clip: text; -webkit-background-clip: text; color: transparent;"
+            else:
+                style = f"color: {action_color};"
+            
+            html = f"<div style='background-color: black; padding: 10px;'>" + \
+                f"<span style='{style}'>{preview_text}</span>" + \
+                "</div>"
+            
+            self.preview_label.setText(html)
+            self.preview_label.setTextFormat(Qt.RichText)
         
         # Apply shadow effect based on bold strength
-        if bold_strength == 0:
-            self.preview_label.setStyleSheet(f"background-color: black;")
+        if bold_strength > 0:
+            # Add text shadow to preview label
+            shadow_style = f"text-shadow: {bold_strength}px {bold_strength}px {bold_strength}px #000000;"
+            self.preview_label.setStyleSheet(f"background-color: black; {shadow_style}")
         else:
-            # Advanced shadow effect needs to be implemented in actual rendering
-            self.preview_label.setStyleSheet(
-                f"background-color: black; text-shadow: {bold_strength}px {bold_strength}px black;"
-            )
+            self.preview_label.setStyleSheet("background-color: black;")
 
     
     def get_current_settings(self):
@@ -932,7 +1080,13 @@ class TextSettingsDialog(QDialog):
             "show_button_prefix": self.prefix_check.isChecked(),
             "y_offset": self.offset_slider.value(),
             "prefix_color": self.prefix_color_edit.text(),
-            "action_color": self.action_color_edit.text()
+            "action_color": self.action_color_edit.text(),
+            "use_prefix_gradient": self.prefix_gradient_check.isChecked(),
+            "prefix_gradient_start": self.prefix_gradient_start.text(), 
+            "prefix_gradient_end": self.prefix_gradient_end.text(),
+            "use_action_gradient": self.action_gradient_check.isChecked(),
+            "action_gradient_start": self.action_gradient_start.text(),
+            "action_gradient_end": self.action_gradient_end.text()
         }
     
     def apply_settings(self):
@@ -1258,6 +1412,149 @@ def create_absolute_alignment_lines(self, x=None, y=None):
         guide_lines.append((0, y, canvas_width, y))
     
     self.show_alignment_guides(guide_lines)
+
+class GradientPrefixLabel(EnhancedLabel):
+    """A label that supports gradient text for prefix and action text"""
+    def __init__(self, text, parent=None, shadow_offset=2, settings=None):
+        super().__init__(text, parent, shadow_offset)
+        self.settings = settings or {}
+        self.prefix = ""
+        self.action = ""
+        self.parse_text(text)
+        
+        # Initialize gradient settings
+        self.use_prefix_gradient = self.settings.get("use_prefix_gradient", False)
+        self.use_action_gradient = self.settings.get("use_action_gradient", False)
+        self.prefix_gradient_start = QColor(self.settings.get("prefix_gradient_start", "#FFC107"))
+        self.prefix_gradient_end = QColor(self.settings.get("prefix_gradient_end", "#FF5722"))
+        self.action_gradient_start = QColor(self.settings.get("action_gradient_start", "#2196F3"))
+        self.action_gradient_end = QColor(self.settings.get("action_gradient_end", "#4CAF50"))
+    
+    def parse_text(self, text):
+        """Parse text into prefix and action components"""
+        if ": " in text:
+            parts = text.split(": ", 1)
+            self.prefix = parts[0]
+            self.action = parts[1]
+        else:
+            self.prefix = ""
+            self.action = text
+    
+    def paintEvent(self, event):
+        """Override paint event to draw text with gradients and colors"""
+        if not self.text():
+            return
+            
+        painter = QPainter(self)
+        painter.setRenderHint(QPainter.Antialiasing)
+        painter.setRenderHint(QPainter.TextAntialiasing)
+        
+        # Get current font metrics
+        metrics = QFontMetrics(self.font())
+        
+        # Draw shadow if enabled
+        if self.is_shadow_visible:
+            painter.setPen(self.shadow_color)
+            
+            if self.prefix and ": " in self.text():
+                # Calculate positions
+                x = 8  # Starting position with some padding
+                y = int((self.height() + metrics.ascent() - metrics.descent()) / 2)
+                
+                # Draw shadow for full text
+                painter.drawText(int(x + self.shadow_offset), int(y + self.shadow_offset), self.text())
+            else:
+                # Single color text with shadow
+                x = int((self.width() - metrics.boundingRect(self.text()).width()) / 2)
+                y = int((self.height() + metrics.ascent() - metrics.descent()) / 2)
+                painter.drawText(int(x + self.shadow_offset), int(y + self.shadow_offset), self.text())
+        
+        # Draw text
+        if self.prefix and ": " in self.text():
+            # Draw prefix with gradient or solid color
+            x = 8  # Starting position with some padding
+            y = int((self.height() + metrics.ascent() - metrics.descent()) / 2)
+            
+            # Calculate prefix rectangle for gradient
+            prefix_text = f"{self.prefix}: "
+            prefix_rect = metrics.boundingRect(prefix_text)
+            prefix_rect.moveLeft(int(x))
+            prefix_rect.moveTop(int(y - metrics.ascent()))
+            
+            if self.use_prefix_gradient and self.settings.get("use_prefix_gradient", False):
+                # Create linear gradient for prefix
+                gradient = QLinearGradient(
+                    prefix_rect.left(), prefix_rect.top(),
+                    prefix_rect.right(), prefix_rect.bottom()
+                )
+                gradient.setColorAt(0, self.prefix_gradient_start)
+                gradient.setColorAt(1, self.prefix_gradient_end)
+                
+                # Apply gradient
+                painter.setPen(QPen(QBrush(gradient), 1))
+            else:
+                # Solid color
+                prefix_color = QColor(self.settings.get("prefix_color", "#FFC107"))
+                painter.setPen(prefix_color)
+                
+            # Draw prefix text
+            painter.drawText(int(x), int(y), prefix_text)
+            
+            # Calculate width of prefix for positioning action text
+            prefix_width = metrics.boundingRect(prefix_text).width()
+            
+            # Calculate action rectangle for gradient
+            action_rect = metrics.boundingRect(self.action)
+            action_rect.moveLeft(int(x + prefix_width))
+            action_rect.moveTop(int(y - metrics.ascent()))
+            
+            # Draw action text with gradient or solid color
+            if self.use_action_gradient and self.settings.get("use_action_gradient", False):
+                # Create linear gradient for action
+                gradient = QLinearGradient(
+                    action_rect.left(), action_rect.top(),
+                    action_rect.right(), action_rect.bottom()
+                )
+                gradient.setColorAt(0, self.action_gradient_start)
+                gradient.setColorAt(1, self.action_gradient_end)
+                
+                # Apply gradient
+                painter.setPen(QPen(QBrush(gradient), 1))
+            else:
+                # Solid color
+                action_color = QColor(self.settings.get("action_color", "#FFFFFF"))
+                painter.setPen(action_color)
+                
+            # Draw action text
+            painter.drawText(int(x + prefix_width), int(y), self.action)
+        else:
+            # Draw single color or gradient text (centered)
+            x = int((self.width() - metrics.boundingRect(self.text()).width()) / 2)
+            y = int((self.height() + metrics.ascent() - metrics.descent()) / 2)
+            
+            # Calculate text rectangle for gradient
+            text_rect = metrics.boundingRect(self.text())
+            text_rect.moveLeft(int(x))
+            text_rect.moveTop(int(y - metrics.ascent()))
+            
+            if self.use_action_gradient and self.settings.get("use_action_gradient", False):
+                # Create linear gradient
+                gradient = QLinearGradient(
+                    text_rect.left(), text_rect.top(),
+                    text_rect.right(), text_rect.bottom()
+                )
+                gradient.setColorAt(0, self.action_gradient_start)
+                gradient.setColorAt(1, self.action_gradient_end)
+                
+                # Apply gradient
+                painter.setPen(QPen(QBrush(gradient), 1))
+            else:
+                # Solid color
+                action_color = QColor(self.settings.get("action_color", "#FFFFFF"))
+                painter.setPen(action_color)
+                
+            # Draw text
+            painter.drawText(int(x), int(y), self.text())
 
 class ColoredPrefixLabel(EnhancedLabel):
     """A label that supports different colors for prefix and action text"""
