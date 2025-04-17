@@ -3,6 +3,7 @@ import random
 import sys
 import json
 import traceback
+from PyQt5 import sip
 from PyQt5.QtWidgets import (QAction, QGridLayout, QMainWindow, QMenu, QMessageBox, QSizePolicy, QSpinBox, QVBoxLayout, QHBoxLayout, QWidget, 
                             QLabel, QPushButton, QFrame, QApplication, QDesktopWidget,
                             QDialog, QGroupBox, QCheckBox, QSlider, QComboBox)
@@ -157,6 +158,7 @@ class DraggableLabel(EnhancedLabel):
     def update_appearance(self):
         """Update appearance based on settings"""
         # If we have an initialized font, use it directly
+        from PyQt5.QtCore import Qt
         if self.initialized_font:
             self.setFont(self.initialized_font)
             print(f"DraggableLabel using initialized font: {self.initialized_font.family()}")
@@ -192,6 +194,7 @@ class DraggableLabel(EnhancedLabel):
     # Add this to mousePressEvent to store initial position for better resize calculations
     def mousePressEvent(self, event):
         """Handle mouse press events with better resize handling"""
+        from PyQt5.QtCore import Qt
         if event.button() == Qt.LeftButton:
             # Check if we're in the resize corner
             if self.is_in_resize_corner(event.pos()):
@@ -205,7 +208,8 @@ class DraggableLabel(EnhancedLabel):
         
     # Completely rewrite the mouseMoveEvent method to directly adjust text size
     def mouseMoveEvent(self, event):
-        """Handle mouse move events for dragging and resizing with alignment guides"""
+        """Enhanced mouseMoveEvent with improved snapping controls"""
+        from PyQt5.QtCore import Qt
         # Update cursor when hovering over resize corner
         if not self.dragging and not self.resizing:
             if self.is_in_resize_corner(event.pos()):
@@ -213,11 +217,16 @@ class DraggableLabel(EnhancedLabel):
             else:
                 self.setCursor(Qt.OpenHandCursor)
         
-        # Handle dragging with alignment
+        # Handle dragging with better snapping control
         if self.dragging:
-            new_pos = self.mapToParent(event.pos() - self.offset)
+            # Fix the import - QApplication is in QtWidgets, not QtCore
+            from PyQt5.QtWidgets import QApplication
             
-            # Initialize guide lines list
+            # Calculate new position based on mouse position
+            new_pos = self.mapToParent(event.pos() - self.offset)
+            original_pos = new_pos  # Store original position before any snapping
+            
+            # Initialize guide lines list and snapping variables
             guide_lines = []
             snapped = False
             parent = self.parent()
@@ -227,132 +236,147 @@ class DraggableLabel(EnhancedLabel):
                 canvas_width = parent.width()
                 canvas_height = parent.height()
                 
-                # Get label center coordinates
-                label_center_x = new_pos.x() + self.width() // 2
-                label_center_y = new_pos.y() + self.height() // 2
+                # Find reference to preview window
+                preview_window = self.find_preview_window_parent()
                 
-                # Screen center alignment
-                screen_center_x = canvas_width // 2
-                if abs(label_center_x - screen_center_x) < 10:
-                    new_pos.setX(int(screen_center_x - self.width() / 2))
-                    guide_lines.append((screen_center_x, 0, screen_center_x, canvas_height))
-                    snapped = True
-                
-                screen_center_y = canvas_height // 2
-                if abs(label_center_y - screen_center_y) < 10:
-                    new_pos.setY(int(screen_center_y - self.height() / 2))
-                    guide_lines.append((0, screen_center_y, canvas_width, screen_center_y))
-                    snapped = True
-                
-                # Direct access to preview window for showing guides
-                preview_window = None
-                current = parent
-                while current and not preview_window:
-                    if hasattr(current, 'show_alignment_guides'):
-                        preview_window = current
-                    else:
-                        current = current.parent() if hasattr(current, 'parent') else None
-                
-                # Check alignment with other text elements
-                if preview_window and hasattr(preview_window, 'control_labels'):
-                    for control_name, control_data in preview_window.control_labels.items():
-                        other_label = control_data.get('label')
-                        if other_label is self or not other_label or not other_label.isVisible():
-                            continue
-                        
-                        # Visual text alignment - check the first character's actual position
-                        # This will handle different letter shapes like 'L' vs 'H'
-                        if self.text() and other_label.text():
-                            # Get text metrics for both labels
-                            self_metrics = QFontMetrics(self.font())
-                            other_metrics = QFontMetrics(other_label.font())
-                            
-                            # Calculate the space before the first visible pixel in each text
-                            # This accounts for differences in letter shapes
-                            self_first_char = self.text()[0]
-                            other_first_char = other_label.text()[0]
-                            
-                            # Get the left bearing (space before the glyph)
-                            self_left_bearing = self_metrics.leftBearing(self_first_char)
-                            other_left_bearing = other_metrics.leftBearing(other_first_char)
-                            
-                            # Calculate actual visual start positions
-                            self_visual_start = new_pos.x() + self_left_bearing
-                            other_visual_start = other_label.pos().x() + other_left_bearing
-                            
-                            # Check if visual starts are close
-                            if abs(self_visual_start - other_visual_start) < 10:
-                                # Adjust position to align first visible pixel
-                                adjusted_x = other_visual_start - self_left_bearing
-                                new_pos.setX(int(adjusted_x))
-                                guide_lines.append((other_visual_start, 0, other_visual_start, canvas_height))
-                                snapped = True
-                
-                # Check alignment with logo
-                if preview_window and hasattr(preview_window, 'logo_label') and preview_window.logo_label and preview_window.logo_label.isVisible():
-                    logo = preview_window.logo_label
-                    
-                    # Logo center coordinates
-                    logo_center_x = logo.pos().x() + logo.width() // 2
-                    logo_center_y = logo.pos().y() + logo.height() // 2
-                    
-                    # Horizontal center alignment with logo
-                    if abs(label_center_x - logo_center_x) < 10:
-                        new_pos.setX(int(logo_center_x - self.width() / 2))
-                        guide_lines.append((logo_center_x, 0, logo_center_x, canvas_height))
-                        snapped = True
-                    
-                    # Vertical center alignment with logo
-                    if abs(label_center_y - logo_center_y) < 10:
-                        new_pos.setY(int(logo_center_y - self.height() / 2))
-                        guide_lines.append((0, logo_center_y, canvas_width, logo_center_y))
-                        snapped = True
-                    
-                    # Edge alignments with logo
-                    # Left edge - aligns text with left edge of logo
-                    if abs(new_pos.x() - logo.pos().x()) < 10:
-                        new_pos.setX(logo.pos().x())
-                        guide_lines.append((logo.pos().x(), 0, logo.pos().x(), canvas_height))
-                        snapped = True
-                    
-                    # Right edge
-                    label_right = new_pos.x() + self.width()
-                    logo_right = logo.pos().x() + logo.width()
-                    if abs(label_right - logo_right) < 10:
-                        new_pos.setX(int(logo_right - self.width()))
-                        guide_lines.append((logo_right, 0, logo_right, canvas_height))
-                        snapped = True
-                    
-                    # Top edge
-                    if abs(new_pos.y() - logo.pos().y()) < 10:
-                        new_pos.setY(logo.pos().y())
-                        guide_lines.append((0, logo.pos().y(), canvas_width, logo.pos().y()))
-                        snapped = True
-                    
-                    # Bottom edge
-                    label_bottom = new_pos.y() + self.height()
-                    logo_bottom = logo.pos().y() + logo.height()
-                    if abs(label_bottom - logo_bottom) < 10:
-                        new_pos.setY(int(logo_bottom - self.height()))
-                        guide_lines.append((0, logo_bottom, canvas_width, logo_bottom))
-                        snapped = True
-                
-                # Show or hide alignment guides
                 if preview_window:
+                    # Check if snapping is enabled and not overridden
+                    modifiers = QApplication.keyboardModifiers()
+                    disable_snap = bool(modifiers & Qt.ShiftModifier)  # Shift key disables snapping temporarily
+                    
+                    apply_snapping = (
+                        not disable_snap and
+                        hasattr(preview_window, 'snapping_enabled') and
+                        preview_window.snapping_enabled
+                    )
+                    
+                    # Get snap distance if available
+                    snap_distance = getattr(preview_window, 'snap_distance', 15)
+                    
+                    if apply_snapping:
+                        # Get label center coordinates
+                        label_center_x = new_pos.x() + self.width() // 2
+                        label_center_y = new_pos.y() + self.height() // 2
+                        
+                        # 1. Absolute grid position snapping (if enabled)
+                        if (hasattr(preview_window, 'snap_to_grid') and preview_window.snap_to_grid and
+                            hasattr(preview_window, 'grid_x_start') and hasattr(preview_window, 'grid_y_start')):
+                            
+                            grid_x_start = preview_window.grid_x_start
+                            grid_x_step = preview_window.grid_x_step
+                            
+                            # Snap to column X positions
+                            for col in range(preview_window.grid_columns):
+                                grid_x = grid_x_start + (col * grid_x_step)
+                                if abs(new_pos.x() - grid_x) < snap_distance:
+                                    new_pos.setX(grid_x)
+                                    guide_lines.append((grid_x, 0, grid_x, canvas_height))
+                                    snapped = True
+                                    break
+                            
+                            # Snap to row Y positions
+                            grid_y_start = preview_window.grid_y_start
+                            grid_y_step = preview_window.grid_y_step
+                            
+                            for row in range(preview_window.grid_rows):
+                                grid_y = grid_y_start + (row * grid_y_step)
+                                if abs(new_pos.y() - grid_y) < snap_distance:
+                                    new_pos.setY(grid_y)
+                                    guide_lines.append((0, grid_y, canvas_width, grid_y))
+                                    snapped = True
+                                    break
+                        
+                        # 2. Screen center alignment (if enabled)
+                        if hasattr(preview_window, 'snap_to_screen_center') and preview_window.snap_to_screen_center:
+                            # Horizontal center
+                            screen_center_x = canvas_width // 2
+                            if abs(label_center_x - screen_center_x) < snap_distance:
+                                new_pos.setX(int(screen_center_x - self.width() / 2))
+                                guide_lines.append((screen_center_x, 0, screen_center_x, canvas_height))
+                                snapped = True
+                            
+                            # Vertical center
+                            screen_center_y = canvas_height // 2
+                            if abs(label_center_y - screen_center_y) < snap_distance:
+                                new_pos.setY(int(screen_center_y - self.height() / 2))
+                                guide_lines.append((0, screen_center_y, canvas_width, screen_center_y))
+                                snapped = True
+                        
+                        # 3. Check alignment with other controls (if enabled)
+                        if (hasattr(preview_window, 'snap_to_controls') and preview_window.snap_to_controls and
+                            hasattr(preview_window, 'control_labels')):
+                            
+                            for control_name, control_data in preview_window.control_labels.items():
+                                other_label = control_data.get('label')
+                                if other_label is self or not other_label or not other_label.isVisible():
+                                    continue
+                                
+                                # X-position alignment - snap to left edge of other labels
+                                other_x = other_label.pos().x()
+                                if abs(new_pos.x() - other_x) < snap_distance:
+                                    new_pos.setX(other_x)
+                                    guide_lines.append((other_x, 0, other_x, canvas_height))
+                                    snapped = True
+                                
+                                # Y-position alignment - snap to top edge of other labels
+                                other_y = other_label.pos().y()
+                                if abs(new_pos.y() - other_y) < snap_distance:
+                                    new_pos.setY(other_y)
+                                    guide_lines.append((0, other_y, canvas_width, other_y))
+                                    snapped = True
+                        
+                        # 4. Check alignment with logo (if enabled)
+                        if (hasattr(preview_window, 'snap_to_logo') and preview_window.snap_to_logo and
+                            hasattr(preview_window, 'logo_label') and preview_window.logo_label and
+                            preview_window.logo_label.isVisible()):
+                            
+                            logo = preview_window.logo_label
+                            
+                            # Left edge alignment (absolute X position)
+                            logo_left = logo.pos().x()
+                            if abs(new_pos.x() - logo_left) < snap_distance:
+                                new_pos.setX(logo_left)
+                                guide_lines.append((logo_left, 0, logo_left, canvas_height))
+                                snapped = True
+                            
+                            # Top edge alignment
+                            logo_top = logo.pos().y()
+                            if abs(new_pos.y() - logo_top) < snap_distance:
+                                new_pos.setY(logo_top)
+                                guide_lines.append((0, logo_top, canvas_width, logo_top))
+                                snapped = True
+                    
+                    # 5. Calculate distance indicators for display
+                    # Show dynamic measurement guides
+                    if hasattr(preview_window, 'show_measurement_guides'):
+                        preview_window.show_measurement_guides(
+                            new_pos.x(), new_pos.y(), 
+                            self.width(), self.height()
+                        )
+
+                    # Add snapping status info if needed
+                    if disable_snap and hasattr(preview_window, 'show_position_indicator'):
+                        preview_window.show_position_indicator(
+                            new_pos.x(), new_pos.y(), 
+                            "Snapping temporarily disabled (Shift)"
+                        )
+                    
+                    # Show alignment guides if snapped
                     if snapped and guide_lines and hasattr(preview_window, 'show_alignment_guides'):
                         preview_window.show_alignment_guides(guide_lines)
                     elif hasattr(preview_window, 'hide_alignment_guides'):
                         preview_window.hide_alignment_guides()
-            
-            # Apply the move
-            self.move(new_pos)
-            
-            # Notify the parent to update shadow label if it exists
-            if hasattr(self.parent(), "update_shadow_position"):
-                self.parent().update_shadow_position(self)
+                
+                # Apply the move
+                self.move(new_pos)
+                
+                # Notify the parent to update shadow label if it exists
+                if hasattr(parent, "update_shadow_position"):
+                    parent.update_shadow_position(self)
         
         # Handle resizing with direct font size control
         elif self.resizing:
+            # [Keep existing resizing code from the original implementation]
             self.was_resizing = True
             
             # Calculate the relative change based on mouse movement
@@ -917,6 +941,310 @@ class TextSettingsDialog(QDialog):
 Modifications to the PreviewWindow class in mame_controls_preview.py
 """
 
+class GridSettingsDialog(QDialog):
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self.setWindowTitle("Alignment Grid Settings")
+        self.resize(350, 300)
+        
+        # Store reference to preview window
+        self.preview = parent
+        
+        layout = QVBoxLayout(self)
+        
+        # Grid Origin group
+        origin_group = QGroupBox("Grid Origin")
+        origin_layout = QVBoxLayout(origin_group)
+        
+        # X Start position
+        x_start_layout = QHBoxLayout()
+        x_start_label = QLabel("X Start Position:")
+        self.x_start_spin = QSpinBox()
+        self.x_start_spin.setRange(0, 1000)
+        self.x_start_spin.setValue(parent.grid_x_start)
+        x_start_layout.addWidget(x_start_label)
+        x_start_layout.addWidget(self.x_start_spin)
+        origin_layout.addLayout(x_start_layout)
+        
+        # Y Start position
+        y_start_layout = QHBoxLayout()
+        y_start_label = QLabel("Y Start Position:")
+        self.y_start_spin = QSpinBox()
+        self.y_start_spin.setRange(0, 1000)
+        self.y_start_spin.setValue(parent.grid_y_start)
+        y_start_layout.addWidget(y_start_label)
+        y_start_layout.addWidget(self.y_start_spin)
+        origin_layout.addLayout(y_start_layout)
+        
+        layout.addWidget(origin_group)
+        
+        # Grid Spacing group
+        spacing_group = QGroupBox("Grid Spacing")
+        spacing_layout = QVBoxLayout(spacing_group)
+        
+        # X Step
+        x_step_layout = QHBoxLayout()
+        x_step_label = QLabel("X Step Size:")
+        self.x_step_spin = QSpinBox()
+        self.x_step_spin.setRange(20, 500)
+        self.x_step_spin.setValue(parent.grid_x_step)
+        x_step_layout.addWidget(x_step_label)
+        x_step_layout.addWidget(self.x_step_spin)
+        spacing_layout.addLayout(x_step_layout)
+        
+        # Y Step
+        y_step_layout = QHBoxLayout()
+        y_step_label = QLabel("Y Step Size:")
+        self.y_step_spin = QSpinBox()
+        self.y_step_spin.setRange(20, 500)
+        self.y_step_spin.setValue(parent.grid_y_step)
+        y_step_layout.addWidget(y_step_label)
+        y_step_layout.addWidget(self.y_step_spin)
+        spacing_layout.addLayout(y_step_layout)
+        
+        layout.addWidget(spacing_group)
+        
+        # Grid Size group
+        size_group = QGroupBox("Grid Size")
+        size_layout = QVBoxLayout(size_group)
+        
+        # Columns
+        columns_layout = QHBoxLayout()
+        columns_label = QLabel("Number of Columns:")
+        self.columns_spin = QSpinBox()
+        self.columns_spin.setRange(1, 10)
+        self.columns_spin.setValue(parent.grid_columns)
+        columns_layout.addWidget(columns_label)
+        columns_layout.addWidget(self.columns_spin)
+        size_layout.addLayout(columns_layout)
+        
+        # Rows
+        rows_layout = QHBoxLayout()
+        rows_label = QLabel("Number of Rows:")
+        self.rows_spin = QSpinBox()
+        self.rows_spin.setRange(1, 20)
+        self.rows_spin.setValue(parent.grid_rows)
+        rows_layout.addWidget(rows_label)
+        rows_layout.addWidget(self.rows_spin)
+        size_layout.addLayout(rows_layout)
+        
+        layout.addWidget(size_group)
+        
+        # Buttons
+        button_layout = QHBoxLayout()
+        
+        apply_button = QPushButton("Apply")
+        apply_button.clicked.connect(self.apply_settings)
+        
+        ok_button = QPushButton("OK")
+        ok_button.clicked.connect(self.accept_settings)
+        
+        cancel_button = QPushButton("Cancel")
+        cancel_button.clicked.connect(self.reject)
+        
+        button_layout.addWidget(apply_button)
+        button_layout.addStretch()
+        button_layout.addWidget(ok_button)
+        button_layout.addWidget(cancel_button)
+        
+        layout.addLayout(button_layout)
+    
+    def apply_settings(self):
+        """Apply grid settings to preview window"""
+        self.preview.grid_x_start = self.x_start_spin.value()
+        self.preview.grid_y_start = self.y_start_spin.value()
+        self.preview.grid_x_step = self.x_step_spin.value()
+        self.preview.grid_y_step = self.y_step_spin.value()
+        self.preview.grid_columns = self.columns_spin.value()
+        self.preview.grid_rows = self.rows_spin.value()
+        
+        # Update the grid if it's visible
+        if self.preview.alignment_grid_visible:
+            self.preview.show_alignment_grid()
+        
+        # Save settings to a file
+        self.preview.save_grid_settings()
+    
+    def accept_settings(self):
+        """Apply settings and close dialog"""
+        self.apply_settings()
+        self.accept()
+
+        # Store the dialog class for later use
+        self.GridSettingsDialog = GridSettingsDialog
+
+        # Add a button to open grid settings
+        if hasattr(self, 'bottom_row') and not hasattr(self, 'grid_settings_button'):
+            from PyQt5.QtWidgets import QPushButton
+            
+            button_style = """
+                QPushButton {
+                    background-color: #404050;
+                    color: white;
+                    border: none;
+                    border-radius: 4px;
+                    padding: 6px 10px;
+                    font-weight: bold;
+                    font-size: 12px;
+                    min-width: 80px;
+                }
+                QPushButton:hover {
+                    background-color: #555565;
+                }
+                QPushButton:pressed {
+                    background-color: #303040;
+                }
+            """
+            
+            self.grid_settings_button = QPushButton("Grid Settings")
+            self.grid_settings_button.clicked.connect(self.show_grid_settings)
+            self.grid_settings_button.setStyleSheet(button_style)
+            self.bottom_row.addWidget(self.grid_settings_button)
+
+    def show_grid_settings(self):
+        """Show the grid settings dialog"""
+        if hasattr(self, 'GridSettingsDialog'):
+            dialog = self.GridSettingsDialog(self)
+            dialog.exec_()
+
+    def save_grid_settings(self):
+        """Save grid settings to file"""
+        try:
+            import os
+            import json
+            
+            # Create preview directory if it doesn't exist
+            preview_dir = os.path.join(self.mame_dir, "preview")
+            os.makedirs(preview_dir, exist_ok=True)
+            
+            # Create settings object
+            settings = {
+                "grid_x_start": self.grid_x_start,
+                "grid_y_start": self.grid_y_start,
+                "grid_x_step": self.grid_x_step,
+                "grid_y_step": self.grid_y_step,
+                "grid_columns": self.grid_columns,
+                "grid_rows": self.grid_rows
+            }
+            
+            # Save to global settings file
+            settings_file = os.path.join(preview_dir, "grid_settings.json")
+            with open(settings_file, 'w') as f:
+                json.dump(settings, f)
+            
+            print(f"Saved grid settings to {settings_file}: {settings}")
+            return True
+        except Exception as e:
+            print(f"Error saving grid settings: {e}")
+            import traceback
+            traceback.print_exc()
+            return False
+
+    def load_grid_settings(self):
+        """Load grid settings from file"""
+        try:
+            import os
+            import json
+            
+            # Path to settings file
+            preview_dir = os.path.join(self.mame_dir, "preview")
+            settings_file = os.path.join(preview_dir, "grid_settings.json")
+            
+            # Check if file exists
+            if os.path.exists(settings_file):
+                with open(settings_file, 'r') as f:
+                    settings = json.load(f)
+                
+                # Apply settings
+                self.grid_x_start = settings.get("grid_x_start", 200)
+                self.grid_y_start = settings.get("grid_y_start", 100)
+                self.grid_x_step = settings.get("grid_x_step", 300)
+                self.grid_y_step = settings.get("grid_y_step", 60)
+                self.grid_columns = settings.get("grid_columns", 3)
+                self.grid_rows = settings.get("grid_rows", 8)
+                
+                print(f"Loaded grid settings from {settings_file}")
+                return True
+        except Exception as e:
+            print(f"Error loading grid settings: {e}")
+            import traceback
+            traceback.print_exc()
+        
+        return False
+
+# Also add the position indicator class
+class PositionIndicator(QLabel):
+    """Label that displays position information during dragging"""
+    def __init__(self, parent):
+        super().__init__(parent)
+        self.setStyleSheet("""
+            background-color: rgba(0, 0, 0, 180);
+            color: #00FFFF;
+            border: 1px solid #00FFFF;
+            border-radius: 4px;
+            padding: 4px 8px;
+            font-family: 'Consolas', monospace;
+            font-size: 12px;
+        """)
+        self.setAlignment(Qt.AlignCenter)
+        self.setFixedSize(200, 45)  # Enough space for multiple lines of text
+        self.hide()
+
+# And the position indicator methods
+def show_position_indicator(self, x, y, extra_info=None):
+    """Show a position indicator with coordinates"""
+    if not hasattr(self, 'position_indicator'):
+        self.position_indicator = PositionIndicator(self.canvas)
+    
+    # Format the text with X and Y coordinates
+    text = f"X: {x}px, Y: {y}px"
+    
+    # Add extra info like distance if provided
+    if extra_info:
+        text += f"\n{extra_info}"
+    
+    self.position_indicator.setText(text)
+    
+    # Position the indicator near the mouse but ensure it's visible
+    indicator_x = min(x + 20, self.canvas.width() - self.position_indicator.width() - 10)
+    indicator_y = max(y - 50, 10)  # Above the cursor, but not off-screen
+    
+    self.position_indicator.move(indicator_x, indicator_y)
+    self.position_indicator.show()
+    self.position_indicator.raise_()
+    
+    # Auto-hide after a delay
+    if hasattr(self, 'indicator_timer'):
+        self.indicator_timer.stop()
+    else:
+        from PyQt5.QtCore import QTimer
+        self.indicator_timer = QTimer(self)
+        self.indicator_timer.setSingleShot(True)
+        self.indicator_timer.timeout.connect(lambda: self.position_indicator.hide())
+    
+    self.indicator_timer.start(2000)  # Hide after 2 seconds
+
+def hide_position_indicator(self):
+    """Hide the position indicator"""
+    if hasattr(self, 'position_indicator'):
+        self.position_indicator.hide()
+
+def create_absolute_alignment_lines(self, x=None, y=None):
+    """Create absolute alignment lines at specified X or Y positions"""
+    guide_lines = []
+    canvas_width = self.canvas.width()
+    canvas_height = self.canvas.height()
+    
+    if x is not None:
+        # Create vertical guide line at fixed X
+        guide_lines.append((x, 0, x, canvas_height))
+    
+    if y is not None:
+        # Create horizontal guide line at fixed Y
+        guide_lines.append((0, y, canvas_width, y))
+    
+    self.show_alignment_guides(guide_lines)
+
 class PreviewWindow(QMainWindow):
     """Window for displaying game controls preview"""
     def __init__(self, rom_name, game_data, mame_dir, parent=None, hide_buttons=False, clean_mode=False, font_registry=None):
@@ -1032,6 +1360,9 @@ class PreviewWindow(QMainWindow):
             #QTimer.singleShot(200, self.load_and_register_fonts)
             QTimer.singleShot(300, self.force_resize_all_labels)
 
+            # Add this line at the end of __init__, just before self.setVisible(True)
+            self.enhance_preview_window_init()
+
             self.setVisible(True)  # Now show the fully prepared window
             
         except Exception as e:
@@ -1041,6 +1372,589 @@ class PreviewWindow(QMainWindow):
             QMessageBox.critical(self, "Error", f"Error initializing preview: {e}")
             self.close()
 
+    def show_measurement_guides(self, x, y, width, height):
+        """Show dynamic measurement guides with pixel distances"""
+        # Remove any existing measurement guides
+        self.hide_measurement_guides()
+        
+        # Store current element position
+        if not hasattr(self, 'measurement_guides'):
+            self.measurement_guides = []
+        
+        from PyQt5.QtWidgets import QLabel, QFrame
+        from PyQt5.QtCore import Qt
+        from PyQt5.QtGui import QColor, QPalette
+        
+        # Get canvas dimensions
+        canvas_width = self.canvas.width()
+        canvas_height = self.canvas.height()
+        
+        # 1. Create vertical guide at element's X position
+        v_line = QFrame(self.canvas)
+        v_line.setFrameShape(QFrame.VLine)
+        v_line.setFixedWidth(1)
+        v_line.setGeometry(x, 0, 1, canvas_height)
+        v_line.setStyleSheet("background-color: rgba(255, 100, 100, 180);")  # Red-ish
+        v_line.raise_()
+        v_line.show()
+        self.measurement_guides.append(v_line)
+        
+        # 2. Create horizontal guide at element's Y position
+        h_line = QFrame(self.canvas)
+        h_line.setFrameShape(QFrame.HLine)
+        h_line.setFixedHeight(1)
+        h_line.setGeometry(0, y, canvas_width, 1)
+        h_line.setStyleSheet("background-color: rgba(255, 100, 100, 180);")  # Red-ish
+        h_line.raise_()
+        h_line.show()
+        self.measurement_guides.append(h_line)
+        
+        # 3. Create distance indicator for X position (from left edge)
+        x_indicator = QLabel(f"{x}px", self.canvas)
+        x_indicator.setStyleSheet("""
+            background-color: rgba(255, 100, 100, 200);
+            color: white;
+            padding: 2px 6px;
+            border-radius: 4px;
+            font-family: 'Arial';
+            font-size: 10px;
+        """)
+        x_indicator.adjustSize()
+
+        # Position horizontally centered, just BELOW the element (e.g., 10px below)
+        x_indicator.move(x - x_indicator.width() // 2, y + height + 8)
+        x_indicator.raise_()
+        x_indicator.show()
+        self.measurement_guides.append(x_indicator)
+
+        # 4. Create distance indicator for Y position (from top edge)
+        y_indicator = QLabel(f"{y}px", self.canvas)
+        y_indicator.setStyleSheet("""
+            background-color: rgba(255, 100, 100, 200);
+            color: white;
+            padding: 2px 6px;
+            border-radius: 4px;
+            font-family: 'Arial';
+            font-size: 10px;
+        """)
+        y_indicator.adjustSize()
+
+        # Position vertically centered, just to the RIGHT of the element (e.g., 10px to the right)
+        y_indicator.move(x + width + 8, y - y_indicator.height() // 2)
+        y_indicator.raise_()
+        y_indicator.show()
+        self.measurement_guides.append(y_indicator)
+
+        
+        # 5. Create distance indicators from grid origin (if available)
+        if hasattr(self, 'grid_x_start') and hasattr(self, 'grid_y_start'):
+            x_offset = x - self.grid_x_start
+            y_offset = y - self.grid_y_start
+            
+            if x_offset != 0:  # Only show if there's an actual offset
+                offset_x_indicator = QLabel(f"Offset: {x_offset}px", self.canvas)
+                offset_x_indicator.setStyleSheet("""
+                    background-color: rgba(100, 100, 255, 200);
+                    color: white;
+                    padding: 2px 6px;
+                    border-radius: 4px;
+                    font-family: 'Arial';
+                    font-size: 10px;
+                """)
+                offset_x_indicator.adjustSize()
+                offset_x_indicator.move(self.grid_x_start + x_offset//2 - offset_x_indicator.width()//2, 30)
+                offset_x_indicator.raise_()
+                offset_x_indicator.show()
+                self.measurement_guides.append(offset_x_indicator)
+            
+            if y_offset != 0:  # Only show if there's an actual offset
+                offset_y_indicator = QLabel(f"Offset: {y_offset}px", self.canvas)
+                offset_y_indicator.setStyleSheet("""
+                    background-color: rgba(100, 100, 255, 200);
+                    color: white;
+                    padding: 2px 6px;
+                    border-radius: 4px;
+                    font-family: 'Arial';
+                    font-size: 10px;
+                """)
+                offset_y_indicator.adjustSize()
+                offset_y_indicator.move(30, self.grid_y_start + y_offset//2 - offset_y_indicator.height()//2)
+                offset_y_indicator.raise_()
+                offset_y_indicator.show()
+                self.measurement_guides.append(offset_y_indicator)
+
+    def hide_measurement_guides(self):
+        """Hide all measurement guides"""
+        if hasattr(self, 'measurement_guides'):
+            for guide in self.measurement_guides:
+                try:
+                    if guide and not sip.isdeleted(guide):
+                        guide.deleteLater()
+                except Exception as e:
+                    print(f"Warning: Failed to delete guide: {e}")
+            self.measurement_guides = []
+
+
+    
+    # 5. Add integration to the PreviewWindow initialization
+    def enhance_preview_window_init(self):
+        """Call this in PreviewWindow.__init__ after setting up controls"""
+        # Set up alignment features - grid, snapping, etc.
+        self.setup_alignment_features()
+        self.setup_snapping_controls()
+        
+        # Load any saved settings
+        self.load_grid_settings()
+        self.load_snapping_settings()
+        
+        # Add a shortcut text to inform users about Shift key
+        from PyQt5.QtWidgets import QLabel
+        
+        self.shortcuts_label = QLabel("Hold Shift to temporarily disable snapping", self)
+        self.shortcuts_label.setStyleSheet("""
+            background-color: rgba(0, 0, 0, 180);
+            color: white;
+            padding: 5px;
+            border-radius: 3px;
+        """)
+        self.shortcuts_label.adjustSize()
+        self.shortcuts_label.move(10, self.height() - self.shortcuts_label.height() - 10)
+        self.shortcuts_label.show()
+        
+        # Hide after a delay
+        from PyQt5.QtCore import QTimer
+        QTimer.singleShot(5000, lambda: self.shortcuts_label.hide())
+    
+    # 1. Add these properties to PreviewWindow's initialization or setup_alignment_features method
+    def setup_snapping_controls(self):
+        """Initialize snapping control settings"""
+        # Default snapping settings
+        # Add this at the beginning of the method
+        print(f"Has bottom_row: {hasattr(self, 'bottom_row')}")
+        print("Setting up snapping controls")
+        
+        # Then add this after creating the button
+        if hasattr(self, 'snap_button'):
+            print(f"Snap button created and added to layout: {self.snap_button.text()}")
+        else:
+            print("Failed to create snap button!")
+        self.snapping_enabled = True
+        self.snap_distance = 15
+        self.snap_to_grid = True
+        self.snap_to_screen_center = True
+        self.snap_to_controls = True
+        self.snap_to_logo = True
+        
+        # Load any saved snapping settings
+        self.load_snapping_settings()
+        
+        # Add toggle button to the toolbar if we have button rows
+        if hasattr(self, 'bottom_row') and not hasattr(self, 'snap_button'):
+            from PyQt5.QtWidgets import QPushButton
+            
+            button_style = """
+                QPushButton {
+                    background-color: #404050;
+                    color: white;
+                    border: none;
+                    border-radius: 4px;
+                    padding: 6px 10px;
+                    font-weight: bold;
+                    font-family: 'Segoe UI', Arial, sans-serif;
+                    font-size: 12px;
+                    min-width: 80px;
+                }
+                QPushButton:hover {
+                    background-color: #555565;
+                }
+                QPushButton:pressed {
+                    background-color: #303040;
+                }
+            """
+            
+            self.snap_button = QPushButton("Disable Snap" if self.snapping_enabled else "Enable Snap")
+            self.snap_button.clicked.connect(self.toggle_snapping)
+            self.snap_button.setStyleSheet(button_style)
+            self.bottom_row.addWidget(self.snap_button)
+            
+            # Add a button for snapping settings
+            self.snap_settings_button = QPushButton("Snap Settings")
+            self.snap_settings_button.clicked.connect(self.show_snapping_settings)
+            self.snap_settings_button.setStyleSheet(button_style)
+            self.bottom_row.addWidget(self.snap_settings_button)
+
+    # 2. Add these methods to PreviewWindow for controlling snapping
+    def toggle_snapping(self):
+        """Toggle snapping on/off"""
+        self.snapping_enabled = not self.snapping_enabled
+        
+        # Update button text
+        if hasattr(self, 'snap_button'):
+            self.snap_button.setText("Enable Snap" if not self.snapping_enabled else "Disable Snap")
+        
+        # Save the setting
+        self.save_snapping_settings()
+        
+        print(f"Snapping {'enabled' if self.snapping_enabled else 'disabled'}")
+
+    def save_snapping_settings(self):
+        """Save snapping settings to file"""
+        try:
+            import os
+            import json
+            
+            # Create preview directory if it doesn't exist
+            preview_dir = os.path.join(self.mame_dir, "preview")
+            os.makedirs(preview_dir, exist_ok=True)
+            
+            # Create settings object
+            settings = {
+                "snapping_enabled": self.snapping_enabled,
+                "snap_distance": self.snap_distance,
+                "snap_to_grid": self.snap_to_grid,
+                "snap_to_screen_center": self.snap_to_screen_center, 
+                "snap_to_controls": self.snap_to_controls,
+                "snap_to_logo": self.snap_to_logo
+            }
+            
+            # Save to global settings file
+            settings_file = os.path.join(preview_dir, "snapping_settings.json")
+            with open(settings_file, 'w') as f:
+                json.dump(settings, f)
+            
+            print(f"Saved snapping settings: {settings}")
+            return True
+        except Exception as e:
+            print(f"Error saving snapping settings: {e}")
+            import traceback
+            traceback.print_exc()
+            return False
+
+    def load_snapping_settings(self):
+        """Load snapping settings from file"""
+        try:
+            import os
+            import json
+            
+            # Path to settings file
+            preview_dir = os.path.join(self.mame_dir, "preview")
+            settings_file = os.path.join(preview_dir, "snapping_settings.json")
+            
+            # Check if file exists
+            if os.path.exists(settings_file):
+                with open(settings_file, 'r') as f:
+                    settings = json.load(f)
+                
+                # Apply settings
+                self.snapping_enabled = settings.get("snapping_enabled", True)
+                self.snap_distance = settings.get("snap_distance", 15)
+                self.snap_to_grid = settings.get("snap_to_grid", True)
+                self.snap_to_screen_center = settings.get("snap_to_screen_center", True)
+                self.snap_to_controls = settings.get("snap_to_controls", True)
+                self.snap_to_logo = settings.get("snap_to_logo", True)
+                
+                print(f"Loaded snapping settings")
+                return True
+        except Exception as e:
+            print(f"Error loading snapping settings: {e}")
+            import traceback
+            traceback.print_exc()
+        
+        return False
+
+    # 3. Add a Snapping Settings dialog
+    def show_snapping_settings(self):
+        """Show dialog for snapping settings"""
+        from PyQt5.QtWidgets import (QDialog, QVBoxLayout, QHBoxLayout, QLabel, 
+                                    QPushButton, QSpinBox, QCheckBox, QGroupBox)
+        
+        class SnappingSettingsDialog(QDialog):
+            def __init__(self, parent=None):
+                super().__init__(parent)
+                self.setWindowTitle("Snapping Settings")
+                self.resize(350, 300)
+                
+                # Store reference to preview window
+                self.preview = parent
+                
+                layout = QVBoxLayout(self)
+                
+                # Main toggle
+                self.enable_snap = QCheckBox("Enable Snapping")
+                self.enable_snap.setChecked(parent.snapping_enabled)
+                layout.addWidget(self.enable_snap)
+                
+                # Snap distance
+                distance_layout = QHBoxLayout()
+                distance_label = QLabel("Snap Distance (pixels):")
+                self.distance_spin = QSpinBox()
+                self.distance_spin.setRange(1, 30)
+                self.distance_spin.setValue(parent.snap_distance)
+                self.distance_spin.setToolTip("Distance in pixels where snapping activates")
+                distance_layout.addWidget(distance_label)
+                distance_layout.addWidget(self.distance_spin)
+                layout.addLayout(distance_layout)
+                
+                # Snap types group
+                snap_types_group = QGroupBox("Snap Types")
+                snap_types_layout = QVBoxLayout(snap_types_group)
+                
+                self.snap_to_grid = QCheckBox("Snap to Grid")
+                self.snap_to_grid.setChecked(parent.snap_to_grid)
+                snap_types_layout.addWidget(self.snap_to_grid)
+                
+                self.snap_to_screen_center = QCheckBox("Snap to Screen Center")
+                self.snap_to_screen_center.setChecked(parent.snap_to_screen_center)
+                snap_types_layout.addWidget(self.snap_to_screen_center)
+                
+                self.snap_to_controls = QCheckBox("Snap to Other Controls")
+                self.snap_to_controls.setChecked(parent.snap_to_controls)
+                snap_types_layout.addWidget(self.snap_to_controls)
+                
+                self.snap_to_logo = QCheckBox("Snap to Logo")
+                self.snap_to_logo.setChecked(parent.snap_to_logo)
+                snap_types_layout.addWidget(self.snap_to_logo)
+                
+                layout.addWidget(snap_types_group)
+                
+                # Buttons
+                button_layout = QHBoxLayout()
+                
+                apply_button = QPushButton("Apply")
+                apply_button.clicked.connect(self.apply_settings)
+                
+                ok_button = QPushButton("OK")
+                ok_button.clicked.connect(self.accept_settings)
+                
+                cancel_button = QPushButton("Cancel")
+                cancel_button.clicked.connect(self.reject)
+                
+                button_layout.addWidget(apply_button)
+                button_layout.addStretch()
+                button_layout.addWidget(ok_button)
+                button_layout.addWidget(cancel_button)
+                
+                layout.addLayout(button_layout)
+            
+            def apply_settings(self):
+                """Apply settings to preview window"""
+                self.preview.snapping_enabled = self.enable_snap.isChecked()
+                self.preview.snap_distance = self.distance_spin.value()
+                self.preview.snap_to_grid = self.snap_to_grid.isChecked()
+                self.preview.snap_to_screen_center = self.snap_to_screen_center.isChecked()
+                self.preview.snap_to_controls = self.snap_to_controls.isChecked()
+                self.preview.snap_to_logo = self.snap_to_logo.isChecked()
+                
+                # Update snap button text
+                if hasattr(self.preview, 'snap_button'):
+                    self.preview.snap_button.setText(
+                        "Disable Snap" if self.preview.snapping_enabled else "Enable Snap"
+                    )
+                
+                # Save settings
+                self.preview.save_snapping_settings()
+            
+            def accept_settings(self):
+                """Apply settings and close dialog"""
+                self.apply_settings()
+                self.accept()
+        
+        # Create and show the dialog
+        dialog = SnappingSettingsDialog(self)
+        dialog.exec_()
+    
+    def load_grid_settings(self):
+        """Load grid settings from file"""
+        try:
+            import os
+            import json
+            
+            # Path to settings file
+            preview_dir = os.path.join(self.mame_dir, "preview")
+            settings_file = os.path.join(preview_dir, "grid_settings.json")
+            
+            # Check if file exists
+            if os.path.exists(settings_file):
+                with open(settings_file, 'r') as f:
+                    settings = json.load(f)
+                
+                # Apply settings
+                self.grid_x_start = settings.get("grid_x_start", 200)
+                self.grid_y_start = settings.get("grid_y_start", 100)
+                self.grid_x_step = settings.get("grid_x_step", 300)
+                self.grid_y_step = settings.get("grid_y_step", 60)
+                self.grid_columns = settings.get("grid_columns", 3)
+                self.grid_rows = settings.get("grid_rows", 8)
+                
+                print(f"Loaded grid settings from {settings_file}")
+                return True
+        except Exception as e:
+            print(f"Error loading grid settings: {e}")
+            import traceback
+            traceback.print_exc()
+        
+        return False
+    
+    # Add this method to PreviewWindow class
+    def setup_alignment_features(self):
+        """Set up alignment features in the PreviewWindow"""
+        # Initialize the alignment grid system
+        self.initialize_alignment_grid()
+        
+        # Add the grid toggle button to the floating control panel
+        if hasattr(self, 'bottom_row') and not hasattr(self, 'grid_button'):
+            from PyQt5.QtWidgets import QPushButton
+            from PyQt5.QtCore import Qt
+            
+            button_style = """
+                QPushButton {
+                    background-color: #404050;
+                    color: white;
+                    border: none;
+                    border-radius: 4px;
+                    padding: 6px 10px;
+                    font-weight: bold;
+                    font-size: 12px;
+                    min-width: 80px;
+                }
+                QPushButton:hover {
+                    background-color: #555565;
+                }
+                QPushButton:pressed {
+                    background-color: #303040;
+                }
+            """
+            
+            self.grid_button = QPushButton("Show Grid")
+            self.grid_button.clicked.connect(self.toggle_alignment_grid)
+            self.grid_button.setStyleSheet(button_style)
+            self.bottom_row.addWidget(self.grid_button)
+            
+        # Create a edit grid settings dialog
+        self.create_grid_settings_dialog()
+
+    def initialize_alignment_grid(self):
+        """Initialize the alignment grid system"""
+        self.alignment_grid_visible = False
+        self.grid_x_start = 200  # Default first column X-position
+        self.grid_x_step = 300   # Default X-spacing between columns
+        self.grid_y_start = 100  # Default first row Y-position
+        self.grid_y_step = 60    # Default Y-spacing between rows
+        self.grid_columns = 3    # Number of columns in grid
+        self.grid_rows = 8       # Number of rows in grid
+        
+        # Create a toggle button for the grid if we have a button frame
+        if hasattr(self, 'bottom_row'):
+            from PyQt5.QtWidgets import QPushButton
+            
+            button_style = """
+                QPushButton {
+                    background-color: #404050;
+                    color: white;
+                    border: none;
+                    border-radius: 4px;
+                    padding: 6px 10px;
+                    font-weight: bold;
+                    font-family: 'Segoe UI', Arial, sans-serif;
+                    font-size: 12px;
+                    min-width: 80px;
+                }
+                QPushButton:hover {
+                    background-color: #555565;
+                }
+                QPushButton:pressed {
+                    background-color: #303040;
+                }
+            """
+            
+            if not hasattr(self, 'grid_button'):
+                self.grid_button = QPushButton("Show Grid")
+                self.grid_button.clicked.connect(self.toggle_alignment_grid)
+                self.grid_button.setStyleSheet(button_style)
+                self.bottom_row.addWidget(self.grid_button)
+
+    def toggle_alignment_grid(self):
+        """Toggle the alignment grid visibility"""
+        self.alignment_grid_visible = not self.alignment_grid_visible
+        
+        if self.alignment_grid_visible:
+            self.show_alignment_grid()
+            # Only try to update the button text if the button exists
+            if hasattr(self, 'grid_button'):
+                self.grid_button.setText("Hide Grid")
+        else:
+            self.hide_alignment_grid()
+            # Only try to update the button text if the button exists
+            if hasattr(self, 'grid_button'):
+                self.grid_button.setText("Show Grid")
+
+    def show_alignment_grid(self):
+        """Show the alignment grid"""
+        if not hasattr(self, 'grid_lines'):
+            self.grid_lines = []
+        
+        # Hide any existing grid
+        self.hide_alignment_grid()
+        
+        from PyQt5.QtWidgets import QFrame, QLabel
+        from PyQt5.QtGui import QPalette, QColor
+        
+        canvas_width = self.canvas.width()
+        canvas_height = self.canvas.height()
+        
+        # Create vertical grid lines (columns)
+        for col in range(self.grid_columns):
+            x = self.grid_x_start + (col * self.grid_x_step)
+            line = QFrame(self.canvas)
+            line.setFrameShape(QFrame.VLine)
+            line.setFixedWidth(1)
+            line.setGeometry(x, 0, 1, canvas_height)
+            
+            # Style for grid lines - more subtle than alignment guides
+            line.setStyleSheet("background-color: rgba(0, 180, 180, 120);")
+            
+            line.show()
+            self.grid_lines.append(line)
+            
+            # Add column number label
+            col_label = QLabel(f"{x}px", self.canvas)
+            col_label.setStyleSheet("color: rgba(0, 180, 180, 180); background: transparent;")
+            col_label.move(x + 5, 10)
+            col_label.show()
+            self.grid_lines.append(col_label)
+        
+        # Create horizontal grid lines (rows)
+        for row in range(self.grid_rows):
+            y = self.grid_y_start + (row * self.grid_y_step)
+            line = QFrame(self.canvas)
+            line.setFrameShape(QFrame.HLine)
+            line.setFixedHeight(1)
+            line.setGeometry(0, y, canvas_width, 1)
+            
+            # Style for grid lines
+            line.setStyleSheet("background-color: rgba(0, 180, 180, 120);")
+            
+            line.show()
+            self.grid_lines.append(line)
+            
+            # Add row number label
+            row_label = QLabel(f"{y}px", self.canvas)
+            row_label.setStyleSheet("color: rgba(0, 180, 180, 180); background: transparent;")
+            row_label.move(10, y + 5)
+            row_label.show()
+            self.grid_lines.append(row_label)
+
+    def hide_alignment_grid(self):
+        """Hide the alignment grid"""
+        if hasattr(self, 'grid_lines'):
+            for line in self.grid_lines:
+                line.deleteLater()
+            self.grid_lines = []
+
+    def create_grid_settings_dialog(self):
+        """Create a dialog for editing grid settings"""
+        from PyQt5.QtWidgets import QDialog, QVBoxLayout, QHBoxLayout, QLabel, QSpinBox, QPushButton, QGroupBox
+    
     # 1. Add show_alignment_guides method to PreviewWindow
     def show_alignment_guides(self, guide_lines):
         """Show alignment guide lines with enhanced visibility"""
@@ -1482,6 +2396,18 @@ class PreviewWindow(QMainWindow):
         self.button_dragging = False
         self.button_drag_pos = None
         
+        # Add Snap Toggle Button
+        self.snap_button = QPushButton("Toggle Snap", self)
+        self.snap_button.clicked.connect(self.toggle_snapping)
+        self.snap_button.setStyleSheet(button_style)
+        bottom_row.addWidget(self.snap_button)
+
+        # Add Grid Toggle Button
+        self.grid_button = QPushButton("Show Grid")
+        self.grid_button.clicked.connect(self.toggle_alignment_grid)
+        self.grid_button.setStyleSheet(button_style)
+        bottom_row.addWidget(self.grid_button)
+
         # Determine button frame position
         self.position_button_frame()
         
