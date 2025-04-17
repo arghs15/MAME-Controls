@@ -1303,18 +1303,22 @@ class PreviewWindow(QMainWindow):
             self.central_widget = QWidget()
             self.central_widget.setStyleSheet("background-color: black;")
             self.setCentralWidget(self.central_widget)
-            
-            # Main layout - just holds the canvas, no buttons in this layout
+
+            # Main layout
             self.main_layout = QVBoxLayout(self.central_widget)
             self.main_layout.setContentsMargins(0, 0, 0, 0)
-            
-            # Create canvas area where the background image and controls will be displayed
+            self.main_layout.setSpacing(0)
+
+            # Canvas area for background + controls
             self.canvas = QWidget()
             self.canvas.setStyleSheet("background-color: black;")
-            self.main_layout.addWidget(self.canvas, 1)  # 1 stretch factor for most space
-            
-            # Load the background image
+            self.canvas.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)
+
+            self.main_layout.addWidget(self.canvas, 1)
+
+            # Load background
             self.load_background_image_fullscreen()
+
             
             # Create control labels - WITH clean mode parameter
             self.create_control_labels(clean_mode=self.clean_mode)
@@ -1364,6 +1368,10 @@ class PreviewWindow(QMainWindow):
             self.enhance_preview_window_init()
 
             self.setVisible(True)  # Now show the fully prepared window
+
+            print(f"Window size: {self.width()}x{self.height()}")
+            print(f"Canvas size: {self.canvas.width()}x{self.canvas.height()}")
+
             
         except Exception as e:
             print(f"Error in PreviewWindow initialization: {e}")
@@ -1903,8 +1911,10 @@ class PreviewWindow(QMainWindow):
         canvas_height = self.canvas.height()
         
         # Create vertical grid lines (columns)
-        for col in range(self.grid_columns):
-            x = self.grid_x_start + (col * self.grid_x_step)
+        # Vertical grid lines (columns)
+        num_columns = (canvas_width - self.grid_x_start) // self.grid_x_step + 1
+        for col in range(num_columns):
+            x = self.grid_x_start + col * self.grid_x_step
             line = QFrame(self.canvas)
             line.setFrameShape(QFrame.VLine)
             line.setFixedWidth(1)
@@ -1924,8 +1934,9 @@ class PreviewWindow(QMainWindow):
             self.grid_lines.append(col_label)
         
         # Create horizontal grid lines (rows)
-        for row in range(self.grid_rows):
-            y = self.grid_y_start + (row * self.grid_y_step)
+        num_rows = (canvas_height - self.grid_y_start) // self.grid_y_step + 1
+        for row in range(num_rows):
+            y = self.grid_y_start + row * self.grid_y_step
             line = QFrame(self.canvas)
             line.setFrameShape(QFrame.HLine)
             line.setFixedHeight(1)
@@ -4757,6 +4768,10 @@ class PreviewWindow(QMainWindow):
             # Call the original resize handler if it exists
             if hasattr(self, 'on_canvas_resize_original'):
                 self.on_canvas_resize_original(event)
+
+            # Redraw grid if it's currently visible
+            if hasattr(self, 'alignment_grid_visible') and self.alignment_grid_visible:
+                self.show_alignment_grid()
                 
         except Exception as e:
             print(f"Error in canvas resize: {e}")
