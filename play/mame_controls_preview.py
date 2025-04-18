@@ -2133,7 +2133,6 @@ class PreviewWindow(QMainWindow):
             print(f"Error loading screen setting: {e}")
         return 1
 
-    
     def show_measurement_guides(self, x, y, width, height):
         """Show dynamic measurement guides with pixel distances"""
         from PyQt5.QtWidgets import QLabel, QFrame
