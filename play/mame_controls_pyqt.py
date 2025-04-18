@@ -604,7 +604,7 @@ class MAMEControlConfig(QMainWindow):
             
             # Get the exact screen geometry
             desktop = QDesktopWidget()
-            screen_num = getattr(self, 'preferred_preview_screen', 2)
+            screen_num = getattr(self, 'preferred_preview_screen', 1)  # Default to screen 1 instead of 2
             screen_geometry = desktop.screenGeometry(screen_num - 1)
             
             # Apply exact geometry before showing
@@ -1201,7 +1201,13 @@ class MAMEControlConfig(QMainWindow):
     
     def load_settings(self):
         """Load settings from JSON file if it exists"""
-        settings_path = os.path.join(self.mame_dir, "control_config_settings.json")
+        settings_path = os.path.join(self.mame_dir, "preview", "control_config_settings.json")
+        # Set sensible defaults
+        self.preferred_preview_screen = 1  # Default to second screen
+        self.visible_control_types = ["BUTTON"]  # Default to just buttons
+        self.hide_preview_buttons = False
+        self.show_button_names = False
+        
         if os.path.exists(settings_path):
             try:
                 with open(settings_path, 'r') as f:
@@ -1214,28 +1220,94 @@ class MAMEControlConfig(QMainWindow):
                 
                 # Load visibility settings
                 if 'visible_control_types' in settings:
-                    self.visible_control_types = settings['visible_control_types']
-                    print(f"Loaded visible control types: {self.visible_control_types}")
+                    # Important: Properly handle empty or invalid lists
+                    if isinstance(settings['visible_control_types'], list):
+                        self.visible_control_types = settings['visible_control_types']
+                        print(f"Loaded visible control types: {self.visible_control_types}")
+                    else:
+                        print(f"Warning: Invalid visible_control_types format in settings: {settings['visible_control_types']}")
+                    
+                    # Make sure BUTTON is always included for proper display
+                    if "BUTTON" not in self.visible_control_types:
+                        self.visible_control_types.append("BUTTON")
+                        print("Added BUTTON to visible control types for complete display")
+                        # Update the saved settings
+                        settings['visible_control_types'] = self.visible_control_types
+                        with open(settings_path, 'w') as f:
+                            json.dump(settings, f)
+                else:
+                    # Default to showing just buttons
+                    self.visible_control_types = ["BUTTON"]
+                    settings['visible_control_types'] = self.visible_control_types
+                    with open(settings_path, 'w') as f:
+                        json.dump(settings, f)
 
                 # Load hide preview buttons setting
                 if 'hide_preview_buttons' in settings:
-                    self.hide_preview_buttons = settings['hide_preview_buttons']
+                    # Handle both boolean and integer (0/1) formats
+                    if isinstance(settings['hide_preview_buttons'], bool):
+                        self.hide_preview_buttons = settings['hide_preview_buttons']
+                    elif isinstance(settings['hide_preview_buttons'], int):
+                        self.hide_preview_buttons = bool(settings['hide_preview_buttons'])
+                    print(f"Loaded hide_preview_buttons: {self.hide_preview_buttons}")
+                    
                     # Update toggle if it exists
                     if hasattr(self, 'hide_buttons_toggle'):
-                        self.hide_buttons_toggle.setChecked(self.hide_preview_buttons)
+                        if self.hide_preview_buttons:
+                            self.hide_buttons_toggle.select()
+                        else:
+                            self.hide_buttons_toggle.deselect()
                 else:
                     self.hide_preview_buttons = False
                     
+                # Load show button names setting
+                if 'show_button_names' in settings:
+                    # Handle both boolean and integer (0/1) formats
+                    if isinstance(settings['show_button_names'], bool):
+                        self.show_button_names = settings['show_button_names']
+                    elif isinstance(settings['show_button_names'], int):
+                        self.show_button_names = bool(settings['show_button_names'])
+                    print(f"Loaded show_button_names: {self.show_button_names}")
+                else:
+                    # Default to showing button names for backward compatibility
+                    self.show_button_names = True
+                    settings['show_button_names'] = True
+                    with open(settings_path, 'w') as f:
+                        json.dump(settings, f)
+                        
             except Exception as e:
                 print(f"Error loading settings: {e}")
+                import traceback
+                traceback.print_exc()
                 self.hide_preview_buttons = False
+                self.visible_control_types = ["BUTTON"]  # Default to just buttons
+                self.show_button_names = True  # Default to showing button names
         else:
-            # Default setting
+            # Default settings
             self.hide_preview_buttons = False
+            self.visible_control_types = ["BUTTON"]  # Default to just buttons
+            self.show_button_names = True  # Default to showing button names
+            
+            # Create settings file with defaults
+            settings = {
+                'preferred_preview_screen': self.preferred_preview_screen,
+                'visible_control_types': self.visible_control_types,
+                'hide_preview_buttons': self.hide_preview_buttons,
+                'show_button_names': self.show_button_names
+            }
+            try:
+                with open(settings_path, 'w') as f:
+                    json.dump(settings, f)
+                print("Created default settings file")
+            except Exception as e:
+                print(f"Error creating settings file: {e}")
         
-        # Ensure the visible_control_types is initialized even if no settings file exists
-        if not hasattr(self, 'visible_control_types') or self.visible_control_types is None:
-            self.visible_control_types = ["BUTTON", "JOYSTICK"]
+        # Debug output of final settings
+        print(f"\nFinal settings:")
+        print(f"  - visible_control_types: {self.visible_control_types}")
+        print(f"  - hide_preview_buttons: {self.hide_preview_buttons}")
+        print(f"  - show_button_names: {self.show_button_names}")
+        print(f"  - preferred_preview_screen: {self.preferred_preview_screen}\n")
     
     def update_stats_label(self):
         """Update the statistics label"""

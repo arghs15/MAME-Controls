@@ -845,11 +845,11 @@ class MAMEControlConfig(ctk.CTk):
         self.control_frame = ctk.CTkScrollableFrame(self.right_panel)
         self.control_frame.grid(row=2, column=0, columnspan=3, padx=5, pady=5, sticky="nsew")
     
-    '''#######################################################################
-    CONFIF TO CREATE INFO FILES FOR RETROFE
-    - INFO FOLDER ENEDS TO BE IN PREVIEW\SETTINGS\INFO WITH A DEFAULT TEMPLATE
+    #######################################################################
+    #CONFIF TO CREATE INFO FILES FOR RETROFE
+    #- INFO FOLDER ENEDS TO BE IN PREVIEW\SETTINGS\INFO WITH A DEFAULT TEMPLATE
     ##########################################################################
-    '''
+    
     
     def create_info_directory(self):
         """Create info directory if it doesn't exist"""
@@ -1903,7 +1903,7 @@ class MAMEControlConfig(ctk.CTk):
             "hide_preview_buttons": getattr(self, 'hide_preview_buttons', False)
         }
         
-        settings_path = os.path.join(self.mame_dir, "control_config_settings.json")
+        settings_path = os.path.join(self.mame_dir, "preview", "control_config_settings.json")
         try:
             with open(settings_path, 'w') as f:
                 json.dump(settings, f)

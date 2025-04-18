@@ -2087,6 +2087,8 @@ class PreviewWindow(QMainWindow):
             # Add this line at the end of __init__, just before self.setVisible(True)
             self.enhance_preview_window_init()
 
+            self.move_to_screen(1)  # Force move to primary screen on startup
+            
             self.setVisible(True)  # Now show the fully prepared window
 
             print(f"Window size: {self.width()}x{self.height()}")
@@ -5454,27 +5456,24 @@ class PreviewWindow(QMainWindow):
         """Move window to specified screen with true fullscreen"""
         try:
             desktop = QDesktopWidget()
+            if desktop.screenCount() < screen_index:
+                print(f"Screen {screen_index} not available, using screen 1")
+                screen_index = 1
+                
             screen_geometry = desktop.screenGeometry(screen_index - 1)  # Convert to 0-based index
             
-            print(f"Screen geometry: {screen_geometry.width()}x{screen_geometry.height()}")
-            
-            # For debugging - log the window and central widget sizes
-            print(f"Before fullscreen - Window: {self.width()}x{self.height()}, Canvas: {self.canvas.width()}x{self.canvas.height()}")
-            
-            # Ensure truly fullscreen with no borders
-            self.setWindowFlags(Qt.FramelessWindowHint | Qt.WindowStaysOnTopHint)
-            self.setGeometry(screen_geometry)
-            
-            # Store current screen
+            # Store current screen before any changes
             self.current_screen = screen_index
             
-            # Ensure the canvas fills the entire space
-            self.canvas.setGeometry(0, 0, screen_geometry.width(), screen_geometry.height())
+            # To reduce flashing, don't change window flags if already set
+            if not (self.windowFlags() & Qt.FramelessWindowHint):
+                self.setWindowFlags(Qt.FramelessWindowHint | Qt.WindowStaysOnTopHint)
+                self.show()  # Only show if flags changed
+                
+            # Set the geometry
+            self.setGeometry(screen_geometry)
             
-            # Show window to apply changes
-            self.show()
-            
-            # Check actual sizes after showing
+            # Check actual sizes after moving
             QTimer.singleShot(100, self.check_dimensions)
             
             print(f"Window moved to screen {screen_index} in fullscreen mode")
@@ -5494,18 +5493,25 @@ class PreviewWindow(QMainWindow):
             self.canvas.setGeometry(0, 0, self.width(), self.height())
     
     def toggle_screen(self):
-        """Toggle between screens"""
+        """Toggle between screen 1 and 2 with improved reliability"""
         desktop = QDesktopWidget()
         num_screens = desktop.screenCount()
         
-        # Cycle to next screen
-        self.current_screen = (self.current_screen % num_screens) + 1
+        if num_screens < 2:
+            print("Only one screen available")
+            return
         
-        # Update button text
-        self.screen_button.setText(f"Screen {self.current_screen}")
+        # Simple toggle between 1 and 2
+        next_screen = 2 if self.current_screen == 1 else 1
+        
+        print(f"Toggling from screen {self.current_screen} to screen {next_screen}")
+        
+        # Update button text immediately to provide visual feedback
+        if hasattr(self, 'screen_button'):
+            self.screen_button.setText(f"Screen {next_screen}")
         
         # Move to the new screen
-        self.move_to_screen(self.current_screen)
+        self.move_to_screen(next_screen)
     
     # Add a method to force controls above the bezel
     def force_controls_above_bezel(self):
