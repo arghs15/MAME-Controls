@@ -2028,6 +2028,24 @@ class PreviewWindow(QMainWindow):
             # Make sure the font is properly applied
             self.apply_text_settings()
             
+            # Initialize alignment grid system
+            self.alignment_grid_visible = False
+            self.grid_x_start = 200       # Default first column X-position
+            self.grid_x_step = 300        # Default X-spacing between columns
+            self.grid_y_start = 100       # Default first row Y-position
+            self.grid_y_step = 60         # Default Y-spacing between rows
+            self.grid_columns = 3         # Number of columns in grid
+            self.grid_rows = 8            # Number of rows in grid
+            self.grid_lines = []          # Empty list to store grid line objects
+
+            # Then, if you have a load_grid_settings method, call it after initializing defaults:
+            try:
+                if hasattr(self, 'load_grid_settings'):
+                    self.load_grid_settings()
+            except Exception as e:
+                print(f"Error loading grid settings: {e}")
+                # Keep using defaults
+            
             # Add logo if enabled
             if self.logo_visible:
                 self.add_logo()
@@ -2312,16 +2330,17 @@ class PreviewWindow(QMainWindow):
 
 
     # 2. Add these methods to PreviewWindow for controlling snapping
+    # Replace the toggle_snapping method with this improved version
     def toggle_snapping(self):
-        """Toggle snapping on/off"""
+        """Toggle snapping with direct action button text"""
         # Check if snapping_enabled exists, if not initialize it
         if not hasattr(self, 'snapping_enabled'):
             self.snapping_enabled = True  # Default to enabled
         
-        # Now toggle it    
+        # Toggle the state
         self.snapping_enabled = not self.snapping_enabled
         
-        # Update button text
+        # Update button text to show NEXT action (not current state)
         if hasattr(self, 'snap_button'):
             self.snap_button.setText("Enable Snap" if not self.snapping_enabled else "Disable Snap")
         
@@ -2390,7 +2409,7 @@ class PreviewWindow(QMainWindow):
                 self.snap_to_controls = settings.get("snap_to_controls", True)
                 self.snap_to_logo = settings.get("snap_to_logo", True)
                 
-                print(f"Loaded snapping settings")
+                print(f"Loaded snapping settings from {settings_file}")
                 return True
         except Exception as e:
             print(f"Error loading snapping settings: {e}")
@@ -3138,8 +3157,24 @@ class PreviewWindow(QMainWindow):
         self.button_dragging = False
         self.button_drag_pos = None
         
-        # Add Snap Toggle Button
-        self.snap_button = QPushButton("Toggle Snap", self)
+        # Initialize snapping settings from saved values
+        self.snapping_enabled = True  # Default value if no settings found
+        self.snap_distance = 15
+        self.snap_to_grid = True
+        self.snap_to_screen_center = True
+        self.snap_to_controls = True
+        self.snap_to_logo = True
+
+        # Load any saved snapping settings
+        try:
+            self.load_snapping_settings()
+            print(f"Loaded snapping settings, enabled = {self.snapping_enabled}")
+        except Exception as e:
+            print(f"Error loading snapping settings: {e}")
+            # Keep using defaults
+
+        # Now create the snap button with text based on loaded settings
+        self.snap_button = QPushButton("Disable Snap" if self.snapping_enabled else "Enable Snap", self)
         self.snap_button.clicked.connect(self.toggle_snapping)
         self.snap_button.setStyleSheet(button_style)
         bottom_row.addWidget(self.snap_button)
@@ -6296,14 +6331,19 @@ class PreviewWindow(QMainWindow):
         pass
     
     def toggle_texts(self):
-        """Toggle visibility of control labels"""
+        """Toggle visibility of control labels except joystick controls"""
         self.texts_visible = not self.texts_visible
         
         # Update button text
         self.toggle_texts_button.setText("Show Texts" if not self.texts_visible else "Hide Texts")
         
-        # Toggle visibility for each control
+        # Toggle visibility for each control, but skip joystick controls
         for control_name, control_data in self.control_labels.items():
+            # Skip joystick controls - these are controlled by the joystick button only
+            if "JOYSTICK" in control_name:
+                continue
+                
+            # Toggle visibility for non-joystick controls
             control_data['label'].setVisible(self.texts_visible)
         
         # Force update to ensure proper rendering
