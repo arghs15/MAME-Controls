@@ -567,52 +567,38 @@ class MAMEControlConfig(ctk.CTk):
 
     def find_mame_directory(self) -> Optional[str]:
         """Find the MAME directory containing necessary files"""
-        # 1. Check application directory
+        # First check in the application directory
         app_dir = get_application_path()
         app_gamedata = os.path.join(app_dir, "gamedata.json")
-        app_preview_gamedata = os.path.join(app_dir, "preview", "gamedata.json")
-
+        
         if os.path.exists(app_gamedata):
             print(f"Using bundled gamedata.json: {app_dir}")
             return app_dir
-        elif os.path.exists(app_preview_gamedata):
-            print(f"Using external preview/gamedata.json: {app_dir}")
-            return app_dir
-
-        # 2. Check current script directory
+            
+        # Then check in the current directory
         current_dir = os.path.abspath(os.path.dirname(__file__))
         current_gamedata = os.path.join(current_dir, "gamedata.json")
-        current_preview_gamedata = os.path.join(current_dir, "preview", "gamedata.json")
-
+        
         if os.path.exists(current_gamedata):
             print(f"Found MAME directory: {current_dir}")
             return current_dir
-        elif os.path.exists(current_preview_gamedata):
-            print(f"Found MAME directory via preview/gamedata.json: {current_dir}")
-            return current_dir
-
-        # 3. Check common MAME install paths (and their preview folders)
+            
+        # Then check common MAME paths
         common_paths = [
             os.path.join(os.environ.get('PROGRAMFILES', 'C:\\Program Files'), "MAME"),
             os.path.join(os.environ.get('PROGRAMFILES(X86)', 'C:\\Program Files (x86)'), "MAME"),
             "C:\\MAME",
             "D:\\MAME"
         ]
-
+        
         for path in common_paths:
             gamedata_path = os.path.join(path, "gamedata.json")
-            preview_gamedata_path = os.path.join(path, "preview", "gamedata.json")
-
             if os.path.exists(gamedata_path):
                 print(f"Found MAME directory: {path}")
                 return path
-            elif os.path.exists(preview_gamedata_path):
-                print(f"Found MAME directory via preview/gamedata.json: {path}")
-                return path
-
+                
         print("Error: gamedata.json not found in known locations")
         return None
-
 
     def toggle_xinput(self):
         """Handle toggling between JOYCODE and XInput mappings"""
@@ -644,6 +630,18 @@ class MAMEControlConfig(ctk.CTk):
             
             # Restore scroll position
             self.control_frame._scrollbar.set(*scroll_pos)
+
+    def toggle_ingame_mode(self):
+        """Toggle between normal and in-game display modes"""
+        if self.ingame_toggle.get():
+            self.switch_to_ingame_mode()
+        else:
+            # Create mock event to reuse existing game select logic
+            class MockEvent:
+                def __init__(self):
+                    self.x = 0
+                    self.y = 5
+            self.on_game_select(MockEvent())
 
     def switch_to_ingame_mode(self):
         """Switch to a simplified, large-format display for in-game reference"""
@@ -764,7 +762,7 @@ class MAMEControlConfig(ctk.CTk):
             width=150
         )
         self.unmatched_button.grid(row=0, column=1, padx=5, pady=5, sticky="e")
-        
+
         # Generate configs button
         self.generate_configs_button = ctk.CTkButton(
             self.stats_frame,
@@ -834,6 +832,14 @@ class MAMEControlConfig(ctk.CTk):
         )
         self.xinput_toggle.select()  # Set it on by default
         self.xinput_toggle.grid(row=1, column=0, padx=5, pady=5)
+
+        # Add In-Game Mode toggle
+        self.ingame_toggle = ctk.CTkSwitch(
+            self.right_panel,
+            text="In-Game Mode",
+            command=self.toggle_ingame_mode
+        )
+        self.ingame_toggle.grid(row=1, column=1, padx=5, pady=5, sticky="e")
 
         # Controls display
         self.control_frame = ctk.CTkScrollableFrame(self.right_panel)
@@ -1739,10 +1745,10 @@ class MAMEControlConfig(ctk.CTk):
         
         if in_preview_folder:
             # If we're in preview folder, settings are in preview/settings
-            settings_path = os.path.join(self.mame_dir, "preview", "gamedata.json")
+            settings_path = os.path.join(self.mame_dir, "gamedata.json")
         else:
             # Normal path relative to mame_dir
-            settings_path = os.path.join(self.mame_dir, "preview", "gamedata.json")
+            settings_path = os.path.join(self.mame_dir, "gamedata.json")
         
         # Create directory if it doesn't exist
         os.makedirs(os.path.dirname(settings_path), exist_ok=True)
@@ -2769,8 +2775,7 @@ class MAMEControlConfig(ctk.CTk):
         json_paths = [
             os.path.join(self.mame_dir, "gamedata.json"),
             os.path.join(self.mame_dir, "metadata", "gamedata.json"),
-            os.path.join(self.mame_dir, "data", "gamedata.json"),
-            os.path.join(self.mame_dir, "preview", "gamedata.json")
+            os.path.join(self.mame_dir, "data", "gamedata.json")
         ]
             
         json_path = None
