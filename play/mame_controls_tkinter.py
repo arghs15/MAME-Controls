@@ -773,15 +773,6 @@ class MAMEControlConfig(ctk.CTk):
         self.generate_configs_button.grid(row=0, column=2, padx=5, pady=5, sticky="e")
 
         # Generate configs button
-        self.generate_images_button = ctk.CTkButton(
-            self.stats_frame,
-            text="Generate Images",
-            command=self.show_generate_images_dialog,
-            width=150
-        )
-        self.generate_images_button.grid(row=0, column=3, padx=5, pady=5, sticky="e")
-
-        # Generate configs button
         self.analyze_button = ctk.CTkButton(
             self.stats_frame,
             text="Analyze Controls",
