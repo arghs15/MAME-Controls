@@ -1,5 +1,7 @@
 Grid not working
 
+Add back logo snap to center ext
+
 Show all Xinput reverts to default text, and you have to re apply current text
 
 Add back hide bezel button
@@ -7,7 +9,5 @@ Add back hide bezel button
 Remove shadow - pointless
 
 Move all files to preview, and preview\settings
-
-Add edit controls from previous exe
 
 Add generate images from previous exe
