@@ -631,105 +631,6 @@ class MAMEControlConfig(ctk.CTk):
             # Restore scroll position
             self.control_frame._scrollbar.set(*scroll_pos)
 
-    def toggle_ingame_mode(self):
-        """Toggle between normal and in-game display modes"""
-        if self.ingame_toggle.get():
-            self.switch_to_ingame_mode()
-        else:
-            # Create mock event to reuse existing game select logic
-            class MockEvent:
-                def __init__(self):
-                    self.x = 0
-                    self.y = 5
-            self.on_game_select(MockEvent())
-
-    def switch_to_ingame_mode(self):
-        """Switch to a simplified, large-format display for in-game reference"""
-        if not self.current_game:
-            return
-            
-        # Clear existing display
-        for widget in self.control_frame.winfo_children():
-            widget.destroy()
-            
-        # Get the current game's controls
-        game_data = self.get_game_data(self.current_game)
-        if not game_data:
-            return
-            
-        # Get custom controls
-        cfg_controls = {}
-        if self.current_game in self.custom_configs:
-            cfg_controls = self.parse_cfg_controls(self.custom_configs[self.current_game])
-            if self.use_xinput:
-                cfg_controls = {
-                    control: self.convert_mapping(mapping, True)
-                    for control, mapping in cfg_controls.items()
-                }
-
-        # Configure single column layout
-        self.control_frame.grid_columnconfigure(0, weight=1)
-
-        # Create controls display with large font
-        controls_frame = ctk.CTkFrame(self.control_frame)
-        controls_frame.grid(row=0, column=0, padx=10, pady=10, sticky="nsew")
-        
-        row = 0
-        for player in game_data.get('players', []):
-            # Player header
-            player_label = ctk.CTkLabel(
-                controls_frame,
-                text=f"Player {player['number']}",
-                font=("Arial", 24, "bold")
-            )
-            player_label.grid(row=row, column=0, padx=10, pady=(20,10), sticky="w")
-            row += 1
-            
-            # Player controls
-            for label in player.get('labels', []):
-                control_name = label['name']
-                default_action = label['value']
-                current_mapping = cfg_controls.get(control_name, "Default")
-                
-                display_control = self.format_control_name(control_name)
-                display_mapping = self.format_mapping_display(current_mapping)
-                
-                # Create a frame for each control to better organize the information
-                control_frame = ctk.CTkFrame(controls_frame)
-                control_frame.grid(row=row, column=0, padx=20, pady=5, sticky="ew")
-                control_frame.grid_columnconfigure(1, weight=1)  # Make action column expandable
-                
-                # Control name
-                ctk.CTkLabel(
-                    control_frame,
-                    text=display_control,
-                    font=("Arial", 20, "bold"),
-                    anchor="w"
-                ).grid(row=0, column=0, padx=5, pady=2, sticky="w")
-
-                # Default action
-                default_label = ctk.CTkLabel(
-                    control_frame,
-                    text=f"Action: {default_action}",
-                    font=("Arial", 18),
-                    text_color="gray75",
-                    anchor="w"
-                )
-                default_label.grid(row=1, column=0, columnspan=2, padx=20, pady=2, sticky="w")
-                
-                # Current mapping (if different from default)
-                if current_mapping != "Default":
-                    mapping_label = ctk.CTkLabel(
-                        control_frame,
-                        text=f"Mapped to: {display_mapping}",
-                        font=("Arial", 18),
-                        text_color="yellow",
-                        anchor="w"
-                    )
-                    mapping_label.grid(row=2, column=0, columnspan=2, padx=20, pady=2, sticky="w")
-                
-                row += 1
-
     def create_layout(self):
         """Create the main application layout"""
         # Configure grid
@@ -832,14 +733,6 @@ class MAMEControlConfig(ctk.CTk):
         )
         self.xinput_toggle.select()  # Set it on by default
         self.xinput_toggle.grid(row=1, column=0, padx=5, pady=5)
-
-        # Add In-Game Mode toggle
-        self.ingame_toggle = ctk.CTkSwitch(
-            self.right_panel,
-            text="In-Game Mode",
-            command=self.toggle_ingame_mode
-        )
-        self.ingame_toggle.grid(row=1, column=1, padx=5, pady=5, sticky="e")
 
         # Controls display
         self.control_frame = ctk.CTkScrollableFrame(self.right_panel)
