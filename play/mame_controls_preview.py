@@ -2064,19 +2064,13 @@ class PreviewWindow(QMainWindow):
             self.joystick_visible = True
             
             # Track current screen
-            self.current_screen = self.load_screen_setting_from_config()
-
-            # Now move to that screen
-            self.initializing_screen = True
-            self.current_screen = self.load_screen_setting_from_config()
-            self.move_to_screen(self.current_screen)
-            self.initializing_screen = False
+            self.current_screen = 1  # Start with primary screen
             
             # Bind ESC key to close
             self.keyPressEvent = self.handle_key_press
             
             # Move to primary screen first
-            #self.move_to_screen(1)  # Start with primary screen
+            self.move_to_screen(1)  # Start with primary screen
             self.layering_for_bezel()
             self.integrate_bezel_support()
             self.canvas.resizeEvent = self.on_canvas_resize_with_background
@@ -2089,9 +2083,11 @@ class PreviewWindow(QMainWindow):
             QTimer.singleShot(600, self.apply_joystick_visibility)
             #QTimer.singleShot(200, self.load_and_register_fonts)
             QTimer.singleShot(300, self.force_resize_all_labels)
-            QTimer.singleShot(1000, self.detect_screen_after_startup)
+
             # Add this line at the end of __init__, just before self.setVisible(True)
             self.enhance_preview_window_init()
+
+            self.move_to_screen(1)  # Force move to primary screen on startup
             
             self.setVisible(True)  # Now show the fully prepared window
 
@@ -2106,34 +2102,6 @@ class PreviewWindow(QMainWindow):
             QMessageBox.critical(self, "Error", f"Error initializing preview: {e}")
             self.close()
 
-    def detect_screen_after_startup(self):
-        """After window is shown, detect which screen it's on and set current_screen"""
-        try:
-            from PyQt5.QtWidgets import QDesktopWidget
-            window_center = self.frameGeometry().center()
-            desktop = QDesktopWidget()
-            for i in range(desktop.screenCount()):
-                if desktop.screenGeometry(i).contains(window_center):
-                    self.current_screen = i + 1
-                    print(f"[POST-DETECT] Actually on screen {self.current_screen}")
-                    break
-        except Exception as e:
-            print(f"Failed to detect screen: {e}")
-
-    def load_screen_setting_from_config(self):
-        """Load initial screen setting from control_config_settings.json"""
-        try:
-            config_path = os.path.join(self.mame_dir, "preview", "control_config_settings.json")
-            if os.path.exists(config_path):
-                with open(config_path, 'r') as f:
-                    data = json.load(f)
-                    screen = data.get("screen", 1)
-                    return screen if screen in [1, 2] else 1
-        except Exception as e:
-            print(f"Error loading screen setting: {e}")
-        return 1
-
-    
     def show_measurement_guides(self, x, y, width, height):
         """Show dynamic measurement guides with pixel distances"""
         from PyQt5.QtWidgets import QLabel, QFrame
@@ -5491,29 +5459,28 @@ class PreviewWindow(QMainWindow):
             if desktop.screenCount() < screen_index:
                 print(f"Screen {screen_index} not available, using screen 1")
                 screen_index = 1
-
+                
             screen_geometry = desktop.screenGeometry(screen_index - 1)  # Convert to 0-based index
-
-            # Only update current_screen if not in initial load mode
-            if not getattr(self, 'initializing_screen', False):
-                self.current_screen = screen_index
-            else:
-                print(f"[INIT MOVE] Moving to screen {screen_index} without overwriting current_screen ({self.current_screen})")
-
-            # To reduce flashing, only update flags once
+            
+            # Store current screen before any changes
+            self.current_screen = screen_index
+            
+            # To reduce flashing, don't change window flags if already set
             if not (self.windowFlags() & Qt.FramelessWindowHint):
                 self.setWindowFlags(Qt.FramelessWindowHint | Qt.WindowStaysOnTopHint)
-                self.show()
-
+                self.show()  # Only show if flags changed
+                
+            # Set the geometry
             self.setGeometry(screen_geometry)
+            
+            # Check actual sizes after moving
             QTimer.singleShot(100, self.check_dimensions)
-
+            
             print(f"Window moved to screen {screen_index} in fullscreen mode")
         except Exception as e:
             print(f"Error moving to screen: {e}")
             import traceback
             traceback.print_exc()
-
             
     def check_dimensions(self):
         """Debug method to check actual dimensions after fullscreen is applied"""
@@ -5526,28 +5493,25 @@ class PreviewWindow(QMainWindow):
             self.canvas.setGeometry(0, 0, self.width(), self.height())
     
     def toggle_screen(self):
-        """Toggle between screens with improved reliability"""
+        """Toggle between screen 1 and 2 with improved reliability"""
         desktop = QDesktopWidget()
         num_screens = desktop.screenCount()
         
         if num_screens < 2:
             print("Only one screen available")
             return
-            
-        # Get target screen (toggling between 1 and 2)
-        target_screen = 1 if self.current_screen == 2 else 2
         
-        # Update button text
-        self.screen_button.setText(f"Screen {target_screen}")
+        # Simple toggle between 1 and 2
+        next_screen = 2 if self.current_screen == 1 else 1
         
-        # Important: Pre-update the current_screen value BEFORE calling move_to_screen
-        old_screen = self.current_screen
-        self.current_screen = target_screen
+        print(f"Toggling from screen {self.current_screen} to screen {next_screen}")
         
-        print(f"Toggle screen: Changing from {old_screen} to {target_screen}")
+        # Update button text immediately to provide visual feedback
+        if hasattr(self, 'screen_button'):
+            self.screen_button.setText(f"Screen {next_screen}")
         
-        # Now call move_to_screen with the new value
-        self.move_to_screen(target_screen)
+        # Move to the new screen
+        self.move_to_screen(next_screen)
     
     # Add a method to force controls above the bezel
     def force_controls_above_bezel(self):
