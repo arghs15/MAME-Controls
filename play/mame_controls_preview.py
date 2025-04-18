@@ -1361,8 +1361,24 @@ class PositionIndicator(QLabel):
 # And the position indicator methods
 def show_position_indicator(self, x, y, extra_info=None):
     """Show a position indicator with coordinates"""
+    from PyQt5.QtWidgets import QLabel
+    from PyQt5.QtCore import Qt, QTimer
+    
+    # Create position indicator if it doesn't exist yet
     if not hasattr(self, 'position_indicator'):
-        self.position_indicator = PositionIndicator(self.canvas)
+        self.position_indicator = QLabel(self.canvas)
+        self.position_indicator.setStyleSheet("""
+            background-color: rgba(0, 0, 0, 180);
+            color: #00FFFF;
+            border: 1px solid #00FFFF;
+            border-radius: 4px;
+            padding: 4px 8px;
+            font-family: 'Consolas', monospace;
+            font-size: 12px;
+        """)
+        self.position_indicator.setAlignment(Qt.AlignCenter)
+        self.position_indicator.setFixedSize(200, 45)  # Space for multiple lines
+        self.position_indicator.hide()
     
     # Format the text with X and Y coordinates
     text = f"X: {x}px, Y: {y}px"
@@ -1385,7 +1401,6 @@ def show_position_indicator(self, x, y, extra_info=None):
     if hasattr(self, 'indicator_timer'):
         self.indicator_timer.stop()
     else:
-        from PyQt5.QtCore import QTimer
         self.indicator_timer = QTimer(self)
         self.indicator_timer.setSingleShot(True)
         self.indicator_timer.timeout.connect(lambda: self.position_indicator.hide())
@@ -1413,10 +1428,22 @@ def create_absolute_alignment_lines(self, x=None, y=None):
     
     self.show_alignment_guides(guide_lines)
 
-class GradientPrefixLabel(EnhancedLabel):
+
+
+class GradientPrefixLabel(DraggableLabel):
     """A label that supports gradient text for prefix and action text"""
     def __init__(self, text, parent=None, shadow_offset=2, settings=None):
-        super().__init__(text, parent, shadow_offset)
+        # Call the parent constructor safely
+        try:
+            super().__init__(text, parent, shadow_offset, settings)
+        except Exception as e:
+            print(f"Error in GradientPrefixLabel initialization calling super(): {e}")
+            # Fallback to EnhancedLabel if DraggableLabel fails
+            EnhancedLabel.__init__(self, text, parent, shadow_offset)
+            # Set draggable attributes manually
+            self.draggable = False
+            self.dragging = False
+            
         self.settings = settings or {}
         self.prefix = ""
         self.action = ""
@@ -1455,7 +1482,366 @@ class GradientPrefixLabel(EnhancedLabel):
         # Vertical centering
         y = int((self.height() + metrics.ascent() - metrics.descent()) / 2)
         
-        # Draw text
+        # Try to call parent paintEvent for resize handle, but safely handle if it fails
+        try:
+            # This might fail if parent isn't DraggableLabel
+            super().paintEvent(event)
+        except Exception as e:
+            # If it fails, we'll just skip the resize handle drawing
+            pass
+        
+        if self.prefix and ": " in self.text():
+            prefix_text = f"{self.prefix}: "
+            
+            # Accurate widths for centering
+            prefix_width = metrics.horizontalAdvance(prefix_text)
+            action_width = metrics.horizontalAdvance(self.action)
+            total_width = prefix_width + action_width
+            
+            # Horizontally center the combined text block
+            x = int((self.width() - total_width) / 2)
+            
+            # Draw shadow if enabled (for the complete text)
+            if hasattr(self, 'is_shadow_visible') and self.is_shadow_visible:
+                shadow_color = getattr(self, 'shadow_color', QColor(0, 0, 0))
+                shadow_offset = getattr(self, 'shadow_offset', 2)
+                painter.setPen(shadow_color)
+                painter.drawText(int(x + shadow_offset), int(y + shadow_offset), 
+                                prefix_text + self.action)
+            
+            # Calculate prefix rectangle for gradient
+            prefix_rect = metrics.boundingRect(prefix_text)
+            prefix_rect.moveLeft(int(x))
+            prefix_rect.moveTop(int(y - metrics.ascent()))
+            
+            if self.use_prefix_gradient and self.settings.get("use_prefix_gradient", False):
+                # Create vertical gradient (top to bottom) for prefix
+                gradient = QLinearGradient(
+                    prefix_rect.left(), prefix_rect.top(),
+                    prefix_rect.left(), prefix_rect.bottom()
+                )
+                # Set start color at top (0.0) and end color at bottom (1.0)
+                gradient.setColorAt(0, self.prefix_gradient_start)
+                gradient.setColorAt(1, self.prefix_gradient_end)
+                
+                # Apply gradient using QPen with QBrush
+                gradient_brush = QBrush(gradient)
+                painter.setPen(QPen(gradient_brush, 1))
+            else:
+                # Solid color
+                prefix_color = QColor(self.settings.get("prefix_color", "#FFC107"))
+                painter.setPen(prefix_color)
+                
+            # Draw prefix text
+            painter.drawText(int(x), int(y), prefix_text)
+            
+            # Calculate action rectangle for gradient
+            action_rect = metrics.boundingRect(self.action)
+            action_rect.moveLeft(int(x + prefix_width))
+            action_rect.moveTop(int(y - metrics.ascent()))
+            
+            if self.use_action_gradient and self.settings.get("use_action_gradient", False):
+                # Create vertical gradient (top to bottom) for action
+                gradient = QLinearGradient(
+                    action_rect.left(), action_rect.top(),
+                    action_rect.left(), action_rect.bottom()
+                )
+                # Set colors in top-to-bottom order
+                gradient.setColorAt(0, self.action_gradient_start)
+                gradient.setColorAt(1, self.action_gradient_end)
+                
+                # Apply gradient using QPen with QBrush
+                gradient_brush = QBrush(gradient)
+                painter.setPen(QPen(gradient_brush, 1))
+            else:
+                # Solid color
+                action_color = QColor(self.settings.get("action_color", "#FFFFFF"))
+                painter.setPen(action_color)
+                
+            # Draw action text precisely positioned after prefix
+            painter.drawText(int(x + prefix_width), int(y), self.action)
+        else:
+            # Center single text
+            text = self.text()
+            text_width = metrics.horizontalAdvance(text)
+            x = int((self.width() - text_width) / 2)
+            
+            # Draw shadow
+            if hasattr(self, 'is_shadow_visible') and self.is_shadow_visible:
+                shadow_color = getattr(self, 'shadow_color', QColor(0, 0, 0))
+                shadow_offset = getattr(self, 'shadow_offset', 2)
+                painter.setPen(shadow_color)
+                painter.drawText(int(x + shadow_offset), int(y + shadow_offset), text)
+            
+            # Create text rectangle for gradient
+            text_rect = metrics.boundingRect(text)
+            text_rect.moveLeft(int(x))
+            text_rect.moveTop(int(y - metrics.ascent()))
+            
+            if self.use_action_gradient and self.settings.get("use_action_gradient", False):
+                # Create vertical gradient (top to bottom)
+                gradient = QLinearGradient(
+                    text_rect.left(), text_rect.top(),
+                    text_rect.left(), text_rect.bottom()
+                )
+                # Set colors in top-to-bottom order
+                gradient.setColorAt(0, self.action_gradient_start)
+                gradient.setColorAt(1, self.action_gradient_end)
+                
+                # Apply gradient
+                gradient_brush = QBrush(gradient)
+                painter.setPen(QPen(gradient_brush, 1))
+            else:
+                # Solid color
+                action_color = QColor(self.settings.get("action_color", "#FFFFFF"))
+                painter.setPen(action_color)
+                
+            # Draw text
+            painter.drawText(int(x), int(y), text)
+
+class ColoredPrefixLabel(DraggableLabel):
+    """A label that supports different colors for prefix and action text"""
+    def __init__(self, text, parent=None, shadow_offset=2, settings=None):
+        # Call the parent constructor safely
+        try:
+            super().__init__(text, parent, shadow_offset, settings)
+        except Exception as e:
+            print(f"Error in ColoredPrefixLabel initialization calling super(): {e}")
+            # Fallback to EnhancedLabel if DraggableLabel fails
+            EnhancedLabel.__init__(self, text, parent, shadow_offset)
+            # Set draggable attributes manually
+            self.draggable = False
+            self.dragging = False
+        
+        self.settings = settings or {}
+        self.prefix = ""
+        self.action = ""
+        self.parse_text(text)
+    
+    def parse_text(self, text):
+        """Parse text into prefix and action components"""
+        if ": " in text:
+            parts = text.split(": ", 1)
+            self.prefix = parts[0]
+            self.action = parts[1]
+        else:
+            self.prefix = ""
+            self.action = text
+    
+    def paintEvent(self, event):
+        """Override paint event to draw text with different colors"""
+        if not self.text():
+            return
+
+        painter = QPainter(self)
+        painter.setRenderHint(QPainter.Antialiasing)
+        painter.setRenderHint(QPainter.TextAntialiasing)
+
+        # Get current font metrics
+        metrics = QFontMetrics(self.font())
+
+        # Vertical centering
+        y = int((self.height() + metrics.ascent() - metrics.descent()) / 2)
+
+        # Get colors from settings
+        prefix_color = QColor(self.settings.get("prefix_color", "#FFC107"))
+        action_color = QColor(self.settings.get("action_color", "#FFFFFF"))
+
+        # Try to call parent paintEvent for resize handle, but safely handle if it fails
+        try:
+            # This might fail if parent isn't DraggableLabel
+            super().paintEvent(event)
+        except Exception as e:
+            # If it fails, we'll just skip the resize handle drawing
+            pass
+
+        if self.prefix and ": " in self.text():
+            prefix_text = f"{self.prefix}: "
+
+            # Accurate widths
+            prefix_width = metrics.horizontalAdvance(prefix_text)
+            action_width = metrics.horizontalAdvance(self.action)
+            total_width = prefix_width + action_width
+
+            # Horizontally center the combined text block
+            x = int((self.width() - total_width) / 2)
+
+            # Draw shadow (full text shadow if enabled)
+            if hasattr(self, 'is_shadow_visible') and self.is_shadow_visible:
+                shadow_color = getattr(self, 'shadow_color', QColor(0, 0, 0))
+                shadow_offset = getattr(self, 'shadow_offset', 2)
+                painter.setPen(shadow_color)
+                painter.drawText(x + shadow_offset, y + shadow_offset, prefix_text + self.action)
+
+            # Draw prefix
+            painter.setPen(prefix_color)
+            painter.drawText(x, y, prefix_text)
+
+            # Draw action text right after prefix
+            painter.setPen(action_color)
+            painter.drawText(x + prefix_width, y, self.action)
+
+        else:
+            # Center full single-part text
+            text = self.text()
+
+            text_width = metrics.horizontalAdvance(text)
+            x = int((self.width() - text_width) / 2)
+
+            if hasattr(self, 'is_shadow_visible') and self.is_shadow_visible:
+                shadow_color = getattr(self, 'shadow_color', QColor(0, 0, 0))
+                shadow_offset = getattr(self, 'shadow_offset', 2)
+                painter.setPen(shadow_color)
+                painter.drawText(x + shadow_offset, y + shadow_offset, text)
+
+            painter.setPen(action_color)
+            painter.drawText(x, y, text)
+
+# New label classes that combine draggable functionality with color/gradient support
+
+class ColoredDraggableLabel(DraggableLabel):
+    """A draggable label that supports different colors for prefix and action text"""
+    def __init__(self, text, parent=None, shadow_offset=2, settings=None):
+        super().__init__(text, parent, shadow_offset, settings)
+        self.settings = settings or {}
+        self.prefix = ""
+        self.action = ""
+        self.parse_text(text)
+    
+    def parse_text(self, text):
+        """Parse text into prefix and action components"""
+        if ": " in text:
+            parts = text.split(": ", 1)
+            self.prefix = parts[0]
+            self.action = parts[1]
+        else:
+            self.prefix = ""
+            self.action = text
+    
+    def paintEvent(self, event):
+        """Override paint event to draw text with different colors while preserving drag functionality"""
+        if not self.text():
+            return
+
+        painter = QPainter(self)
+        painter.setRenderHint(QPainter.Antialiasing)
+        painter.setRenderHint(QPainter.TextAntialiasing)
+
+        # Get current font metrics
+        metrics = QFontMetrics(self.font())
+
+        # Vertical centering
+        y = int((self.height() + metrics.ascent() - metrics.descent()) / 2)
+
+        # Get colors from settings
+        prefix_color = QColor(self.settings.get("prefix_color", "#FFC107"))
+        action_color = QColor(self.settings.get("action_color", "#FFFFFF"))
+
+        # Draw resize handle from DraggableLabel
+        if hasattr(self, 'is_in_resize_corner') and hasattr(self, 'resize_handle_size'):
+            # Draw resize handle in the bottom-right corner
+            x = self.width() - self.resize_handle_size
+            y_handle = self.height() - self.resize_handle_size
+            painter.setPen(Qt.white)
+            for i in range(1, 4):
+                painter.drawLine(
+                    x + i * 2, y_handle + self.resize_handle_size - 2,
+                    x + self.resize_handle_size - 2, y_handle + i * 2
+                )
+
+        if self.prefix and ": " in self.text():
+            prefix_text = f"{self.prefix}: "
+
+            # Accurate widths
+            prefix_width = metrics.horizontalAdvance(prefix_text)
+            action_width = metrics.horizontalAdvance(self.action)
+            total_width = prefix_width + action_width
+
+            # Horizontally center the combined text block
+            x = int((self.width() - total_width) / 2)
+
+            # Draw shadow (full text shadow if enabled)
+            if self.is_shadow_visible:
+                painter.setPen(self.shadow_color)
+                painter.drawText(x + self.shadow_offset, y + self.shadow_offset, prefix_text + self.action)
+
+            # Draw prefix
+            painter.setPen(prefix_color)
+            painter.drawText(x, y, prefix_text)
+
+            # Draw action text right after prefix
+            painter.setPen(action_color)
+            painter.drawText(x + prefix_width, y, self.action)
+
+        else:
+            # Center full single-part text
+            text = self.text()
+
+            text_width = metrics.horizontalAdvance(text)
+            x = int((self.width() - text_width) / 2)
+
+            if self.is_shadow_visible:
+                painter.setPen(self.shadow_color)
+                painter.drawText(x + self.shadow_offset, y + self.shadow_offset, text)
+
+            painter.setPen(action_color)
+            painter.drawText(x, y, text)
+
+
+class GradientDraggableLabel(DraggableLabel):
+    """A draggable label that supports gradient text for prefix and action text"""
+    def __init__(self, text, parent=None, shadow_offset=2, settings=None):
+        super().__init__(text, parent, shadow_offset, settings)
+        self.settings = settings or {}
+        self.prefix = ""
+        self.action = ""
+        self.parse_text(text)
+        
+        # Initialize gradient settings
+        self.use_prefix_gradient = self.settings.get("use_prefix_gradient", False)
+        self.use_action_gradient = self.settings.get("use_action_gradient", False)
+        self.prefix_gradient_start = QColor(self.settings.get("prefix_gradient_start", "#FFC107"))
+        self.prefix_gradient_end = QColor(self.settings.get("prefix_gradient_end", "#FF5722"))
+        self.action_gradient_start = QColor(self.settings.get("action_gradient_start", "#2196F3"))
+        self.action_gradient_end = QColor(self.settings.get("action_gradient_end", "#4CAF50"))
+    
+    def parse_text(self, text):
+        """Parse text into prefix and action components"""
+        if ": " in text:
+            parts = text.split(": ", 1)
+            self.prefix = parts[0]
+            self.action = parts[1]
+        else:
+            self.prefix = ""
+            self.action = text
+    
+    def paintEvent(self, event):
+        """Paint event with correct gradient rendering while preserving drag functionality"""
+        if not self.text():
+            return
+            
+        painter = QPainter(self)
+        painter.setRenderHint(QPainter.Antialiasing)
+        painter.setRenderHint(QPainter.TextAntialiasing)
+        
+        # Get current font metrics
+        metrics = QFontMetrics(self.font())
+        
+        # Vertical centering
+        y = int((self.height() + metrics.ascent() - metrics.descent()) / 2)
+        
+        # Draw resize handle from DraggableLabel
+        if hasattr(self, 'is_in_resize_corner') and hasattr(self, 'resize_handle_size'):
+            # Draw resize handle in the bottom-right corner
+            x_handle = self.width() - self.resize_handle_size
+            y_handle = self.height() - self.resize_handle_size
+            painter.setPen(Qt.white)
+            for i in range(1, 4):
+                painter.drawLine(
+                    x_handle + i * 2, y_handle + self.resize_handle_size - 2,
+                    x_handle + self.resize_handle_size - 2, y_handle + i * 2
+                )
+        
         if self.prefix and ": " in self.text():
             prefix_text = f"{self.prefix}: "
             
@@ -1510,7 +1896,7 @@ class GradientPrefixLabel(EnhancedLabel):
                     action_rect.left(), action_rect.top(),
                     action_rect.left(), action_rect.bottom()
                 )
-                # Set start color at top (0.0) and end color at bottom (1.0)
+                # Set colors in top-to-bottom order
                 gradient.setColorAt(0, self.action_gradient_start)
                 gradient.setColorAt(1, self.action_gradient_end)
                 
@@ -1546,7 +1932,7 @@ class GradientPrefixLabel(EnhancedLabel):
                     text_rect.left(), text_rect.top(),
                     text_rect.left(), text_rect.bottom()
                 )
-                # Set start color at top (0.0) and end color at bottom (1.0)
+                # Set colors in top-to-bottom order
                 gradient.setColorAt(0, self.action_gradient_start)
                 gradient.setColorAt(1, self.action_gradient_end)
                 
@@ -1560,82 +1946,6 @@ class GradientPrefixLabel(EnhancedLabel):
                 
             # Draw text
             painter.drawText(int(x), int(y), text)
-
-class ColoredPrefixLabel(EnhancedLabel):
-    """A label that supports different colors for prefix and action text"""
-    def __init__(self, text, parent=None, shadow_offset=2, settings=None):
-        super().__init__(text, parent, shadow_offset)
-        self.settings = settings or {}
-        self.prefix = ""
-        self.action = ""
-        self.parse_text(text)
-    
-    def parse_text(self, text):
-        """Parse text into prefix and action components"""
-        if ": " in text:
-            parts = text.split(": ", 1)
-            self.prefix = parts[0]
-            self.action = parts[1]
-        else:
-            self.prefix = ""
-            self.action = text
-    
-    def paintEvent(self, event):
-        """Override paint event to draw text with different colors"""
-        if not self.text():
-            return
-
-        painter = QPainter(self)
-        painter.setRenderHint(QPainter.Antialiasing)
-        painter.setRenderHint(QPainter.TextAntialiasing)
-
-        # Get current font metrics
-        metrics = QFontMetrics(self.font())
-
-        # Vertical centering
-        y = int((self.height() + metrics.ascent() - metrics.descent()) / 2)
-
-        # Get colors from settings
-        prefix_color = QColor(self.settings.get("prefix_color", "#FFC107"))
-        action_color = QColor(self.settings.get("action_color", "#FFFFFF"))
-
-        if self.prefix and ": " in self.text():
-            prefix_text = f"{self.prefix}: "
-
-            # Accurate widths
-            prefix_width = metrics.horizontalAdvance(prefix_text)
-            action_width = metrics.horizontalAdvance(self.action)
-            total_width = prefix_width + action_width
-
-            # Horizontally center the combined text block
-            x = int((self.width() - total_width) / 2)
-
-            # Draw shadow (full text shadow if enabled)
-            if self.is_shadow_visible:
-                painter.setPen(self.shadow_color)
-                painter.drawText(x + self.shadow_offset, y + self.shadow_offset, prefix_text + self.action)
-
-            # Draw prefix
-            painter.setPen(prefix_color)
-            painter.drawText(x, y, prefix_text)
-
-            # Draw action text right after prefix
-            painter.setPen(action_color)
-            painter.drawText(x + prefix_width, y, self.action)
-
-        else:
-            # Center full single-part text
-            text = self.text()
-
-            text_width = metrics.horizontalAdvance(text)
-            x = int((self.width() - text_width) / 2)
-
-            if self.is_shadow_visible:
-                painter.setPen(self.shadow_color)
-                painter.drawText(x + self.shadow_offset, y + self.shadow_offset, text)
-
-            painter.setPen(action_color)
-            painter.drawText(x, y, text)
 
 class PreviewWindow(QMainWindow):
     """Window for displaying game controls preview"""
@@ -1774,16 +2084,16 @@ class PreviewWindow(QMainWindow):
 
     def show_measurement_guides(self, x, y, width, height):
         """Show dynamic measurement guides with pixel distances"""
+        from PyQt5.QtWidgets import QLabel, QFrame
+        from PyQt5.QtCore import Qt
+        from PyQt5.QtGui import QColor, QPalette
+        
         # Remove any existing measurement guides
         self.hide_measurement_guides()
         
         # Store current element position
         if not hasattr(self, 'measurement_guides'):
             self.measurement_guides = []
-        
-        from PyQt5.QtWidgets import QLabel, QFrame
-        from PyQt5.QtCore import Qt
-        from PyQt5.QtGui import QColor, QPalette
         
         # Get canvas dimensions
         canvas_width = self.canvas.width()
@@ -1845,7 +2155,6 @@ class PreviewWindow(QMainWindow):
         y_indicator.show()
         self.measurement_guides.append(y_indicator)
 
-        
         # 5. Create distance indicators from grid origin (if available)
         if hasattr(self, 'grid_x_start') and hasattr(self, 'grid_y_start'):
             x_offset = x - self.grid_x_start
@@ -1899,93 +2208,117 @@ class PreviewWindow(QMainWindow):
     # 5. Add integration to the PreviewWindow initialization
     def enhance_preview_window_init(self):
         """Call this in PreviewWindow.__init__ after setting up controls"""
-        # Set up alignment features - grid, snapping, etc.
-        self.setup_alignment_features()
-        self.setup_snapping_controls()
-        
-        # Load any saved settings
-        self.load_grid_settings()
-        self.load_snapping_settings()
-        
-        # Add a shortcut text to inform users about Shift key
-        from PyQt5.QtWidgets import QLabel
-        
-        self.shortcuts_label = QLabel("Hold Shift to temporarily disable snapping", self)
-        self.shortcuts_label.setStyleSheet("""
-            background-color: rgba(0, 0, 0, 180);
-            color: white;
-            padding: 5px;
-            border-radius: 3px;
-        """)
-        self.shortcuts_label.adjustSize()
-        self.shortcuts_label.move(10, self.height() - self.shortcuts_label.height() - 10)
-        self.shortcuts_label.show()
-        
-        # Hide after a delay
-        from PyQt5.QtCore import QTimer
-        QTimer.singleShot(5000, lambda: self.shortcuts_label.hide())
+        try:
+            # Set up alignment features - grid, snapping, etc.
+            self.setup_alignment_features_safe()
+            self.setup_snapping_controls_safe()
+            
+            # Load any saved settings
+            if hasattr(self, 'load_grid_settings'):
+                self.load_grid_settings()
+            if hasattr(self, 'load_snapping_settings'):
+                self.load_snapping_settings()
+            
+            # Add a shortcut text to inform users about Shift key
+            from PyQt5.QtWidgets import QLabel
+            
+            try:
+                self.shortcuts_label = QLabel("Hold Shift to temporarily disable snapping", self)
+                self.shortcuts_label.setStyleSheet("""
+                    background-color: rgba(0, 0, 0, 180);
+                    color: white;
+                    padding: 5px;
+                    border-radius: 3px;
+                """)
+                self.shortcuts_label.adjustSize()
+                self.shortcuts_label.move(10, self.height() - self.shortcuts_label.height() - 10)
+                self.shortcuts_label.show()
+                
+                # Hide after a delay
+                from PyQt5.QtCore import QTimer
+                QTimer.singleShot(5000, lambda: self.shortcuts_label.hide())
+            except Exception as e:
+                print(f"Error creating shortcuts label: {e}")
+        except Exception as e:
+            print(f"Error in enhance_preview_window_init: {e}")
     
     # 1. Add these properties to PreviewWindow's initialization or setup_alignment_features method
     def setup_snapping_controls(self):
-        """Initialize snapping control settings"""
-        # Default snapping settings
-        # Add this at the beginning of the method
-        print(f"Has bottom_row: {hasattr(self, 'bottom_row')}")
-        print("Setting up snapping controls")
-        
-        # Then add this after creating the button
-        if hasattr(self, 'snap_button'):
-            print(f"Snap button created and added to layout: {self.snap_button.text()}")
-        else:
-            print("Failed to create snap button!")
-        self.snapping_enabled = True
-        self.snap_distance = 15
-        self.snap_to_grid = True
-        self.snap_to_screen_center = True
-        self.snap_to_controls = True
-        self.snap_to_logo = True
-        
-        # Load any saved snapping settings
-        self.load_snapping_settings()
-        
-        # Add toggle button to the toolbar if we have button rows
-        if hasattr(self, 'bottom_row') and not hasattr(self, 'snap_button'):
-            from PyQt5.QtWidgets import QPushButton
+        """Initialize snapping control settings with robust error handling"""
+        try:
+            # Default snapping settings
+            print(f"Has bottom_row: {hasattr(self, 'bottom_row')}")
+            print("Setting up snapping controls")
             
-            button_style = """
-                QPushButton {
-                    background-color: #404050;
-                    color: white;
-                    border: none;
-                    border-radius: 4px;
-                    padding: 6px 10px;
-                    font-weight: bold;
-                    font-family: 'Segoe UI', Arial, sans-serif;
-                    font-size: 12px;
-                    min-width: 80px;
-                }
-                QPushButton:hover {
-                    background-color: #555565;
-                }
-                QPushButton:pressed {
-                    background-color: #303040;
-                }
-            """
+            self.snapping_enabled = True
+            self.snap_distance = 15
+            self.snap_to_grid = True
+            self.snap_to_screen_center = True
+            self.snap_to_controls = True
+            self.snap_to_logo = True
             
-            self.snap_button = QPushButton("Disable Snap" if self.snapping_enabled else "Enable Snap")
-            self.snap_button.clicked.connect(self.toggle_snapping)
-            self.snap_button.setStyleSheet(button_style)
-            self.bottom_row.addWidget(self.snap_button)
+            # Load any saved snapping settings
+            if hasattr(self, 'load_snapping_settings'):
+                try:
+                    self.load_snapping_settings()
+                except Exception as e:
+                    print(f"Error loading snapping settings: {e}")
             
-            # Add a button for snapping settings
-            self.snap_settings_button = QPushButton("Snap Settings")
-            self.snap_settings_button.clicked.connect(self.show_snapping_settings)
-            self.snap_settings_button.setStyleSheet(button_style)
-            self.bottom_row.addWidget(self.snap_settings_button)
+            # Only add the button if bottom_row exists and snap_button doesn't
+            if hasattr(self, 'bottom_row') and not hasattr(self, 'snap_button'):
+                try:
+                    from PyQt5.QtWidgets import QPushButton
+                    
+                    button_style = """
+                        QPushButton {
+                            background-color: #404050;
+                            color: white;
+                            border: none;
+                            border-radius: 4px;
+                            padding: 6px 10px;
+                            font-weight: bold;
+                            font-family: 'Segoe UI', Arial, sans-serif;
+                            font-size: 12px;
+                            min-width: 80px;
+                        }
+                        QPushButton:hover {
+                            background-color: #555565;
+                        }
+                        QPushButton:pressed {
+                            background-color: #303040;
+                        }
+                    """
+                    
+                    self.snap_button = QPushButton("Disable Snap" if self.snapping_enabled else "Enable Snap")
+                    self.snap_button.clicked.connect(self.toggle_snapping)
+                    self.snap_button.setStyleSheet(button_style)
+                    self.bottom_row.addWidget(self.snap_button)
+                    
+                    print(f"Snap button created and added to layout: {self.snap_button.text()}")
+                    
+                    # Add a button for snapping settings
+                    self.snap_settings_button = QPushButton("Snap Settings")
+                    self.snap_settings_button.clicked.connect(self.show_snapping_settings)
+                    self.snap_settings_button.setStyleSheet(button_style)
+                    self.bottom_row.addWidget(self.snap_settings_button)
+                except Exception as e:
+                    print(f"Error creating snap buttons: {e}")
+            else:
+                print(f"Not creating snap buttons - bottom_row exists: {hasattr(self, 'bottom_row')}, snap_button exists: {hasattr(self, 'snap_button')}")
+        except Exception as e:
+            print(f"Error in setup_snapping_controls: {e}")
+            import traceback
+            traceback.print_exc()
+
 
     # 2. Add these methods to PreviewWindow for controlling snapping
     def toggle_snapping(self):
         """Toggle snapping on/off"""
+        # Check if snapping_enabled exists, if not initialize it
+        if not hasattr(self, 'snapping_enabled'):
+            self.snapping_enabled = True  # Default to enabled
+        
+        # Now toggle it    
         self.snapping_enabled = not self.snapping_enabled
         
         # Update button text
@@ -2007,15 +2340,19 @@ class PreviewWindow(QMainWindow):
             preview_dir = os.path.join(self.mame_dir, "preview")
             os.makedirs(preview_dir, exist_ok=True)
             
-            # Create settings object
+            # Create settings object with default values for missing attributes
             settings = {
-                "snapping_enabled": self.snapping_enabled,
-                "snap_distance": self.snap_distance,
-                "snap_to_grid": self.snap_to_grid,
-                "snap_to_screen_center": self.snap_to_screen_center, 
-                "snap_to_controls": self.snap_to_controls,
-                "snap_to_logo": self.snap_to_logo
+                "snapping_enabled": getattr(self, 'snapping_enabled', True),
+                "snap_distance": getattr(self, 'snap_distance', 15),  # Default to 15 if not set
+                "snap_to_grid": getattr(self, 'snap_to_grid', True),
+                "snap_to_screen_center": getattr(self, 'snap_to_screen_center', True), 
+                "snap_to_controls": getattr(self, 'snap_to_controls', True),
+                "snap_to_logo": getattr(self, 'snap_to_logo', True)
             }
+            
+            # Also initialize these attributes on the object so they're available next time
+            for attr, value in settings.items():
+                setattr(self, attr, value)
             
             # Save to global settings file
             settings_file = os.path.join(preview_dir, "snapping_settings.json")
@@ -2415,12 +2752,14 @@ class PreviewWindow(QMainWindow):
         self.guide_timer.timeout.connect(self.hide_alignment_guides)
         self.guide_timer.start(1500)  # Hide after 1.5 seconds (increased from 1s)
 
-    # 2. Add hide_alignment_guides method to PreviewWindow
     def hide_alignment_guides(self):
         """Hide alignment guide lines"""
         if hasattr(self, 'guide_labels'):
             for guide in self.guide_labels:
-                guide.deleteLater()
+                try:
+                    guide.deleteLater()
+                except:
+                    pass  # Ignore errors if the guide is already deleted
             self.guide_labels = []
     
     def toggle_button_prefixes(self):
@@ -5504,28 +5843,29 @@ class PreviewWindow(QMainWindow):
 
     # Improved create_control_labels method that respects joystick visibility
     def create_control_labels(self, clean_mode=False):
-        """Create control labels with improved gradient support"""
+        """Create control labels with option for clean mode and joystick visibility support"""
         if not self.game_data or 'players' not in self.game_data:
             return
         
         # Load saved positions
-        saved_positions = self.load_saved_positions()
+        saved_positions = {}
+        if hasattr(self, 'load_saved_positions'):
+            try:
+                saved_positions = self.load_saved_positions()
+            except Exception as e:
+                print(f"Error loading saved positions: {e}")
         
         # Make sure joystick_visible is set before we start creating controls
         if not hasattr(self, 'joystick_visible'):
             # Load from settings if possible
-            bezel_settings = self.load_bezel_settings() if hasattr(self, 'load_bezel_settings') else {}
+            bezel_settings = {}
+            if hasattr(self, 'load_bezel_settings'):
+                try:
+                    bezel_settings = self.load_bezel_settings()
+                except Exception as e:
+                    print(f"Error loading bezel settings: {e}")
             self.joystick_visible = bezel_settings.get("joystick_visible", True)
             print(f"Pre-initialized joystick visibility to: {self.joystick_visible}")
-        
-        # Check for gradient settings (debug)
-        has_prefix_gradient = self.text_settings.get("use_prefix_gradient", False)
-        has_action_gradient = self.text_settings.get("use_action_gradient", False)
-        print(f"Gradient settings: prefix={has_prefix_gradient}, action={has_action_gradient}")
-        
-        if has_prefix_gradient or has_action_gradient:
-            print(f"Prefix gradient: {self.text_settings.get('prefix_gradient_start', '#FFC107')} -> {self.text_settings.get('prefix_gradient_end', '#FF5722')}")
-            print(f"Action gradient: {self.text_settings.get('action_gradient_start', '#2196F3')} -> {self.text_settings.get('action_gradient_end', '#4CAF50')}")
         
         # Process controls
         for player in self.game_data.get('players', []):
@@ -5539,9 +5879,11 @@ class PreviewWindow(QMainWindow):
                 action_text = control['value']
                 
                 # Get button prefix based on control_name
-                button_prefix = self.get_button_prefix(control_name)
+                button_prefix = ""
+                if hasattr(self, 'get_button_prefix'):
+                    button_prefix = self.get_button_prefix(control_name)
                 
-                # Determine visibility BEFORE creating the control
+                # Determine visibility
                 is_visible = True
                 if "JOYSTICK" in control_name:
                     is_visible = getattr(self, 'joystick_visible', True)
@@ -5555,7 +5897,7 @@ class PreviewWindow(QMainWindow):
                 if self.text_settings.get("show_button_prefix", True) and button_prefix:
                     display_text = f"{button_prefix}: {action_text}"
                 
-                # Get position - use saved position or default grid position
+                # Get position
                 if control_name in saved_positions:
                     # Get saved position
                     pos_x, pos_y = saved_positions[control_name]
@@ -5583,59 +5925,19 @@ class PreviewWindow(QMainWindow):
                     if grid_x == 0:
                         grid_y += 1
                 
-                # Decide which label class to use based on gradient settings
-                use_gradient_label = (has_prefix_gradient or has_action_gradient)
+                # Determine if we should use gradient
+                use_prefix_gradient = self.text_settings.get("use_prefix_gradient", False)
+                use_action_gradient = self.text_settings.get("use_action_gradient", False)
+                use_gradient = use_prefix_gradient or use_action_gradient
                 
-                # Create label based on mode and gradient support
-                if clean_mode:
-                    if use_gradient_label:
-                        # Use GradientPrefixLabel for gradient support
-                        label = GradientPrefixLabel(display_text, self.canvas, shadow_offset=2, settings=self.text_settings.copy())
+                try:
+                    # Create the appropriate label type
+                    if use_gradient:
+                        # Use the gradient-enabled label
+                        label = GradientDraggableLabel(display_text, self.canvas, settings=self.text_settings)
                     else:
-                        # Use ColoredPrefixLabel for simple color support
-                        label = ColoredPrefixLabel(display_text, self.canvas, shadow_offset=2, settings=self.text_settings.copy())
-                    
-                    # Apply the initialized font
-                    if hasattr(self, 'current_font'):
-                        label.setFont(self.current_font)
-                    elif hasattr(self, 'initialized_font'):
-                        label.setFont(self.initialized_font)
-                    else:
-                        # Fallback to standard approach
-                        font = QFont(self.text_settings.get("font_family", "Arial"), 
-                                    self.text_settings.get("font_size", 28))
-                        font.setBold(self.text_settings.get("bold_strength", 2) > 0)
-                        label.setFont(font)
-                    
-                    # Apply background styling only
-                    label.setStyleSheet("background-color: transparent; border: none;")
-                    
-                    # Set position
-                    label.move(x, y)
-                    
-                    # For gradient labels, explicitly set gradient properties
-                    if use_gradient_label and isinstance(label, GradientPrefixLabel):
-                        # Set gradient flags
-                        label.use_prefix_gradient = has_prefix_gradient
-                        label.use_action_gradient = has_action_gradient
-                        
-                        # Set gradient colors (with QColor conversion)
-                        try:
-                            label.prefix_gradient_start = QColor(self.text_settings.get("prefix_gradient_start", "#FFC107"))
-                            label.prefix_gradient_end = QColor(self.text_settings.get("prefix_gradient_end", "#FF5722"))
-                            label.action_gradient_start = QColor(self.text_settings.get("action_gradient_start", "#2196F3"))
-                            label.action_gradient_end = QColor(self.text_settings.get("action_gradient_end", "#4CAF50"))
-                        except Exception as e:
-                            print(f"Error setting gradient colors: {e}")
-                        
-                        # Force an update
-                        label.update()
-                else:
-                    # Non-clean mode (draggable labels)
-                    if use_gradient_label:
-                        label = GradientPrefixLabel(display_text, self.canvas, settings=self.text_settings.copy())
-                    else:
-                        label = ColoredPrefixLabel(display_text, self.canvas, settings=self.text_settings.copy())
+                        # Use the color-enabled label
+                        label = ColoredDraggableLabel(display_text, self.canvas, settings=self.text_settings)
                     
                     # Apply font
                     if hasattr(self, 'current_font'):
@@ -5643,50 +5945,47 @@ class PreviewWindow(QMainWindow):
                     elif hasattr(self, 'initialized_font'):
                         label.setFont(self.initialized_font)
                     else:
+                        from PyQt5.QtGui import QFont
                         font = QFont(self.text_settings.get("font_family", "Arial"), 
                                 self.text_settings.get("font_size", 28))
                         font.setBold(self.text_settings.get("bold_strength", 2) > 0)
                         label.setFont(font)
                     
-                    # Make it draggable
-                    label.draggable = True
-                    
-                    # Set position
+                    # Position the label
                     label.move(x, y)
                     
-                    # For gradient labels, explicitly set gradient properties
-                    if use_gradient_label and isinstance(label, GradientPrefixLabel):
-                        # Set gradient flags explicitly
-                        label.use_prefix_gradient = has_prefix_gradient
-                        label.use_action_gradient = has_action_gradient
-                        
-                        # Set gradient colors (with QColor conversion)
-                        try:
-                            label.prefix_gradient_start = QColor(self.text_settings.get("prefix_gradient_start", "#FFC107"))
-                            label.prefix_gradient_end = QColor(self.text_settings.get("prefix_gradient_end", "#FF5722"))
-                            label.action_gradient_start = QColor(self.text_settings.get("action_gradient_start", "#2196F3"))
-                            label.action_gradient_end = QColor(self.text_settings.get("action_gradient_end", "#4CAF50"))
-                        except Exception as e:
-                            print(f"Error setting gradient colors: {e}")
-                        
-                        # Force an update
-                        label.update()
+                    # Handle draggable mode based on clean_mode parameter
+                    label.draggable = not clean_mode
                     
-                    # Add drag events
-                    label.mousePressEvent = lambda event, lbl=label: self.on_label_press(event, lbl)
-                    label.mouseMoveEvent = lambda event, lbl=label: self.on_label_move(event, lbl)
-                    label.mouseReleaseEvent = lambda event, lbl=label: self.on_label_release(event, lbl)
-                
-                # Apply visibility immediately
-                label.setVisible(is_visible)
-                
-                # Store the label
-                self.control_labels[control_name] = {
-                    'label': label,
-                    'action': action_text,
-                    'prefix': button_prefix,
-                    'original_pos': original_pos
-                }
+                    # For gradient labels, explicitly set gradient properties
+                    if use_gradient and hasattr(label, 'use_prefix_gradient'):
+                        label.use_prefix_gradient = use_prefix_gradient
+                        label.use_action_gradient = use_action_gradient
+                        
+                        # Set gradient colors
+                        label.prefix_gradient_start = QColor(self.text_settings.get("prefix_gradient_start", "#FFC107"))
+                        label.prefix_gradient_end = QColor(self.text_settings.get("prefix_gradient_end", "#FF5722"))
+                        label.action_gradient_start = QColor(self.text_settings.get("action_gradient_start", "#2196F3"))
+                        label.action_gradient_end = QColor(self.text_settings.get("action_gradient_end", "#4CAF50"))
+                    
+                    # Add drag events if not in clean mode
+                    if not clean_mode:
+                        label.mousePressEvent = lambda event, lbl=label: self.on_label_press(event, lbl)
+                        label.mouseMoveEvent = lambda event, lbl=label: self.on_label_move(event, lbl)
+                        label.mouseReleaseEvent = lambda event, lbl=label: self.on_label_release(event, lbl)
+                    
+                    # Apply visibility
+                    label.setVisible(is_visible)
+                    
+                    # Store the label
+                    self.control_labels[control_name] = {
+                        'label': label,
+                        'action': action_text,
+                        'prefix': button_prefix,
+                        'original_pos': original_pos
+                    }
+                except Exception as e:
+                    print(f"Error creating label for {control_name}: {e}")
         
         # Force a canvas update
         self.canvas.update()
@@ -5694,28 +5993,199 @@ class PreviewWindow(QMainWindow):
                 
     def on_label_press(self, event, label):
         """Handle mouse press on label"""
+        from PyQt5.QtCore import Qt
+        
         if event.button() == Qt.LeftButton:
+            # Make sure draggable flag is set
             label.dragging = True
             label.drag_start_pos = event.pos()
             label.setCursor(Qt.ClosedHandCursor)
             event.accept()
 
     def on_label_move(self, event, label):
-        """Handle mouse move for dragging labels"""
+        """Handle mouse move for dragging labels with snapping and position indicators"""
+        from PyQt5.QtCore import Qt
+        from PyQt5.QtWidgets import QApplication
+        
         if hasattr(label, 'dragging') and label.dragging:
             # Calculate new position
             delta = event.pos() - label.drag_start_pos
             new_pos = label.pos() + delta
+            original_pos = new_pos  # Store original position before any snapping
+            
+            # Initialize guide lines list and snapping variables
+            guide_lines = []
+            snapped = False
+            canvas_width = self.canvas.width()
+            canvas_height = self.canvas.height()
+            
+            # Check if snapping is enabled and not overridden
+            modifiers = QApplication.keyboardModifiers()
+            disable_snap = bool(modifiers & Qt.ShiftModifier)  # Shift key disables snapping temporarily
+            
+            apply_snapping = (
+                not disable_snap and
+                hasattr(self, 'snapping_enabled') and
+                self.snapping_enabled
+            )
+            
+            # Get snap distance if available
+            snap_distance = getattr(self, 'snap_distance', 15)
+            
+            if apply_snapping:
+                # Get label center coordinates
+                label_center_x = new_pos.x() + label.width() // 2
+                label_center_y = new_pos.y() + label.height() // 2
+                
+                # 1. Absolute grid position snapping (if enabled)
+                if (hasattr(self, 'snap_to_grid') and self.snap_to_grid and
+                    hasattr(self, 'grid_x_start') and hasattr(self, 'grid_y_start')):
+                    
+                    grid_x_start = self.grid_x_start
+                    grid_x_step = self.grid_x_step
+                    
+                    # Snap to column X positions
+                    for col in range(self.grid_columns):
+                        grid_x = grid_x_start + (col * grid_x_step)
+                        if abs(new_pos.x() - grid_x) < snap_distance:
+                            new_pos.setX(grid_x)
+                            guide_lines.append((grid_x, 0, grid_x, canvas_height))
+                            snapped = True
+                            break
+                    
+                    # Snap to row Y positions
+                    grid_y_start = self.grid_y_start
+                    grid_y_step = self.grid_y_step
+                    
+                    for row in range(self.grid_rows):
+                        grid_y = grid_y_start + (row * grid_y_step)
+                        if abs(new_pos.y() - grid_y) < snap_distance:
+                            new_pos.setY(grid_y)
+                            guide_lines.append((0, grid_y, canvas_width, grid_y))
+                            snapped = True
+                            break
+                
+                # 2. Screen center alignment (if enabled)
+                if hasattr(self, 'snap_to_screen_center') and self.snap_to_screen_center:
+                    # Horizontal center
+                    screen_center_x = canvas_width // 2
+                    if abs(label_center_x - screen_center_x) < snap_distance:
+                        new_pos.setX(int(screen_center_x - label.width() / 2))
+                        guide_lines.append((screen_center_x, 0, screen_center_x, canvas_height))
+                        snapped = True
+                    
+                    # Vertical center
+                    screen_center_y = canvas_height // 2
+                    if abs(label_center_y - screen_center_y) < snap_distance:
+                        new_pos.setY(int(screen_center_y - label.height() / 2))
+                        guide_lines.append((0, screen_center_y, canvas_width, screen_center_y))
+                        snapped = True
+                
+                # 3. Check alignment with other controls (if enabled)
+                if (hasattr(self, 'snap_to_controls') and self.snap_to_controls and
+                    hasattr(self, 'control_labels')):
+                    
+                    for control_name, control_data in self.control_labels.items():
+                        other_label = control_data.get('label')
+                        if other_label is label or not other_label or not other_label.isVisible():
+                            continue
+                        
+                        # X-position alignment - snap to left edge of other labels
+                        other_x = other_label.pos().x()
+                        if abs(new_pos.x() - other_x) < snap_distance:
+                            new_pos.setX(other_x)
+                            guide_lines.append((other_x, 0, other_x, canvas_height))
+                            snapped = True
+                        
+                        # Y-position alignment - snap to top edge of other labels
+                        other_y = other_label.pos().y()
+                        if abs(new_pos.y() - other_y) < snap_distance:
+                            new_pos.setY(other_y)
+                            guide_lines.append((0, other_y, canvas_width, other_y))
+                            snapped = True
+                
+                # 4. Check alignment with logo (if enabled)
+                if (hasattr(self, 'snap_to_logo') and self.snap_to_logo and
+                    hasattr(self, 'logo_label') and self.logo_label and
+                    self.logo_label.isVisible()):
+                    
+                    logo = self.logo_label
+                    
+                    # Left edge alignment (absolute X position)
+                    logo_left = logo.pos().x()
+                    if abs(new_pos.x() - logo_left) < snap_distance:
+                        new_pos.setX(logo_left)
+                        guide_lines.append((logo_left, 0, logo_left, canvas_height))
+                        snapped = True
+                    
+                    # Top edge alignment
+                    logo_top = logo.pos().y()
+                    if abs(new_pos.y() - logo_top) < snap_distance:
+                        new_pos.setY(logo_top)
+                        guide_lines.append((0, logo_top, canvas_width, logo_top))
+                        snapped = True
+            
+            # 5. Show dynamic measurement guides
+            if hasattr(self, 'show_measurement_guides'):
+                try:
+                    self.show_measurement_guides(
+                        new_pos.x(), new_pos.y(), 
+                        label.width(), label.height()
+                    )
+                except Exception as e:
+                    print(f"Error showing measurement guides: {e}")
+
+            # Add snapping status info if needed
+            if disable_snap and hasattr(self, 'show_position_indicator'):
+                try:
+                    self.show_position_indicator(
+                        new_pos.x(), new_pos.y(), 
+                        "Snapping temporarily disabled (Shift)"
+                    )
+                except Exception as e:
+                    print(f"Error showing position indicator with status: {e}")
+            
+            # Show alignment guides if snapped
+            if snapped and guide_lines and hasattr(self, 'show_alignment_guides'):
+                try:
+                    self.show_alignment_guides(guide_lines)
+                except Exception as e:
+                    print(f"Error showing alignment guides: {e}")
+            elif hasattr(self, 'hide_alignment_guides'):
+                try:
+                    self.hide_alignment_guides()
+                except Exception as e:
+                    print(f"Error hiding alignment guides: {e}")
             
             # Apply the move
             label.move(new_pos)
+            
+            # Show position indicator regardless of snapping
+            if hasattr(self, 'show_position_indicator'):
+                try:
+                    self.show_position_indicator(new_pos.x(), new_pos.y())
+                except Exception as e:
+                    print(f"Error showing position indicator: {e}")
+                
             event.accept()
+
 
     def on_label_release(self, event, label):
         """Handle mouse release to end dragging"""
-        if event.button() == Qt.LeftButton and hasattr(label, 'dragging'):
+        from PyQt5.QtCore import Qt
+        
+        if event.button() == Qt.LeftButton:
             label.dragging = False
             label.setCursor(Qt.OpenHandCursor)
+            
+            # Hide guidance elements
+            if hasattr(self, 'hide_alignment_guides'):
+                self.hide_alignment_guides()
+            if hasattr(self, 'hide_measurement_guides'):
+                self.hide_measurement_guides()
+            if hasattr(self, 'hide_position_indicator'):
+                self.hide_position_indicator()
+                
             event.accept()
     
     def get_button_prefix(self, control_name):
@@ -6066,6 +6536,9 @@ class PreviewWindow(QMainWindow):
     
     def apply_text_settings(self):
         """Apply current text settings to all controls with both font and gradient support"""
+        # Import QTimer at the beginning of the method
+        from PyQt5.QtCore import QTimer
+        
         # Extract settings
         font_family = self.text_settings.get("font_family", "Arial")
         font_size = self.text_settings.get("font_size", 28)
@@ -6205,6 +6678,9 @@ class PreviewWindow(QMainWindow):
         # Determine if we need to recreate labels based on gradient settings
         need_to_recreate = False
         
+        # Skip the gradient check for now since we don't have reliable class references
+        # This will be added back later when we have the proper classes
+        '''
         # Check if we need to recreate labels (e.g., if we're switching between gradient types)
         if hasattr(self, 'control_labels') and self.control_labels:
             # Get the first label to check its type
@@ -6217,6 +6693,7 @@ class PreviewWindow(QMainWindow):
             if current_is_gradient != needs_gradient:
                 need_to_recreate = True
                 print(f"Need to recreate labels: current_is_gradient={current_is_gradient}, needs_gradient={needs_gradient}")
+        '''
         
         if need_to_recreate:
             # Save current positions
@@ -6245,6 +6722,7 @@ class PreviewWindow(QMainWindow):
             # Now apply the font and settings to ALL controls
             from PyQt5.QtCore import QTimer
             from PyQt5.QtGui import QColor
+            from PyQt5.QtCore import QPoint
             
             for control_name, control_data in self.control_labels.items():
                 if 'label' in control_data:
@@ -6271,24 +6749,31 @@ class PreviewWindow(QMainWindow):
                         label.settings.update(self.text_settings)
                     
                     # If it's a ColoredPrefixLabel or GradientPrefixLabel, update prefix and action
-                    if isinstance(label, (ColoredPrefixLabel, GradientPrefixLabel)):
-                        label.parse_text(display_text)
+                    if hasattr(label, 'parse_text'):
+                        try:
+                            label.parse_text(display_text)
+                        except Exception as e:
+                            print(f"Error parsing text for {control_name}: {e}")
                     
                     # Apply the font - TWO ways for redundancy
                     label.setFont(font)
                     
-                    # Special gradient updates for GradientPrefixLabel
-                    if isinstance(label, GradientPrefixLabel):
+                    # Special gradient updates for GradientPrefixLabel - do this safely
+                    if hasattr(label, 'use_prefix_gradient') and hasattr(label, 'use_action_gradient'):
                         try:
                             # Update gradient flags
                             label.use_prefix_gradient = use_prefix_gradient
                             label.use_action_gradient = use_action_gradient
                             
-                            # Update gradient colors
-                            label.prefix_gradient_start = QColor(prefix_gradient_start)
-                            label.prefix_gradient_end = QColor(prefix_gradient_end)
-                            label.action_gradient_start = QColor(action_gradient_start)
-                            label.action_gradient_end = QColor(action_gradient_end)
+                            # Update gradient colors if these attributes exist
+                            if hasattr(label, 'prefix_gradient_start'):
+                                label.prefix_gradient_start = QColor(prefix_gradient_start)
+                            if hasattr(label, 'prefix_gradient_end'):
+                                label.prefix_gradient_end = QColor(prefix_gradient_end)
+                            if hasattr(label, 'action_gradient_start'):
+                                label.action_gradient_start = QColor(action_gradient_start)
+                            if hasattr(label, 'action_gradient_end'):
+                                label.action_gradient_end = QColor(action_gradient_end)
                         except Exception as e:
                             print(f"Error updating gradient settings: {e}")
                     
@@ -6313,42 +6798,48 @@ class PreviewWindow(QMainWindow):
         if hasattr(self, 'canvas'):
             self.canvas.update()
         
-        # Verify font application
+        # Verify font application - do this more safely
         if hasattr(self, 'verify_font_application'):
-            # Use a short delay to allow Qt to properly apply fonts
-            QTimer.singleShot(100, self.verify_font_application)
+            try:
+                # Use a short delay to allow Qt to properly apply fonts
+                QTimer.singleShot(100, self.verify_font_application)
+            except Exception as e:
+                print(f"Error scheduling font verification: {e}")
         
         print("Text settings applied to all controls with both font and gradient support")
 
     def verify_font_application(self, control_name=None):
         """Verify that fonts are being correctly applied to labels"""
-        print("\n--- FONT APPLICATION VERIFICATION ---")
-        
-        # Get the requested font family from settings
-        requested_font = self.text_settings.get("font_family", "Arial")
-        print(f"Requested font from settings: {requested_font}")
-        
-        # Check a specific control or all controls
-        if control_name and control_name in self.control_labels:
-            label = self.control_labels[control_name]['label']
-            actual_font = label.font().family()
-            actual_size = label.font().pointSize()
-            print(f"Control '{control_name}': font={actual_font}, size={actual_size}")
-        else:
-            # Check a sample of controls
-            sample_count = min(3, len(self.control_labels))
-            count = 0
-            for name, data in self.control_labels.items():
-                if count >= sample_count:
-                    break
-                if 'label' in data:
-                    label = data['label']
-                    actual_font = label.font().family()
-                    actual_size = label.font().pointSize()
-                    print(f"Control '{name}': font={actual_font}, size={actual_size}")
-                    count += 1
-        
-        print("----------------------------------")
+        try:
+            print("\n--- FONT APPLICATION VERIFICATION ---")
+            
+            # Get the requested font family from settings
+            requested_font = self.text_settings.get("font_family", "Arial")
+            print(f"Requested font from settings: {requested_font}")
+            
+            # Check a specific control or all controls
+            if control_name and control_name in self.control_labels:
+                label = self.control_labels[control_name]['label']
+                actual_font = label.font().family()
+                actual_size = label.font().pointSize()
+                print(f"Control '{control_name}': font={actual_font}, size={actual_size}")
+            else:
+                # Check a sample of controls
+                sample_count = min(3, len(self.control_labels))
+                count = 0
+                for name, data in self.control_labels.items():
+                    if count >= sample_count:
+                        break
+                    if 'label' in data:
+                        label = data['label']
+                        actual_font = label.font().family()
+                        actual_size = label.font().pointSize()
+                        print(f"Control '{name}': font={actual_font}, size={actual_size}")
+                        count += 1
+            
+            print("----------------------------------")
+        except Exception as e:
+            print(f"Error in verify_font_application: {e}")
 
     def ensure_font_loaded(self, font_family):
         """Ensure the specified font is loaded into the application"""
