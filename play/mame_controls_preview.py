@@ -3110,6 +3110,11 @@ class PreviewWindow(QMainWindow):
         self.xinput_controls_button.clicked.connect(self.toggle_xinput_controls)
         self.xinput_controls_button.setStyleSheet(button_style)
         top_row.addWidget(self.xinput_controls_button)
+
+        self.bezel_button = QPushButton("Show Bezel")
+        self.bezel_button.clicked.connect(self.toggle_bezel_improved)
+        self.bezel_button.setStyleSheet(button_style)
+        top_row.addWidget(self.bezel_button)
         
         # Second row buttons
         self.toggle_texts_button = QPushButton("Hide Texts")
@@ -3136,6 +3141,12 @@ class PreviewWindow(QMainWindow):
         self.logo_button.clicked.connect(self.toggle_logo)
         self.logo_button.setStyleSheet(button_style)
         bottom_row.addWidget(self.logo_button)
+        
+        self.center_logo_button = QPushButton("Center Logo")
+        self.center_logo_button.clicked.connect(self.center_logo)
+        self.center_logo_button.setStyleSheet(button_style)
+        self.center_logo_button.setToolTip("Center logo in the canvas") 
+        bottom_row.addWidget(self.center_logo_button)
         
         # Screen toggle with number indicator
         self.screen_button = QPushButton(f"Screen {getattr(self, 'current_screen', 1)}")
@@ -4207,6 +4218,35 @@ class PreviewWindow(QMainWindow):
             import traceback
             traceback.print_exc()
             return False
+    
+    # Add a method to the PreviewWindow class to center the logo
+    def center_logo(self):
+        """Center the logo horizontally in the canvas, keep current Y position"""
+        if not hasattr(self, 'logo_label') or not self.logo_label:
+            print("No logo to center")
+            return False
+
+        # Get canvas and logo dimensions
+        canvas_width = self.canvas.width()
+        logo_width = self.logo_label.width()
+
+        # Get current Y position
+        current_pos = self.logo_label.pos()
+        current_y = current_pos.y()
+
+        # Calculate center X position
+        x = (canvas_width - logo_width) // 2
+
+        # Move logo to new X, keeping current Y
+        self.logo_label.move(x, current_y)
+
+        # Update settings to reflect new position
+        self.logo_settings["custom_position"] = True
+        self.logo_settings["x_position"] = x
+        self.logo_settings["y_position"] = current_y
+
+        print(f"Logo horizontally centered at X={x}, Y remains {current_y}")
+        return True
     
     # Ensure the load_logo_settings method properly loads custom position
     def load_logo_settings(self):
