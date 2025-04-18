@@ -1,13 +1,6 @@
-Revert to best working - alignment. and slowly add back
+Grid not working
 
-WIP Gradient
-- color doesn't save to image
-x axis slightly off a few px when saving an image
-- show preview standalone shows colour which is good
-
-Show all Xinput breaks app
-
-Alignment missing - how??
+Show all Xinput reverts to default text, and you have to re apply current text
 
 Add back hide bezel button
 

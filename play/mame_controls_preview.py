@@ -6002,8 +6002,19 @@ class PreviewWindow(QMainWindow):
             label.setCursor(Qt.ClosedHandCursor)
             event.accept()
 
-    def on_label_move(self, event, label):
-        """Handle mouse move for dragging labels with snapping and position indicators"""
+    def on_label_move(self, event, label, shadow=None, orig_func=None):
+        """Handle mouse move for dragging labels with shadow support"""
+        # If shadow and original function are provided, use them
+        if shadow is not None and orig_func is not None:
+            # Call the original mouseMoveEvent method for the label
+            orig_func(event)
+            
+            # Update shadow position to match the label with offset
+            shadow_pos = label.pos()
+            shadow.move(shadow_pos.x() + 2, shadow_pos.y() + 2)
+            return
+            
+        # Otherwise, use the standard dragging behavior
         from PyQt5.QtCore import Qt
         from PyQt5.QtWidgets import QApplication
         
@@ -6168,7 +6179,6 @@ class PreviewWindow(QMainWindow):
                     print(f"Error showing position indicator: {e}")
                 
             event.accept()
-
 
     def on_label_release(self, event, label):
         """Handle mouse release to end dragging"""

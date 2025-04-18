@@ -194,7 +194,7 @@ class MAMEControlConfig(ctk.CTk):
             self.load_gamedata_json()
             
         # Debug output
-        print(f"\nLooking up game data for: {romname}")
+        #print(f"\nLooking up game data for: {romname}")
         
         if romname in self.gamedata_json:
             game_data = self.gamedata_json[romname]
@@ -242,10 +242,10 @@ class MAMEControlConfig(ctk.CTk):
             controls = None
             if 'controls' in game_data:
                 controls = game_data['controls']
-                print(f"Found direct controls for {romname}")
+                #print(f"Found direct controls for {romname}")
             else:
                 needs_parent_controls = True
-                print(f"No direct controls for {romname}, needs parent controls")
+                #print(f"No direct controls for {romname}, needs parent controls")
                 
             # If no controls and this is a clone, try to use parent controls
             if needs_parent_controls:
@@ -254,19 +254,19 @@ class MAMEControlConfig(ctk.CTk):
                 # Check explicit parent field (should be there from load_gamedata_json)
                 if 'parent' in game_data:
                     parent_rom = game_data['parent']
-                    print(f"Found parent {parent_rom} via direct reference")
+                    #print(f"Found parent {parent_rom} via direct reference")
                 
                 # Also check parent lookup table for redundancy
                 elif hasattr(self, 'parent_lookup') and romname in self.parent_lookup:
                     parent_rom = self.parent_lookup[romname]
-                    print(f"Found parent {parent_rom} via lookup table")
+                    #print(f"Found parent {parent_rom} via lookup table")
                 
                 # If we found a parent, try to get its controls
                 if parent_rom and parent_rom in self.gamedata_json:
                     parent_data = self.gamedata_json[parent_rom]
                     if 'controls' in parent_data:
                         controls = parent_data['controls']
-                        print(f"Using controls from parent {parent_rom} for clone {romname}")
+                        #print(f"Using controls from parent {parent_rom} for clone {romname}")
             
             # Now process the controls (either direct or inherited from parent)
             if controls:
@@ -1742,10 +1742,10 @@ class MAMEControlConfig(ctk.CTk):
                         # Also store in the parent lookup table
                         self.parent_lookup[clone_name] = rom_name
                         self.gamedata_json[clone_name] = clone_data
-                        print(f"Indexed clone {clone_name} with parent {rom_name}")
+                        #print(f"Indexed clone {clone_name} with parent {rom_name}")
                 
-            print(f"Loaded {len(self.gamedata_json)} games from gamedata.json")
-            print(f"Indexed {len(self.parent_lookup)} parent-clone relationships")
+            #print(f"Loaded {len(self.gamedata_json)} games from gamedata.json")
+            #print(f"Indexed {len(self.parent_lookup)} parent-clone relationships")
             return self.gamedata_json
                 
         except Exception as e:
