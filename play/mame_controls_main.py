@@ -32,7 +32,7 @@ def main():
     parser.add_argument('--preview-only', action='store_true', help='Show only the preview window')
     parser.add_argument('--clean-preview', action='store_true', help='Show preview without buttons and UI elements (like saved image)')
     parser.add_argument('--game', type=str, help='Specify the ROM name to preview')
-    parser.add_argument('--screen', type=int, default=2, help='Screen number to display preview on (default: 2)')
+    parser.add_argument('--screen', type=int, default=1, help='Screen number to display preview on (default: 2)')
     parser.add_argument('--auto-close', action='store_true', help='Automatically close preview when MAME exits')
     parser.add_argument('--no-buttons', action='store_true', help='Hide buttons in preview mode (overrides settings)')
     # Change this line to make PyQt default and add Tkinter option
