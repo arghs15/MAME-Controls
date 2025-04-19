@@ -1094,7 +1094,6 @@ class TextSettingsDialog(QDialog):
         else:
             self.preview_label.setStyleSheet("background-color: black;")
 
-    
     def get_current_settings(self):
         """Get the current settings from dialog controls"""
         return {
@@ -1122,8 +1121,8 @@ class TextSettingsDialog(QDialog):
         self.settings = settings
         
         # If parent provided and has the method, update parent settings
-        if self.parent and hasattr(self.parent, 'update_logo_settings'):
-            self.parent.update_logo_settings(settings)
+        if self.parent and hasattr(self.parent, 'update_text_settings'):
+            self.parent.update_text_settings(settings)
     
     def accept_settings(self):
         """Save settings and close dialog"""

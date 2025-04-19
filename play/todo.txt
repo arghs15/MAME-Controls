@@ -1,5 +1,3 @@
-Fix floating frame. sometimes a button doesn't register a press. likely as the frame can be dragged
-
 Show all Xinput reverts to default text, and you have to re apply current text
 
 Remove shadow - pointless
