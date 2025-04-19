@@ -1,3 +1,5 @@
+import builtins
+import datetime
 import sys
 import os
 import json
@@ -11,7 +13,6 @@ from tkinter import messagebox, StringVar, scrolledtext, Frame, Label, PhotoImag
 
 import tkinter as tk
 from tkinter import ttk, messagebox
-
 
 # Add these helper functions if not already present
 def get_application_path():
@@ -38,14 +39,20 @@ def get_mame_parent_dir(app_path=None):
         # We're already in the MAME directory
         return app_path
 
+# Global debug flag
+DEBUG_MODE = False  # Set to False to disable all debug output
+
 def debug_print(message):
-    """Print debug message with timestamp"""
-    import datetime
+    """Print debug message with timestamp only if DEBUG_MODE is True"""
+    if not DEBUG_MODE:
+        return
     timestamp = datetime.datetime.now().strftime("%H:%M:%S.%f")[:-3]
     print(f"[DEBUG {timestamp}] {message}")
 
 def debug_path_info():
-    """Print path debugging information"""
+    """Print path debugging information only if DEBUG_MODE is True"""
+    if not DEBUG_MODE:
+        return
     debug_print("=== PATH DEBUGGING ===")
     debug_print(f"Current working directory: {os.getcwd()}")
     debug_print(f"Script location: {os.path.dirname(os.path.abspath(__file__))}")
