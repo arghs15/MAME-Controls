@@ -570,16 +570,24 @@ class MAMEControlConfig(QMainWindow):
         try:
             from mame_controls_preview import PreviewWindow
             
-            # Create the preview window
-            self.preview_window = PreviewWindow(rom_name, game_data, self.mame_dir, 
-                                            hide_buttons=self.hide_preview_buttons,
-                                            clean_mode=clean_mode)
+            # Create the preview window with correct positional parameter order
+            # Based on error message, PreviewWindow expects positional arguments
+            # Expected order: rom_name, game_data, mame_dir, parent, hide_buttons, clean_mode
+            self.preview_window = PreviewWindow(
+                rom_name,             # 1st positional arg  
+                game_data,            # 2nd positional arg
+                self.mame_dir,        # 3rd positional arg
+                None,                 # 4th positional arg (parent)
+                self.hide_preview_buttons,  # 5th positional arg
+                clean_mode            # 6th positional arg
+            )
             
             # Mark this as a standalone preview (for proper cleanup)
             self.preview_window.standalone_mode = True
             
             # CRITICAL ADDITION: Call the new method to ensure consistent positioning
-            self.preview_window.ensure_consistent_text_positioning()
+            if hasattr(self.preview_window, 'ensure_consistent_text_positioning'):
+                self.preview_window.ensure_consistent_text_positioning()
             
             # Apply aggressive fullscreen settings
             self.preview_window.setWindowFlags(

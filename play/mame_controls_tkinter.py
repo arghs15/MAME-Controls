@@ -3,6 +3,7 @@ import os
 import json
 import re
 import subprocess
+import traceback
 from typing import Dict, Optional, Set, List, Tuple
 import xml.etree.ElementTree as ET
 import customtkinter as ctk
@@ -12,6 +13,7 @@ import tkinter as tk
 from tkinter import ttk, messagebox
 
 
+# Add these helper functions if not already present
 def get_application_path():
     """Get the base path for the application (handles PyInstaller bundling)"""
     if getattr(sys, 'frozen', False):
@@ -21,6 +23,39 @@ def get_application_path():
         # Running as script
         return os.path.dirname(os.path.abspath(__file__))
 
+def get_mame_parent_dir(app_path=None):
+    """
+    Get the parent directory where MAME, ROMs, and artwork are located.
+    If we're in the preview folder, the parent is the MAME directory.
+    """
+    if app_path is None:
+        app_path = get_application_path()
+    
+    # If we're in the preview folder, the parent is the MAME directory
+    if os.path.basename(app_path).lower() == "preview":
+        return os.path.dirname(app_path)
+    else:
+        # We're already in the MAME directory
+        return app_path
+
+def debug_print(message):
+    """Print debug message with timestamp"""
+    import datetime
+    timestamp = datetime.datetime.now().strftime("%H:%M:%S.%f")[:-3]
+    print(f"[DEBUG {timestamp}] {message}")
+
+def debug_path_info():
+    """Print path debugging information"""
+    debug_print("=== PATH DEBUGGING ===")
+    debug_print(f"Current working directory: {os.getcwd()}")
+    debug_print(f"Script location: {os.path.dirname(os.path.abspath(__file__))}")
+    debug_print(f"Python path: {sys.path}")
+    debug_print(f"OS environment PATH: {os.environ.get('PATH', '')}")
+    debug_print("====== MODULES ======")
+    for name, module in sorted(sys.modules.items()):
+        if hasattr(module, '__file__') and module.__file__:
+            debug_print(f"{name}: {module.__file__}")
+    debug_print("====================")
 
 class PositionManager:
     """Handles storage, normalization, and application of text positions"""
@@ -143,53 +178,88 @@ class PositionManager:
 
 class MAMEControlConfig(ctk.CTk):
     def __init__(self, preview_only=False):
-        super().__init__()
+        debug_print("Starting MAMEControlConfig initialization")
+        debug_path_info()
 
-        # Initialize core attributes needed for both modes
-        self.visible_control_types = ["BUTTON", "JOYSTICK"]
-        self.default_controls = {}
-        self.gamedata_json = {}
-        self.available_roms = set()
-        self.custom_configs = {}
-        self.current_game = None
-        self.use_xinput = True
-        
-        # Logo size settings (as percentages)
-        self.logo_width_percentage = 15
-        self.logo_height_percentage = 15
-        
-        # Initialize the position manager
-        self.position_manager = PositionManager(self)
+        try:
+            super().__init__()
+            debug_print("Super initialization complete")
 
-        # Configure the window
-        self.title("MAME Control Configuration Checker")
-        self.geometry("1024x768")
-        self.fullscreen = True  # Track fullscreen state
-        ctk.set_appearance_mode("dark")
-        ctk.set_default_color_theme("dark-blue")
-        
-        # Bind F11 key for fullscreen toggle
-        self.bind("<F11>", self.toggle_fullscreen)
-        self.bind("<Escape>", self.exit_fullscreen)
-        
-        self.selected_line = None
-        self.highlight_tag = "highlight"
-        
-        # Set initial fullscreen state
-        self.after(100, self.state, 'zoomed')  # Use zoomed for Windows
-        
-        # Find necessary directories
-        self.mame_dir = os.path.abspath(os.path.join(os.path.dirname(__file__), '..'))
-        if not self.mame_dir:
-            messagebox.showerror("Error", "Please place this script in the MAME directory!")
-            self.quit()
-            return
+            # Initialize core attributes needed for both modes
+            self.visible_control_types = ["BUTTON", "JOYSTICK"]
+            self.default_controls = {}
+            self.gamedata_json = {}
+            self.available_roms = set()
+            self.custom_configs = {}
+            self.current_game = None
+            self.use_xinput = True
+            
+            # Logo size settings (as percentages)
+            self.logo_width_percentage = 15
+            self.logo_height_percentage = 15
+            
+            # Get application path for proper directory structure
+            self.app_dir = get_application_path()
+            self.mame_dir = get_mame_parent_dir(self.app_dir)
+            
+            debug_print(f"App directory: {self.app_dir}")
+            debug_print(f"MAME directory: {self.mame_dir}")
+            
+            # Set up directory structure
+            self.preview_dir = os.path.join(self.mame_dir, "preview")
+            self.settings_dir = os.path.join(self.preview_dir, "settings")
+            
+            # Create these directories if they don't exist
+            os.makedirs(self.preview_dir, exist_ok=True)
+            os.makedirs(self.settings_dir, exist_ok=True)
+            
+            debug_print(f"Preview directory: {self.preview_dir}")
+            debug_print(f"Settings directory: {self.settings_dir}")
+            
+            # Initialize the position manager
+            self.position_manager = PositionManager(self)
+            debug_print("Position manager initialized")
 
-        # Create the interface
-        self.create_layout()
-        
-        # Load all data
-        self.load_all_data()
+            # Configure the window
+            self.title("MAME Control Configuration Checker")
+            self.geometry("1024x768")
+            self.fullscreen = True  # Track fullscreen state
+            ctk.set_appearance_mode("dark")
+            ctk.set_default_color_theme("dark-blue")
+            debug_print("Window configuration complete")
+            
+            # Bind F11 key for fullscreen toggle
+            self.bind("<F11>", self.toggle_fullscreen)
+            self.bind("<Escape>", self.exit_fullscreen)
+            
+            self.selected_line = None
+            self.highlight_tag = "highlight"
+            
+            # Set initial fullscreen state
+            self.after(100, self.state, 'zoomed')  # Use zoomed for Windows
+            debug_print("Fullscreen state set")
+            
+            if not self.mame_dir:
+                debug_print("ERROR: MAME directory not found!")
+                messagebox.showerror("Error", "MAME directory not found!")
+                self.quit()
+                return
+
+            # Create the interface
+            debug_print("Creating layout...")
+            self.create_layout()
+            debug_print("Layout created")
+            
+            # Load all data
+            debug_print("Loading data...")
+            self.load_all_data()
+            debug_print("Data loaded")
+            
+            debug_print("Initialization complete")
+        except Exception as e:
+            debug_print(f"CRITICAL ERROR in initialization: {e}")
+            traceback.print_exc()
+            messagebox.showerror("Initialization Error", f"Failed to initialize: {e}")
     
     def get_game_data(self, romname):
         """Get control data for a ROM from gamedata.json with improved clone handling"""
@@ -550,10 +620,6 @@ class MAMEControlConfig(ctk.CTk):
             traceback.print_exc()
         
         return controls
-    
-    def generate_all_configs(self):
-        """Generate config files for all available ROMs from gamedata.json"""
-        messagebox.showinfo("Coming Soon", "This feature will be implemented in a future update.")
 
     def toggle_fullscreen(self, event=None):
         """Toggle fullscreen state"""
@@ -732,112 +798,143 @@ class MAMEControlConfig(ctk.CTk):
                 
                 row += 1
 
+    # Update create_layout method with debugging
     def create_layout(self):
-        """Create the main application layout"""
-        # Configure grid
-        self.grid_columnconfigure(0, weight=0)
-        self.grid_columnconfigure(1, weight=3)
-        self.grid_rowconfigure(0, weight=1)
-
-        # Create left panel (game list)
-        self.left_panel = ctk.CTkFrame(self)
-        self.left_panel.grid(row=0, column=0, padx=10, pady=10, sticky="nsew")
-        self.left_panel.grid_columnconfigure(0, weight=1)
-        self.left_panel.grid_rowconfigure(2, weight=1)
-
-        # Create stats frame at the top of left panel
-        self.stats_frame = ctk.CTkFrame(self.left_panel)
-        self.stats_frame.grid(row=0, column=0, padx=5, pady=5, sticky="ew")
-        self.stats_frame.grid_columnconfigure(1, weight=1)
-        self.stats_frame.grid_columnconfigure(3, weight=0)
-
-        # Stats label
-        self.stats_label = ctk.CTkLabel(self.stats_frame, text="Loading...", 
-                                    font=("Arial", 12))
-        self.stats_label.grid(row=0, column=0, padx=5, pady=5, sticky="w")
-
-        # Unmatched ROMs button
-        self.unmatched_button = ctk.CTkButton(
-            self.stats_frame,
-            text="Show Unmatched ROMs",
-            command=self.show_unmatched_roms,
-            width=150
-        )
-        self.unmatched_button.grid(row=0, column=1, padx=5, pady=5, sticky="e")
+        """Create the main application layout with debug tracing"""
+        debug_print("Creating application layout...")
         
-        # Generate configs button
-        self.generate_configs_button = ctk.CTkButton(
-            self.stats_frame,
-            text="Generate Info Files",
-            command=self.generate_all_configs,
-            width=150
-        )
-        self.generate_configs_button.grid(row=0, column=2, padx=5, pady=5, sticky="e")
+        try:
+            # Configure grid
+            self.grid_columnconfigure(0, weight=0)
+            self.grid_columnconfigure(1, weight=3)
+            self.grid_rowconfigure(0, weight=1)
+            debug_print("Grid configuration set")
 
-        # Generate configs button
-        self.analyze_button = ctk.CTkButton(
-            self.stats_frame,
-            text="Analyze Controls",
-            command=self.analyze_controls,
-            width=150
-        )
-        self.analyze_button.grid(row=0, column=4, padx=5, pady=5, sticky="e")
+            # Create left panel (game list)
+            debug_print("Creating left panel...")
+            self.left_panel = ctk.CTkFrame(self)
+            self.left_panel.grid(row=0, column=0, padx=10, pady=10, sticky="nsew")
+            self.left_panel.grid_columnconfigure(0, weight=1)
+            self.left_panel.grid_rowconfigure(2, weight=1)
+            debug_print("Left panel created")
 
-        # Search box
-        self.search_var = StringVar()
-        self.search_var.trace("w", self.filter_games)
-        self.search_entry = ctk.CTkEntry(self.left_panel, 
-                                    placeholder_text="Search games...",
-                                    textvariable=self.search_var)
-        self.search_entry.grid(row=1, column=0, padx=5, pady=5, sticky="ew")
+            # Create stats frame at the top of left panel
+            debug_print("Creating stats frame...")
+            self.stats_frame = ctk.CTkFrame(self.left_panel)
+            self.stats_frame.grid(row=0, column=0, padx=5, pady=5, sticky="ew")
+            self.stats_frame.grid_columnconfigure(1, weight=1)
+            self.stats_frame.grid_columnconfigure(3, weight=0)
+            debug_print("Stats frame created")
 
-        # Game list with improved styling
-        self.game_list = ctk.CTkTextbox(self.left_panel, font=("Arial", 13))
-        self.game_list.grid(row=2, column=0, padx=5, pady=5, sticky="nsew")
-        self.game_list._textbox.tag_configure(self.highlight_tag, background="#1a5fb4", foreground="white")
-        self.game_list.configure(padx=5, pady=5)
-        self.game_list.bind("<Button-1>", self.on_game_select)
+            # Stats label
+            self.stats_label = ctk.CTkLabel(self.stats_frame, text="Loading...", 
+                                        font=("Arial", 12))
+            self.stats_label.grid(row=0, column=0, padx=5, pady=5, sticky="w")
+            debug_print("Stats label created")
 
-        # Create right panel (control display)
-        self.right_panel = ctk.CTkFrame(self)
-        self.right_panel.grid(row=0, column=1, padx=10, pady=10, sticky="nsew")
-        self.right_panel.grid_columnconfigure(0, weight=1)
-        self.right_panel.grid_rowconfigure(2, weight=1)
+            # Unmatched ROMs button
+            self.unmatched_button = ctk.CTkButton(
+                self.stats_frame,
+                text="Show Unmatched ROMs",
+                command=self.show_unmatched_roms,
+                width=150
+            )
+            self.unmatched_button.grid(row=0, column=1, padx=5, pady=5, sticky="e")
+            
+            # Creating remaining UI elements...
+            debug_print("Creating buttons...")
+            
+            # Generate configs button
+            self.generate_configs_button = ctk.CTkButton(
+                self.stats_frame,
+                text="Generate Info Files",
+                command=self.generate_all_configs,
+                width=150
+            )
+            self.generate_configs_button.grid(row=0, column=2, padx=5, pady=5, sticky="e")
 
-        # Game title
-        self.game_title = ctk.CTkLabel(self.right_panel, 
-                                    text="Select a game",
-                                    font=("Arial", 20, "bold"))
-        self.game_title.grid(row=0, column=0, padx=5, pady=5)
+            # Generate configs button
+            self.analyze_button = ctk.CTkButton(
+                self.stats_frame,
+                text="Analyze Controls",
+                command=self.analyze_controls,
+                width=150
+            )
+            self.analyze_button.grid(row=0, column=4, padx=5, pady=5, sticky="e")
+            debug_print("Buttons created")
 
-        # Add Preview button next to the game title
-        self.preview_button = ctk.CTkButton(
-            self.right_panel,
-            text="Preview Controls",
-            command=self.show_preview,
-            width=150
-        )
-        self.preview_button.grid(row=0, column=1, padx=5, pady=5, sticky="e")
+            # Search box
+            debug_print("Creating search box...")
+            self.search_var = StringVar()
+            self.search_var.trace("w", self.filter_games)
+            self.search_entry = ctk.CTkEntry(self.left_panel, 
+                                        placeholder_text="Search games...",
+                                        textvariable=self.search_var)
+            self.search_entry.grid(row=1, column=0, padx=5, pady=5, sticky="ew")
+            debug_print("Search box created")
 
-        self.hide_buttons_toggle = ctk.CTkSwitch(
-            self.right_panel,
-            text="Hide Preview Buttons",
-            command=self.toggle_hide_preview_buttons
-        )
-        self.hide_buttons_toggle.grid(row=0, column=2, padx=5, pady=5, sticky="e")
+            # Game list with improved styling
+            debug_print("Creating game list...")
+            self.game_list = ctk.CTkTextbox(self.left_panel, font=("Arial", 13))
+            self.game_list.grid(row=2, column=0, padx=5, pady=5, sticky="nsew")
+            self.game_list._textbox.tag_configure(self.highlight_tag, background="#1a5fb4", foreground="white")
+            self.game_list.configure(padx=5, pady=5)
+            self.game_list.bind("<Button-1>", self.on_game_select)
+            debug_print("Game list created")
 
-        # Add XInput toggle switch
-        self.xinput_toggle = ctk.CTkSwitch(
-            self.right_panel,
-            text="Use XInput Mappings",
-            command=self.toggle_xinput
-        )
-        self.xinput_toggle.select()  # Set it on by default
-        self.xinput_toggle.grid(row=1, column=0, padx=5, pady=5)
+            # Create right panel (control display)
+            debug_print("Creating right panel...")
+            self.right_panel = ctk.CTkFrame(self)
+            self.right_panel.grid(row=0, column=1, padx=10, pady=10, sticky="nsew")
+            self.right_panel.grid_columnconfigure(0, weight=1)
+            self.right_panel.grid_rowconfigure(2, weight=1)
+            debug_print("Right panel created")
 
-        # Controls display
-        self.control_frame = ctk.CTkScrollableFrame(self.right_panel)
-        self.control_frame.grid(row=2, column=0, columnspan=3, padx=5, pady=5, sticky="nsew")
+            # Game title
+            self.game_title = ctk.CTkLabel(self.right_panel, 
+                                        text="Select a game",
+                                        font=("Arial", 20, "bold"))
+            self.game_title.grid(row=0, column=0, padx=5, pady=5)
+            debug_print("Game title created")
+
+            # Add Preview button next to the game title
+            self.preview_button = ctk.CTkButton(
+                self.right_panel,
+                text="Preview Controls",
+                command=self.show_preview,
+                width=150
+            )
+            self.preview_button.grid(row=0, column=1, padx=5, pady=5, sticky="e")
+            debug_print("Preview button created")
+
+            self.hide_buttons_toggle = ctk.CTkSwitch(
+                self.right_panel,
+                text="Hide Preview Buttons",
+                command=self.toggle_hide_preview_buttons
+            )
+            self.hide_buttons_toggle.grid(row=0, column=2, padx=5, pady=5, sticky="e")
+            debug_print("Hide buttons toggle created")
+
+            # Add XInput toggle switch
+            self.xinput_toggle = ctk.CTkSwitch(
+                self.right_panel,
+                text="Use XInput Mappings",
+                command=self.toggle_xinput
+            )
+            self.xinput_toggle.select()  # Set it on by default
+            self.xinput_toggle.grid(row=1, column=0, padx=5, pady=5)
+            debug_print("XInput toggle created")
+
+            # Controls display
+            self.control_frame = ctk.CTkScrollableFrame(self.right_panel)
+            self.control_frame.grid(row=2, column=0, columnspan=3, padx=5, pady=5, sticky="nsew")
+            debug_print("Control frame created")
+            
+            debug_print("Layout creation complete")
+        except Exception as e:
+            debug_print(f"ERROR creating layout: {e}")
+            traceback.print_exc()
+            messagebox.showerror("Layout Error", f"Failed to create layout: {e}")
     
     #######################################################################
     #CONFIF TO CREATE INFO FILES FOR RETROFE
@@ -846,13 +943,11 @@ class MAMEControlConfig(ctk.CTk):
     
     
     def create_info_directory(self):
-        """Create info directory if it doesn't exist"""
-        # Use application_path instead of __file__ for PyInstaller compatibility
-        app_path = get_application_path()
-        info_dir = os.path.join(app_path, "info")
-        if not os.path.exists(info_dir):
-            os.makedirs(info_dir)
-        return info_dir
+        """Create info directory in the new folder structure"""
+        # Use the predefined info_dir
+        if not os.path.exists(self.info_dir):
+            os.makedirs(self.info_dir)
+        return self.info_dir
     
     def generate_all_configs(self):
         """Generate config files for all available ROMs from gamedata.json"""
@@ -915,12 +1010,10 @@ class MAMEControlConfig(ctk.CTk):
         messagebox.showinfo("Config Generation Report", report)
     
     def load_default_template(self):
-        """Load the default.conf template with improved path handling for PyInstaller"""
-        # Use application_path instead of __file__ for PyInstaller compatibility
-        app_path = get_application_path()
-        template_path = os.path.join(app_path, "preview", "settings", "info", "default.conf")
+        """Load the default.conf template with updated path handling"""
+        # Look in the info directory
+        template_path = os.path.join(self.info_dir, "default.conf")
         
-        # Debug output to help diagnose path issues
         print(f"\nLooking for default template at: {template_path}")
         
         try:
@@ -931,21 +1024,36 @@ class MAMEControlConfig(ctk.CTk):
         except Exception as e:
             print(f"Error loading template: {e}")
             
-            # Try an alternate path for backwards compatibility
-            alt_path = os.path.join(app_path, "preview", "info", "default.conf")
-            print(f"Trying alternate path: {alt_path}")
+            # Try legacy paths
+            legacy_paths = [
+                os.path.join(self.preview_dir, "settings", "info", "default.conf"),
+                os.path.join(self.preview_dir, "info", "default.conf"),
+                os.path.join(self.app_dir, "info", "default.conf")
+            ]
             
-            try:
-                with open(alt_path, 'r', encoding='utf-8') as f:
-                    template_content = f.read()
-                    print(f"Successfully loaded template from alternate path ({len(template_content)} characters)")
+            for legacy_path in legacy_paths:
+                print(f"Trying legacy path: {legacy_path}")
+                try:
+                    with open(legacy_path, 'r', encoding='utf-8') as f:
+                        template_content = f.read()
+                    
+                    # Also migrate the template to the new location
+                    try:
+                        os.makedirs(os.path.dirname(template_path), exist_ok=True)
+                        with open(template_path, 'w', encoding='utf-8') as f:
+                            f.write(template_content)
+                        print(f"Migrated template to: {template_path}")
+                    except Exception as migrate_err:
+                        print(f"Error migrating template: {migrate_err}")
+                    
+                    print(f"Successfully loaded template from legacy path ({len(template_content)} characters)")
                     return template_content
-            except Exception as alt_e:
-                print(f"Error loading from alternate path: {alt_e}")
-                
-                # Last resort: create a default template on the fly
-                print("Creating default template content")
-                default_content = """# MAME Controls Info File
+                except Exception as alt_e:
+                    print(f"Error loading from legacy path: {alt_e}")
+            
+            # Last resort: create a default template on the fly
+            print("Creating default template content")
+            default_content = """# MAME Controls Info File
     # Auto-generated default template
 
     controller A t = A Button
@@ -962,16 +1070,16 @@ class MAMEControlConfig(ctk.CTk):
     controller R-stick t = Right Stick
     controller D-pad t = D-Pad
     """
-                # Try to save this for future use
-                try:
-                    os.makedirs(os.path.dirname(template_path), exist_ok=True)
-                    with open(template_path, 'w', encoding='utf-8') as f:
-                        f.write(default_content)
-                    print(f"Created new default template at: {template_path}")
-                except Exception as save_e:
-                    print(f"Could not save default template: {save_e}")
-                    
-                return default_content
+            # Try to save this for future use
+            try:
+                os.makedirs(os.path.dirname(template_path), exist_ok=True)
+                with open(template_path, 'w', encoding='utf-8') as f:
+                    f.write(default_content)
+                print(f"Created new default template at: {template_path}")
+            except Exception as save_e:
+                print(f"Could not save default template: {save_e}")
+                
+            return default_content
     
     def generate_game_config(self, game_data: dict) -> str:
         """Generate config file content for a specific game"""
@@ -1730,24 +1838,31 @@ class MAMEControlConfig(ctk.CTk):
     
     # Updated get_gamedata_path method to work when exe is in preview folder
     def get_gamedata_path(self):
-        """Get the path to the gamedata.json file without checking legacy paths"""
-        import os
+        """Get the path to the gamedata.json file based on new folder structure"""
+        # Always store gamedata.json in settings directory
+        settings_path = os.path.join(self.settings_dir, "gamedata.json")
         
-        # Determine if we're in preview folder
-        current_dir = os.path.dirname(os.path.abspath(__file__))
-        in_preview_folder = os.path.basename(current_dir) == "preview"
+        # If the file doesn't exist in settings dir, check if it exists in mame root
+        # and copy it to the settings dir
+        if not os.path.exists(settings_path):
+            legacy_paths = [
+                os.path.join(self.mame_dir, "gamedata.json"),
+                os.path.join(self.mame_dir, "preview", "gamedata.json")
+            ]
+            
+            for legacy_path in legacy_paths:
+                if os.path.exists(legacy_path):
+                    print(f"Found gamedata.json at legacy path: {legacy_path}")
+                    print(f"Copying to new location: {settings_path}")
+                    import shutil
+                    shutil.copy2(legacy_path, settings_path)
+                    break
         
-        if in_preview_folder:
-            # If we're in preview folder, settings are in preview/settings
-            settings_path = os.path.join(self.mame_dir, "preview", "gamedata.json")
-        else:
-            # Normal path relative to mame_dir
-            settings_path = os.path.join(self.mame_dir, "preview", "gamedata.json")
-        
-        # Create directory if it doesn't exist
+        # Create directory if it doesn't exist (redundant but safe)
         os.makedirs(os.path.dirname(settings_path), exist_ok=True)
         
         return settings_path
+
     
     def create_game_list_with_edit(self, parent_frame, game_list, title_text):
         """Helper function to create a consistent list with edit button for games"""
@@ -1848,11 +1963,11 @@ class MAMEControlConfig(ctk.CTk):
         return generic_control_games, missing_control_games
     
     def show_preview(self):
-        """Launch the PyQt preview window as a separate process"""
+        """Launch the PyQt preview window as a separate process with updated path handling"""
         if not self.current_game:
             messagebox.showinfo("No Game Selected", "Please select a game first")
             return
-            
+                
         # Get game data
         game_data = self.get_game_data(self.current_game)
         if not game_data:
@@ -1861,7 +1976,27 @@ class MAMEControlConfig(ctk.CTk):
         
         # Launch preview as a separate process
         try:
-            script_path = os.path.join(get_application_path(), "mame_controls_main.py")
+            # Use the path from the application directory
+            script_dir = get_application_path()
+            script_path = os.path.join(script_dir, "mame_controls_main.py")
+            
+            # If script not found at application path, try as a relative path
+            if not os.path.exists(script_path):
+                script_path = os.path.join(os.getcwd(), "mame_controls_main.py")
+                
+            # If still not found, look in known locations
+            if not os.path.exists(script_path):
+                possible_paths = [
+                    os.path.join(self.mame_dir, "preview", "mame_controls_main.py"),
+                    os.path.join(self.mame_dir, "mame_controls_main.py")
+                ]
+                
+                for path in possible_paths:
+                    if os.path.exists(path):
+                        script_path = path
+                        break
+            
+            print(f"Using script path: {script_path}")
             
             # Build command with appropriate flags
             command = [
@@ -1876,10 +2011,12 @@ class MAMEControlConfig(ctk.CTk):
                 command.append("--no-buttons")
                 
             # Launch the process
+            print(f"Launching preview process with command: {command}")
             subprocess.Popen(command)
-            print(f"Launched preview process for {self.current_game} with command: {command}")
         except Exception as e:
             print(f"Error launching preview: {e}")
+            import traceback
+            traceback.print_exc()
             messagebox.showerror("Error", f"Failed to launch preview: {str(e)}")
 
     def toggle_hide_preview_buttons(self):
@@ -1890,26 +2027,45 @@ class MAMEControlConfig(ctk.CTk):
         self.save_settings()
         
     def save_settings(self):
-        """Save current settings to a JSON file"""
+        """Save current settings to a JSON file in settings directory"""
         settings = {
             "preferred_preview_screen": getattr(self, 'preferred_preview_screen', 2),
             "visible_control_types": self.visible_control_types,
             "hide_preview_buttons": getattr(self, 'hide_preview_buttons', False)
         }
         
-        settings_path = os.path.join(self.mame_dir, "preview", "settings", "control_config_settings.json")
+        settings_path = os.path.join(self.settings_dir, "control_config_settings.json")
         try:
             with open(settings_path, 'w') as f:
                 json.dump(settings, f)
+            print(f"Settings saved to: {settings_path}")
         except Exception as e:
             print(f"Error saving settings: {e}")
 
     def load_settings(self):
-        """Load settings from JSON file if it exists"""
-        settings_path = os.path.join(self.mame_dir, "preview", "settings", "control_config_settings.json")
+        """Load settings from JSON file in settings directory"""
+        settings_path = os.path.join(self.settings_dir, "control_config_settings.json")
+        
+        # Check legacy path if not found in settings dir
+        if not os.path.exists(settings_path):
+            legacy_path = os.path.join(self.preview_dir, "settings", "control_config_settings.json")
+            if os.path.exists(legacy_path):
+                # Migrate from legacy location
+                try:
+                    with open(legacy_path, 'r') as f:
+                        settings = json.load(f)
+                    
+                    # Save to new location
+                    with open(settings_path, 'w') as f:
+                        json.dump(settings, f)
+                        
+                    print(f"Migrated control settings from {legacy_path} to {settings_path}")
+                except Exception as e:
+                    print(f"Error migrating settings: {e}")
+        
         # Set sensible defaults
-        self.preferred_preview_screen = 1  # Default to second screen
-        self.visible_control_types = ["BUTTON"]  # Default to just buttons
+        self.preferred_preview_screen = 1
+        self.visible_control_types = ["BUTTON"]
         self.hide_preview_buttons = False
         self.show_button_names = False
         
@@ -1921,31 +2077,19 @@ class MAMEControlConfig(ctk.CTk):
                 # Load screen preference
                 if 'preferred_preview_screen' in settings:
                     self.preferred_preview_screen = settings['preferred_preview_screen']
-                    print(f"Loaded preferred screen from settings: {self.preferred_preview_screen}")
-                
+                    
                 # Load visibility settings
                 if 'visible_control_types' in settings:
-                    # Important: Properly handle empty or invalid lists
+                    # Properly handle empty or invalid lists
                     if isinstance(settings['visible_control_types'], list):
                         self.visible_control_types = settings['visible_control_types']
-                        print(f"Loaded visible control types: {self.visible_control_types}")
-                    else:
-                        print(f"Warning: Invalid visible_control_types format in settings: {settings['visible_control_types']}")
                     
                     # Make sure BUTTON is always included for proper display
                     if "BUTTON" not in self.visible_control_types:
                         self.visible_control_types.append("BUTTON")
-                        print("Added BUTTON to visible control types for complete display")
-                        # Update the saved settings
                         settings['visible_control_types'] = self.visible_control_types
                         with open(settings_path, 'w') as f:
                             json.dump(settings, f)
-                else:
-                    # Default to showing just buttons
-                    self.visible_control_types = ["BUTTON"]
-                    settings['visible_control_types'] = self.visible_control_types
-                    with open(settings_path, 'w') as f:
-                        json.dump(settings, f)
 
                 # Load hide preview buttons setting
                 if 'hide_preview_buttons' in settings:
@@ -1954,7 +2098,6 @@ class MAMEControlConfig(ctk.CTk):
                         self.hide_preview_buttons = settings['hide_preview_buttons']
                     elif isinstance(settings['hide_preview_buttons'], int):
                         self.hide_preview_buttons = bool(settings['hide_preview_buttons'])
-                    print(f"Loaded hide_preview_buttons: {self.hide_preview_buttons}")
                     
                     # Update toggle if it exists
                     if hasattr(self, 'hide_buttons_toggle'):
@@ -1962,9 +2105,7 @@ class MAMEControlConfig(ctk.CTk):
                             self.hide_buttons_toggle.select()
                         else:
                             self.hide_buttons_toggle.deselect()
-                else:
-                    self.hide_preview_buttons = False
-                    
+                            
                 # Load show button names setting
                 if 'show_button_names' in settings:
                     # Handle both boolean and integer (0/1) formats
@@ -1972,7 +2113,6 @@ class MAMEControlConfig(ctk.CTk):
                         self.show_button_names = settings['show_button_names']
                     elif isinstance(settings['show_button_names'], int):
                         self.show_button_names = bool(settings['show_button_names'])
-                    print(f"Loaded show_button_names: {self.show_button_names}")
                 else:
                     # Default to showing button names for backward compatibility
                     self.show_button_names = True
@@ -1984,15 +2124,7 @@ class MAMEControlConfig(ctk.CTk):
                 print(f"Error loading settings: {e}")
                 import traceback
                 traceback.print_exc()
-                self.hide_preview_buttons = False
-                self.visible_control_types = ["BUTTON"]  # Default to just buttons
-                self.show_button_names = True  # Default to showing button names
         else:
-            # Default settings
-            self.hide_preview_buttons = False
-            self.visible_control_types = ["BUTTON"]  # Default to just buttons
-            self.show_button_names = True  # Default to showing button names
-            
             # Create settings file with defaults
             settings = {
                 'preferred_preview_screen': self.preferred_preview_screen,
@@ -2006,13 +2138,6 @@ class MAMEControlConfig(ctk.CTk):
                 print("Created default settings file")
             except Exception as e:
                 print(f"Error creating settings file: {e}")
-        
-        # Debug output of final settings
-        print(f"\nFinal settings:")
-        print(f"  - visible_control_types: {self.visible_control_types}")
-        print(f"  - hide_preview_buttons: {self.hide_preview_buttons}")
-        print(f"  - show_button_names: {self.show_button_names}")
-        print(f"  - preferred_preview_screen: {self.preferred_preview_screen}\n")
 
     def convert_mapping(self, mapping: str, to_xinput: bool) -> str:
         """Convert between JOYCODE and XInput mappings"""
@@ -2141,29 +2266,53 @@ class MAMEControlConfig(ctk.CTk):
                     
         return mapping
         
+    # Update load_all_data with debugging
     def load_all_data(self):
-        """Load all necessary data sources"""
-        # Load settings from file
-        self.load_settings()
+        """Load all necessary data sources with debug tracing"""
+        debug_print("Loading all data...")
         
-        # Scan ROMs directory
-        self.scan_roms_directory()
-        
-        # Load default controls
-        self.load_default_config()
-        
-        # Load gamedata.json
-        self.load_gamedata_json()
-        
-        # Always load custom configs
-        self.load_custom_configs()
-        
-        # Update UI
-        self.update_stats_label()
-        self.update_game_list()
-        
-        # Auto-select first ROM
-        self.select_first_rom()
+        try:
+            # Load settings from file
+            debug_print("Loading settings...")
+            self.load_settings()
+            debug_print("Settings loaded")
+            
+            # Scan ROMs directory
+            debug_print("Scanning ROMs directory...")
+            self.scan_roms_directory()
+            debug_print(f"ROM scan complete. Found {len(self.available_roms)} ROMs")
+            
+            # Load default controls
+            debug_print("Loading default controls...")
+            self.load_default_config()
+            debug_print("Default controls loaded")
+            
+            # Load gamedata.json
+            debug_print("Loading gamedata.json...")
+            self.load_gamedata_json()
+            debug_print("gamedata.json loaded")
+            
+            # Always load custom configs
+            debug_print("Loading custom configs...")
+            self.load_custom_configs()
+            debug_print("Custom configs loaded")
+            
+            # Update UI
+            debug_print("Updating UI elements...")
+            self.update_stats_label()
+            self.update_game_list()
+            debug_print("UI updated")
+            
+            # Auto-select first ROM
+            debug_print("Auto-selecting first ROM...")
+            self.select_first_rom()
+            debug_print("First ROM selected")
+            
+            debug_print("All data loading complete")
+        except Exception as e:
+            debug_print(f"ERROR loading data: {e}")
+            traceback.print_exc()
+            messagebox.showerror("Data Loading Error", f"Failed to load application data: {e}")
         
     def select_first_rom(self):
         """Select and display the first available ROM"""
@@ -2676,44 +2825,59 @@ class MAMEControlConfig(ctk.CTk):
                 # Apply alternate row background for better readability
                 row_count += 1
     
+    # Update scan_roms_directory method 
     def scan_roms_directory(self):
-        """Scan the roms directory for available games"""
+        """Scan the roms directory for available games with improved path handling"""
+        debug_print("Scanning ROMs directory...")
+        
         roms_dir = os.path.join(self.mame_dir, "roms")
-        print(f"\nScanning ROMs directory: {roms_dir}")
+        debug_print(f"Looking for ROMs in: {roms_dir}")
         
         if not os.path.exists(roms_dir):
-            print(f"ERROR: ROMs directory not found: {roms_dir}")
+            debug_print(f"ERROR: ROMs directory not found: {roms_dir}")
+            messagebox.showwarning("No ROMs Found", f"ROMs directory not found: {roms_dir}")
+            self.available_roms = set()
             return
 
         self.available_roms = set()  # Reset the set
         rom_count = 0
 
-        for filename in os.listdir(roms_dir):
-            # Strip common ROM extensions
-            base_name = os.path.splitext(filename)[0]
-            self.available_roms.add(base_name)
-            rom_count += 1
-            if rom_count <= 5:  # Print first 5 ROMs as sample
-                print(f"Found ROM: {base_name}")
-        
-        print(f"Total ROMs found: {len(self.available_roms)}")
-        if len(self.available_roms) > 0:
-            print("Sample of available ROMs:", list(self.available_roms)[:5])
-        else:
-            print("WARNING: No ROMs were found!")
+        try:
+            for filename in os.listdir(roms_dir):
+                # Skip directories and non-ROM files
+                full_path = os.path.join(roms_dir, filename)
+                if os.path.isdir(full_path):
+                    continue
+                    
+                # Skip files with known non-ROM extensions
+                extension = os.path.splitext(filename)[1].lower()
+                if extension in ['.txt', '.ini', '.cfg', '.bat', '.exe', '.dll']:
+                    continue
+                    
+                # Strip common ROM extensions
+                base_name = os.path.splitext(filename)[0]
+                self.available_roms.add(base_name)
+                rom_count += 1
+                
+                if rom_count <= 5:  # Print first 5 ROMs as sample
+                    debug_print(f"Found ROM: {base_name}")
+            
+            debug_print(f"Total ROMs found: {len(self.available_roms)}")
+            if len(self.available_roms) > 0:
+                debug_print(f"Sample of available ROMs: {list(self.available_roms)[:5]}")
+            else:
+                debug_print("WARNING: No ROMs were found!")
+        except Exception as e:
+            debug_print(f"Error scanning ROMs directory: {e}")
+            traceback.print_exc()
+            messagebox.showerror("Error", f"Failed to scan ROMs directory: {e}")
     
     def load_text_positions(self, rom_name):
-        """Load text positions, with more reliable file path handling"""
+        """Load text positions from new settings directory structure"""
         positions = {}
         
-        # Create preview directory if it doesn't exist
-        preview_dir = os.path.join(self.mame_dir, "preview")
-        if not os.path.exists(preview_dir):
-            os.makedirs(preview_dir)
-            return positions  # Return empty positions if directory was just created
-        
-        # First try ROM-specific positions - with explicit path
-        rom_positions_file = os.path.join(preview_dir, f"{rom_name}_positions.json")
+        # First try ROM-specific positions in settings dir
+        rom_positions_file = os.path.join(self.settings_dir, f"{rom_name}_positions.json")
         if os.path.exists(rom_positions_file):
             try:
                 with open(rom_positions_file, 'r') as f:
@@ -2723,20 +2887,60 @@ class MAMEControlConfig(ctk.CTk):
             except Exception as e:
                 print(f"Error loading ROM-specific positions: {e}")
         
-        # Fall back to global positions - with explicit path
-        global_positions_file = os.path.join(preview_dir, "global_positions.json")
+        # Try legacy path in preview dir
+        legacy_rom_file = os.path.join(self.preview_dir, f"{rom_name}_positions.json")
+        if os.path.exists(legacy_rom_file):
+            try:
+                with open(legacy_rom_file, 'r') as f:
+                    positions = json.load(f)
+                    
+                # Also save to new location for future use
+                try:
+                    with open(rom_positions_file, 'w') as f:
+                        json.dump(positions, f)
+                    print(f"Migrated positions to new location: {rom_positions_file}")
+                except:
+                    pass
+                    
+                print(f"Loaded {len(positions)} ROM-specific positions from legacy path: {legacy_rom_file}")
+                return positions
+            except Exception as e:
+                print(f"Error loading ROM-specific positions from legacy path: {e}")
+        
+        # Fall back to global positions in settings dir
+        global_positions_file = os.path.join(self.settings_dir, "global_positions.json")
         if os.path.exists(global_positions_file):
             try:
                 with open(global_positions_file, 'r') as f:
                     positions = json.load(f)
                 print(f"Loaded {len(positions)} positions from global file: {global_positions_file}")
+                return positions
             except Exception as e:
                 print(f"Error loading global positions: {e}")
+        
+        # Try legacy global positions in preview dir
+        legacy_global_file = os.path.join(self.preview_dir, "global_positions.json")
+        if os.path.exists(legacy_global_file):
+            try:
+                with open(legacy_global_file, 'r') as f:
+                    positions = json.load(f)
+                    
+                # Also save to new location for future use
+                try:
+                    with open(global_positions_file, 'w') as f:
+                        json.dump(positions, f)
+                    print(f"Migrated global positions to new location: {global_positions_file}")
+                except:
+                    pass
+                    
+                print(f"Loaded {len(positions)} positions from legacy global file: {legacy_global_file}")
+            except Exception as e:
+                print(f"Error loading global positions from legacy path: {e}")
         
         return positions
             
     def load_text_appearance_settings(self):
-        """Load text appearance settings from file"""
+        """Load text appearance settings from file in new settings directory"""
         settings = {
             "font_family": "Arial",
             "font_size": 28,
@@ -2746,7 +2950,26 @@ class MAMEControlConfig(ctk.CTk):
         }
         
         try:
-            settings_file = os.path.join(self.mame_dir, "text_appearance_settings.json")
+            # Check settings directory first
+            settings_file = os.path.join(self.settings_dir, "text_appearance_settings.json")
+            
+            # If not in settings dir, check legacy location
+            if not os.path.exists(settings_file):
+                legacy_file = os.path.join(self.mame_dir, "text_appearance_settings.json")
+                if os.path.exists(legacy_file):
+                    # Migrate from legacy location
+                    with open(legacy_file, 'r') as f:
+                        loaded_settings = json.load(f)
+                        
+                    # Save to new location
+                    with open(settings_file, 'w') as f:
+                        json.dump(loaded_settings, f)
+                        
+                    print(f"Migrated text appearance settings from {legacy_file} to {settings_file}")
+                    settings.update(loaded_settings)
+                    return settings
+            
+            # Normal loading from settings dir
             if os.path.exists(settings_file):
                 with open(settings_file, 'r') as f:
                     loaded_settings = json.load(f)
@@ -2756,37 +2979,49 @@ class MAMEControlConfig(ctk.CTk):
         
         return settings
     
+    # Update load_gamedata_json method
     def load_gamedata_json(self):
-        """Load and parse the gamedata.json file for control data with improved clone handling"""
+        """Load and parse the gamedata.json file for control data with improved path handling"""
+        debug_print("Loading gamedata.json...")
+        
         if hasattr(self, 'gamedata_json') and self.gamedata_json:
             # Already loaded
+            debug_print("gamedata.json already loaded, using cached version")
             return self.gamedata_json
                 
         self.gamedata_json = {}
         self.parent_lookup = {}  # Add a dedicated parent lookup table
-            
-        # Look for gamedata.json in common locations
+        
+        # Check all possible locations in priority order
         json_paths = [
-            os.path.join(self.mame_dir, "gamedata.json"),
-            os.path.join(self.mame_dir, "metadata", "gamedata.json"),
-            os.path.join(self.mame_dir, "data", "gamedata.json"),
-            os.path.join(self.mame_dir, "preview", "gamedata.json")
+            os.path.join(self.settings_dir, "gamedata.json"),              # New primary location
+            os.path.join(self.preview_dir, "gamedata.json"),               # Legacy preview location
+            os.path.join(self.mame_dir, "gamedata.json"),                  # Root location
+            os.path.join(self.mame_dir, "metadata", "gamedata.json"),      # Metadata location
+            os.path.join(self.mame_dir, "data", "gamedata.json")           # Data location
         ]
-            
+        
+        debug_print(f"Searching for gamedata.json in {len(json_paths)} possible locations")
+        
         json_path = None
-        for path in json_paths:
+        for i, path in enumerate(json_paths):
+            debug_print(f"Checking path {i+1}: {path}")
             if os.path.exists(path):
                 json_path = path
+                debug_print(f"Found gamedata.json at: {path}")
                 break
             
         if not json_path:
-            print("gamedata.json not found")
+            debug_print("ERROR: gamedata.json not found in any known location")
+            messagebox.showerror("Missing File", "gamedata.json not found in any known location")
             return {}
                 
         try:
-            print(f"Loading gamedata.json from: {json_path}")
+            debug_print(f"Loading gamedata.json from: {json_path}")
             with open(json_path, 'r', encoding='utf-8') as f:
                 data = json.load(f)
+            
+            debug_print(f"Successfully loaded gamedata.json with {len(data)} entries")
                     
             # Process the data to find both main games and clones
             for rom_name, game_data in data.items():
@@ -2800,16 +3035,14 @@ class MAMEControlConfig(ctk.CTk):
                         # Also store in the parent lookup table
                         self.parent_lookup[clone_name] = rom_name
                         self.gamedata_json[clone_name] = clone_data
-                        #print(f"Indexed clone {clone_name} with parent {rom_name}")
                 
-            #print(f"Loaded {len(self.gamedata_json)} games from gamedata.json")
-            #print(f"Indexed {len(self.parent_lookup)} parent-clone relationships")
+            debug_print(f"Processed gamedata.json: {len(self.gamedata_json)} total games, {len(self.parent_lookup)} parent-clone relationships")
             return self.gamedata_json
                 
         except Exception as e:
-            print(f"Error loading gamedata.json: {str(e)}")
-            import traceback
+            debug_print(f"ERROR loading gamedata.json: {str(e)}")
             traceback.print_exc()
+            messagebox.showerror("Error", f"Failed to load gamedata.json: {str(e)}")
             return {}
         
     # Add these remaining methods to the MAMEControlConfig class in mame_controls_tk.py:

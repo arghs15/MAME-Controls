@@ -1,31 +1,49 @@
-#!/usr/bin/env python3
-
-# If Python can't find PyQt5, install it via:
-# pip install PyQt5
 """
-MAME Control Configuration Tool - Hybrid Version (PyQt5 and Tkinter)
-A tool for viewing and configuring MAME controls.
-
-This is the main entry point for the application.
-Run this script to start the application:
-    python mame_controls_main.py
-
-Command line arguments:
-    --preview-only: Show only the preview window
-    --game: Specify the ROM name to preview
-    --screen: Screen number to display preview on (default: 2)
-    --auto-close: Automatically close preview when MAME exits
-    --use-qt: Use the PyQt5 version of the main GUI (default: Tkinter)
+Updates to mame_controls_main.py to support the new directory structure
+where the main app runs from the preview folder
 """
 
-import sys
 import os
+import sys
 import argparse
 
 
+def get_application_path():
+    """Get the base path for the application (handles PyInstaller bundling)"""
+    if getattr(sys, 'frozen', False):
+        # Running as compiled executable
+        return os.path.dirname(sys.executable)
+    else:
+        # Running as script
+        return os.path.dirname(os.path.abspath(__file__))
+
+
+def get_mame_parent_dir(app_path=None):
+    """
+    Get the parent directory where MAME, ROMs, and artwork are located.
+    If we're in the preview folder, the parent is the MAME directory.
+    """
+    if app_path is None:
+        app_path = get_application_path()
+    
+    # If we're in the preview folder, the parent is the MAME directory
+    if os.path.basename(app_path) == "preview":
+        return os.path.dirname(app_path)
+    else:
+        # We're already in the MAME directory
+        return app_path
+
+
 def main():
-    """Main entry point for the application"""
+    """Main entry point for the application with improved path handling"""
     print("Starting MAME Controls application...")
+    
+    # Get application path
+    app_dir = get_application_path()
+    mame_dir = get_mame_parent_dir(app_dir)
+    
+    print(f"App directory: {app_dir}")
+    print(f"MAME directory: {mame_dir}")
     
     # Create argument parser
     parser = argparse.ArgumentParser(description='MAME Control Configuration')
@@ -35,7 +53,6 @@ def main():
     parser.add_argument('--screen', type=int, default=1, help='Screen number to display preview on (default: 1)')
     parser.add_argument('--auto-close', action='store_true', help='Automatically close preview when MAME exits')
     parser.add_argument('--no-buttons', action='store_true', help='Hide buttons in preview mode (overrides settings)')
-    # Change this line to make PyQt default and add Tkinter option
     parser.add_argument('--tk', action='store_true', help='Use the Tkinter version of the main GUI (default: PyQt)')
     args = parser.parse_args()
     print("Arguments parsed.")
@@ -43,6 +60,12 @@ def main():
     # Make sure the path is properly set for module imports
     script_dir = os.path.dirname(os.path.abspath(__file__))
     sys.path.append(script_dir)
+    
+    # Also ensure parent directory is in path if we're in preview folder
+    if os.path.basename(script_dir) == "preview":
+        parent_dir = os.path.dirname(script_dir)
+        sys.path.append(parent_dir)
+    
     print(f"Script directory: {script_dir}")
     
     # Check for preview-only mode - always use PyQt
@@ -51,7 +74,15 @@ def main():
         try:
             # Initialize PyQt preview
             from PyQt5.QtWidgets import QApplication
-            from mame_controls_pyqt import MAMEControlConfig
+            
+            # Import module with proper path handling
+            try:
+                # Try direct import first
+                from mame_controls_pyqt import MAMEControlConfig
+            except ImportError:
+                # If direct import fails, try using the module from the script directory
+                sys.path.insert(0, script_dir)
+                from mame_controls_pyqt import MAMEControlConfig
             
             # Create QApplication
             app = QApplication(sys.argv)
@@ -82,7 +113,15 @@ def main():
         # Initialize PyQt application
         try:
             from PyQt5.QtWidgets import QApplication
-            from mame_controls_pyqt import MAMEControlConfig
+            
+            # Import module with proper path handling
+            try:
+                # Try direct import first
+                from mame_controls_pyqt import MAMEControlConfig
+            except ImportError:
+                # If direct import fails, try using the module from the script directory
+                sys.path.insert(0, script_dir)
+                from mame_controls_pyqt import MAMEControlConfig
             
             # Create QApplication
             app = QApplication(sys.argv)
@@ -114,7 +153,15 @@ def main():
         try:
             # Import the Tkinter version
             import customtkinter as ctk
-            from mame_controls_tkinter import MAMEControlConfig
+            
+            # Import module with proper path handling
+            try:
+                # Try direct import first
+                from mame_controls_tkinter import MAMEControlConfig
+            except ImportError:
+                # If direct import fails, try using the module from the script directory
+                sys.path.insert(0, script_dir)
+                from mame_controls_tkinter import MAMEControlConfig
             
             # Set appearance mode and theme
             ctk.set_appearance_mode("dark")
