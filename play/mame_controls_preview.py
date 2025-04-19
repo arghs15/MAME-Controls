@@ -3299,7 +3299,10 @@ class PreviewWindow(QMainWindow):
         print("--- FONT INITIALIZATION COMPLETE ---\n")
 
     def create_floating_button_frame(self):
-        """Create clean, simple floating button frame with obvious drag handle"""
+        """Create clean, simple floating button frame with improved drag and click handling"""
+        from PyQt5.QtWidgets import QFrame, QVBoxLayout, QHBoxLayout, QLabel, QPushButton
+        from PyQt5.QtCore import Qt, QPoint, QTimer
+        
         # Create a floating button frame
         self.button_frame = QFrame(self)
         
@@ -3313,7 +3316,6 @@ class PreviewWindow(QMainWindow):
         """)
         
         # Use a vertical layout to contain all elements
-        from PyQt5.QtWidgets import QVBoxLayout, QHBoxLayout, QLabel
         main_layout = QVBoxLayout(self.button_frame)
         main_layout.setContentsMargins(10, 5, 10, 10)
         main_layout.setSpacing(5)
@@ -3323,27 +3325,27 @@ class PreviewWindow(QMainWindow):
         handle_layout.setContentsMargins(0, 0, 0, 0)
         
         # Create a drag handle label with grip dots
-        handle_label = QLabel("•••")
-        handle_label.setStyleSheet("""
+        drag_handle = QLabel("• • •")
+        drag_handle.setStyleSheet("""
             color: #888888;
             font-size: 14px;
             font-weight: bold;
             padding: 0px;
         """)
-        handle_label.setAlignment(Qt.AlignCenter)
-        handle_label.setCursor(Qt.OpenHandCursor)
-        handle_layout.addWidget(handle_label)
+        drag_handle.setAlignment(Qt.AlignCenter)
+        drag_handle.setCursor(Qt.OpenHandCursor)
+        handle_layout.addWidget(drag_handle)
         
         # Add the handle to the main layout
         main_layout.addLayout(handle_layout)
         
         # Create two horizontal rows for buttons
-        top_row = QHBoxLayout()
-        bottom_row = QHBoxLayout()
+        self.top_row = QHBoxLayout()
+        self.bottom_row = QHBoxLayout()
         
         # Add rows to main layout
-        main_layout.addLayout(top_row)
-        main_layout.addLayout(bottom_row)
+        main_layout.addLayout(self.top_row)
+        main_layout.addLayout(self.bottom_row)
         
         # Clean, Tkinter-like button style
         button_style = """
@@ -3370,82 +3372,86 @@ class PreviewWindow(QMainWindow):
         self.close_button = QPushButton("Close")
         self.close_button.clicked.connect(self.close)
         self.close_button.setStyleSheet(button_style)
-        top_row.addWidget(self.close_button)
+        self.top_row.addWidget(self.close_button)
         
         self.global_save_button = QPushButton("Global Save")
         self.global_save_button.clicked.connect(lambda: self.save_positions(is_global=True))
         self.global_save_button.setStyleSheet(button_style)
-        top_row.addWidget(self.global_save_button)
+        self.top_row.addWidget(self.global_save_button)
         
         self.rom_save_button = QPushButton("ROM Save")
         self.rom_save_button.clicked.connect(lambda: self.save_positions(is_global=False))
         self.rom_save_button.setStyleSheet(button_style)
-        top_row.addWidget(self.rom_save_button)
+        self.top_row.addWidget(self.rom_save_button)
         
         self.text_settings_button = QPushButton("Text Settings")
         self.text_settings_button.clicked.connect(self.show_text_settings)
         self.text_settings_button.setStyleSheet(button_style)
-        top_row.addWidget(self.text_settings_button)
+        self.top_row.addWidget(self.text_settings_button)
         
         self.xinput_controls_button = QPushButton("Show All XInput")
         self.xinput_controls_button.clicked.connect(self.toggle_xinput_controls)
         self.xinput_controls_button.setStyleSheet(button_style)
-        top_row.addWidget(self.xinput_controls_button)
+        self.top_row.addWidget(self.xinput_controls_button)
 
-        self.bezel_button = QPushButton("Show Bezel")
-        self.bezel_button.clicked.connect(self.toggle_bezel_improved)
-        self.bezel_button.setStyleSheet(button_style)
-        top_row.addWidget(self.bezel_button)
+        #self.bezel_button = QPushButton("Show Bezel")
+        #self.bezel_button.clicked.connect(self.toggle_bezel_improved)
+        #self.bezel_button.setStyleSheet(button_style)
+        #self.top_row.addWidget(self.bezel_button)
         
         # Second row buttons
         self.toggle_texts_button = QPushButton("Hide Texts")
         self.toggle_texts_button.clicked.connect(self.toggle_texts)
         self.toggle_texts_button.setStyleSheet(button_style)
-        bottom_row.addWidget(self.toggle_texts_button)
+        self.bottom_row.addWidget(self.toggle_texts_button)
         
         self.joystick_button = QPushButton("Joystick")
         self.joystick_button.clicked.connect(self.toggle_joystick_controls)
         self.joystick_button.setStyleSheet(button_style)
-        bottom_row.addWidget(self.joystick_button)
+        self.bottom_row.addWidget(self.joystick_button)
         
-        # Add button prefix toggle button (NEW)
+        # Add button prefix toggle button
         prefix_text = "Hide Prefixes" if self.text_settings.get("show_button_prefix", True) else "Show Prefixes"
         self.prefix_button = QPushButton(prefix_text)
         self.prefix_button.clicked.connect(self.toggle_button_prefixes)
         self.prefix_button.setStyleSheet(button_style)
         self.prefix_button.setToolTip("Toggle button prefixes (e.g., A: Jump)")
-        bottom_row.addWidget(self.prefix_button)
+        self.bottom_row.addWidget(self.prefix_button)
         
         # Logo toggle
         logo_text = "Hide Logo" if self.logo_visible else "Show Logo"
         self.logo_button = QPushButton(logo_text)
         self.logo_button.clicked.connect(self.toggle_logo)
         self.logo_button.setStyleSheet(button_style)
-        bottom_row.addWidget(self.logo_button)
+        self.top_row.addWidget(self.logo_button)
         
         self.center_logo_button = QPushButton("Center Logo")
         self.center_logo_button.clicked.connect(self.center_logo)
         self.center_logo_button.setStyleSheet(button_style)
         self.center_logo_button.setToolTip("Center logo in the canvas") 
-        bottom_row.addWidget(self.center_logo_button)
+        self.bottom_row.addWidget(self.center_logo_button)
         
         # Screen toggle with number indicator
         self.screen_button = QPushButton(f"Screen {getattr(self, 'current_screen', 1)}")
         self.screen_button.clicked.connect(self.toggle_screen)
         self.screen_button.setStyleSheet(button_style)
-        bottom_row.addWidget(self.screen_button)
+        self.bottom_row.addWidget(self.screen_button)
         
         # Add save image button
         self.save_image_button = QPushButton("Save Image")
         self.save_image_button.clicked.connect(self.save_image)
         self.save_image_button.setStyleSheet(button_style)
-        bottom_row.addWidget(self.save_image_button)
+        self.bottom_row.addWidget(self.save_image_button)
         
-        # Add dragging functionality
+        # Add dragging functionality with improved event handling
         self.button_frame.mousePressEvent = self.button_frame_mouse_press
         self.button_frame.mouseMoveEvent = self.button_frame_mouse_move
         self.button_frame.mouseReleaseEvent = self.button_frame_mouse_release
+        
+        # Set initial cursor
         self.button_frame.setCursor(Qt.OpenHandCursor)
+        
+        # Store a flag to track frame dragging state
         self.button_dragging = False
         self.button_drag_pos = None
         
@@ -3469,47 +3475,138 @@ class PreviewWindow(QMainWindow):
         self.snap_button = QPushButton("Disable Snap" if self.snapping_enabled else "Enable Snap", self)
         self.snap_button.clicked.connect(self.toggle_snapping)
         self.snap_button.setStyleSheet(button_style)
-        bottom_row.addWidget(self.snap_button)
+        self.bottom_row.addWidget(self.snap_button)
 
         # Add Grid Toggle Button
         self.grid_button = QPushButton("Show Grid")
         self.grid_button.clicked.connect(self.toggle_alignment_grid)
         self.grid_button.setStyleSheet(button_style)
-        bottom_row.addWidget(self.grid_button)
+        self.bottom_row.addWidget(self.grid_button)
 
         # Determine button frame position
         self.position_button_frame()
         
+        # Make drag handle exclusively handle dragging events
+        drag_handle.mousePressEvent = lambda event: self.handle_drag_press(event, self.button_frame)
+        drag_handle.mouseMoveEvent = lambda event: self.handle_drag_move(event, self.button_frame)
+        drag_handle.mouseReleaseEvent = lambda event: self.handle_drag_release(event)
+        
+        # Update logo button text after a short delay to ensure settings are loaded
+        QTimer.singleShot(100, self.update_center_logo_button_text)
+        
         # Show button frame
         self.button_frame.show()
 
-    def button_frame_mouse_press(self, event):
-        """Handle mouse press on button frame for dragging"""
+    def handle_drag_press(self, event, frame):
+        """Handle mouse press on the drag handle"""
+        from PyQt5.QtCore import Qt
+        
         if event.button() == Qt.LeftButton:
             self.button_dragging = True
             self.button_drag_pos = event.pos()
-            self.button_frame.setCursor(Qt.ClosedHandCursor)
-            event.accept()  # Accept the event to prevent buttons from receiving it
-
-    def button_frame_mouse_move(self, event):
-        """Handle mouse move for button frame dragging"""
-        if self.button_dragging and self.button_drag_pos:
-            delta = event.pos() - self.button_drag_pos
-            new_pos = self.button_frame.pos() + delta
-            
-            # Keep within window bounds
-            new_pos.setX(max(0, min(self.width() - self.button_frame.width(), new_pos.x())))
-            new_pos.setY(max(0, min(self.height() - self.button_frame.height(), new_pos.y())))
-            
-            self.button_frame.move(new_pos)
+            self.button_drag_start_pos = event.pos()  # Store for distance calculation
+            frame.setCursor(Qt.ClosedHandCursor)
             event.accept()
 
-    def button_frame_mouse_release(self, event):
-        """Handle mouse release to end button frame dragging"""
+    def handle_drag_move(self, event, frame):
+        """Handle mouse move on the drag handle"""
+        from PyQt5.QtCore import Qt
+        
+        if self.button_dragging and hasattr(self, 'button_drag_pos'):
+            # Get global positions to properly calculate movement
+            global_pos = event.globalPos()
+            relative_pos = self.button_drag_pos
+            
+            # Calculate new position in parent coordinates
+            new_pos = frame.mapToParent(global_pos - frame.mapToGlobal(relative_pos))
+            
+            # Keep within window bounds
+            new_pos.setX(max(0, min(self.width() - frame.width(), new_pos.x())))
+            new_pos.setY(max(0, min(self.height() - frame.height(), new_pos.y())))
+            
+            # Move the frame
+            frame.move(new_pos)
+            event.accept()
+
+    def handle_drag_release(self, event):
+        """Handle mouse release on the drag handle"""
+        from PyQt5.QtCore import Qt
+        
         if event.button() == Qt.LeftButton:
             self.button_dragging = False
             self.button_frame.setCursor(Qt.OpenHandCursor)
             event.accept()
+    
+    def button_frame_mouse_press(self, event):
+        """Handle mouse press on button frame for dragging with improved button handling"""
+        from PyQt5.QtCore import Qt
+        from PyQt5.QtWidgets import QApplication
+        
+        # Check if we're clicking on a button (or other interactive widget)
+        child_widget = self.button_frame.childAt(event.pos())
+        
+        # If we're clicking on a button, let the button handle the event
+        if child_widget and child_widget.__class__.__name__ in ['QPushButton', 'QCheckBox', 'QRadioButton', 'QSlider', 'QSpinBox']:
+            # Ignore the event in the frame to let it propagate to the button
+            event.ignore()
+            return
+        
+        # Only start dragging if left button is pressed on the frame itself
+        if event.button() == Qt.LeftButton:
+            # Store the click position and start dragging
+            self.button_dragging = True
+            self.button_drag_pos = event.pos()
+            self.button_frame.setCursor(Qt.ClosedHandCursor)
+            
+            # Accept the event to prevent further propagation
+            event.accept()
+
+    def button_frame_mouse_move(self, event):
+        """Handle mouse move for button frame dragging with improved handling"""
+        from PyQt5.QtCore import Qt, QPoint
+        
+        # Only process if we're in dragging mode
+        if not hasattr(self, 'button_dragging') or not self.button_dragging or not hasattr(self, 'button_drag_pos'):
+            return
+        
+        # Calculate the new position
+        delta = event.pos() - self.button_drag_pos
+        new_pos = self.button_frame.pos() + delta
+        
+        # Keep within window bounds
+        new_pos.setX(max(0, min(self.width() - self.button_frame.width(), new_pos.x())))
+        new_pos.setY(max(0, min(self.height() - self.button_frame.height(), new_pos.y())))
+        
+        # Move the frame
+        self.button_frame.move(new_pos)
+        
+        # Accept the event
+        event.accept()
+
+    def button_frame_mouse_release(self, event):
+        """Handle mouse release to end button frame dragging with improved click handling"""
+        from PyQt5.QtCore import Qt
+        
+        # Only process if we're in dragging mode and left button was released
+        if hasattr(self, 'button_dragging') and self.button_dragging and event.button() == Qt.LeftButton:
+            # End dragging mode
+            self.button_dragging = False
+            self.button_frame.setCursor(Qt.OpenHandCursor)
+            
+            # Only accept if we actually dragged
+            if hasattr(self, 'button_drag_start_pos') and hasattr(self, 'button_drag_pos'):
+                # Check if we actually dragged or just clicked
+                start_pos = getattr(self, 'button_drag_start_pos', event.pos())
+                drag_distance = (event.pos() - start_pos).manhattanLength() if hasattr(start_pos, 'manhattanLength') else 0
+                
+                # If minimal movement, treat as click and let it propagate to children
+                if drag_distance < 5:  # Small threshold for movement
+                    event.ignore()
+                else:
+                    event.accept()
+            else:
+                # Accept the event if no start position info
+                event.accept()
 
     def position_button_frame(self, initial_position=None):
         """Position the button frame with option for custom initial position"""
@@ -3608,54 +3705,6 @@ class PreviewWindow(QMainWindow):
             self.canvas.update()
                 
         print("All labels resized")
-    
-    # Add bezel-related attributes and initial setup to __init__
-    def add_bezel_support_to_init(self):
-        """Initialize bezel-related attributes"""
-        # Add bezel attributes
-        self.bezel_visible = False
-        self.bezel_label = None
-        self.has_bezel = False
-        
-        # Add a button for toggling bezel visibility
-        button_style = """
-            QPushButton {
-                background-color: #3d3d3d;
-                color: white;
-                border: 1px solid #5a5a5a;
-                border-radius: 4px;
-                padding: 6px 12px;
-                font-weight: bold;
-                min-width: 90px;
-            }
-            QPushButton:hover {
-                background-color: #4a4a4a;
-            }
-            QPushButton:pressed {
-                background-color: #2a2a2a;
-            }
-        """
-        
-        # Create bezel toggle button
-        self.bezel_button = QPushButton("Show Bezel")
-        self.bezel_button.clicked.connect(self.toggle_bezel_improved)
-        self.bezel_button.setStyleSheet(button_style)
-        
-        # Add to the bottom row if it exists
-        if hasattr(self, 'bottom_row'):
-            self.bottom_row.addWidget(self.bezel_button)
-        
-        # Check if a bezel exists for this ROM
-        bezel_path = self.find_bezel_path(self.rom_name)
-        self.has_bezel = bezel_path is not None
-        
-        # Update button state
-        self.bezel_button.setEnabled(self.has_bezel)
-        if not self.has_bezel:
-            self.bezel_button.setText("No Bezel")
-            self.bezel_button.setToolTip(f"No bezel found for {self.rom_name}")
-        else:
-            self.bezel_button.setToolTip(f"Toggle bezel visibility: {bezel_path}")
 
     # Replace toggle_bezel_improved to always save global settings
     def toggle_bezel_improved(self):
@@ -3907,23 +3956,24 @@ class PreviewWindow(QMainWindow):
         self.joystick_visible = bezel_settings.get("joystick_visible", True)  # Default to visible
         print(f"Loaded bezel visibility: {self.bezel_visible}, joystick visibility: {self.joystick_visible}")
         
-        # [Rest of the original method]
-        # Add button style (reuse existing style)
+        # Clean, Tkinter-like button style
         button_style = """
             QPushButton {
-                background-color: #3d3d3d;
+                background-color: #404050;
                 color: white;
-                border: 1px solid #5a5a5a;
+                border: none;
                 border-radius: 4px;
-                padding: 6px 12px;
+                padding: 6px 10px;
                 font-weight: bold;
-                min-width: 90px;
+                font-family: 'Segoe UI', Arial, sans-serif;
+                font-size: 12px;
+                min-width: 80px;
             }
             QPushButton:hover {
-                background-color: #4a4a4a;
+                background-color: #555565;
             }
             QPushButton:pressed {
-                background-color: #2a2a2a;
+                background-color: #303040;
             }
         """
         
@@ -3934,7 +3984,7 @@ class PreviewWindow(QMainWindow):
         
         # Add to the bottom row
         if hasattr(self, 'bottom_row'):
-            self.bottom_row.addWidget(self.bezel_button)
+            self.top_row.addWidget(self.bezel_button)
         elif hasattr(self, 'button_layout'):
             self.button_layout.addWidget(self.bezel_button)
         
@@ -4759,6 +4809,7 @@ class PreviewWindow(QMainWindow):
         if hasattr(self, 'center_logo_button'):
             is_centered = self.logo_settings.get("keep_horizontally_centered", False)
             self.center_logo_button.setText("Uncenter Logo" if is_centered else "Center Logo")
+            print(f"Updated center logo button text based on setting: {is_centered}")
     
     def set_logo_position(self, position):
         """Set logo position to a preset"""
@@ -5084,9 +5135,8 @@ class PreviewWindow(QMainWindow):
         if hasattr(self, 'save_logo_settings'):
             self.save_logo_settings(is_global=True)
         
-        # Update button text if it exists
-        if hasattr(self, 'center_logo_button'):
-            self.center_logo_button.setText("Uncenter Logo" if new_state else "Center Logo")
+        # Update button text
+        self.update_center_logo_button_text()
         
         return True
     
@@ -6331,13 +6381,11 @@ class PreviewWindow(QMainWindow):
         if hasattr(self, 'save_logo_settings'):
             self.save_logo_settings(is_global=True)
         
-        # Update button text if it exists
-        if hasattr(self, 'center_logo_button'):
-            self.center_logo_button.setText("Uncenter Logo")
+        # Update button text
+        self.update_center_logo_button_text()
 
         print(f"Logo horizontally centered at X={x}, Y remains {current_y}")
         return True
-
 
     # 3. Update the position_logo method to handle the center position better
     def position_logo(self, position):

@@ -1,7 +1,9 @@
+Fix floating frame. sometimes a button doesn't register a press. likely as the frame can be dragged
+
 Show all Xinput reverts to default text, and you have to re apply current text
 
 Remove shadow - pointless
 
 Add generate images from previous exe
 
-Fix logo centering for all sizes
+Remove redundant logo code - there's a lot. also, compare old center-left etc logo functions. They may work better.
