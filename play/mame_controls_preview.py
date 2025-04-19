@@ -1122,8 +1122,8 @@ class TextSettingsDialog(QDialog):
         self.settings = settings
         
         # If parent provided and has the method, update parent settings
-        if self.parent and hasattr(self.parent, 'update_text_settings'):
-            self.parent.update_text_settings(settings)
+        if self.parent and hasattr(self.parent, 'update_logo_settings'):
+            self.parent.update_logo_settings(settings)
     
     def accept_settings(self):
         """Save settings and close dialog"""
@@ -4512,7 +4512,7 @@ class PreviewWindow(QMainWindow):
     
     # Add a method to the PreviewWindow class to center the logo
     def center_logo(self):
-        """Center the logo horizontally in the canvas, keep current Y position"""
+        """Center the logo horizontally in the canvas while preserving Y position"""
         if not hasattr(self, 'logo_label') or not self.logo_label:
             print("No logo to center")
             return False
@@ -4520,7 +4520,7 @@ class PreviewWindow(QMainWindow):
         # Get canvas and logo dimensions
         canvas_width = self.canvas.width()
         logo_width = self.logo_label.width()
-
+        
         # Get current Y position
         current_pos = self.logo_label.pos()
         current_y = current_pos.y()
@@ -4528,20 +4528,24 @@ class PreviewWindow(QMainWindow):
         # Calculate center X position
         x = (canvas_width - logo_width) // 2
 
-        # Move logo to new X, keeping current Y
+        # Move logo to new X position, keeping current Y
         self.logo_label.move(x, current_y)
 
-        # Update settings to reflect new position
+        # Update settings to enable horizontal centering
+        self.logo_settings["keep_horizontally_centered"] = True
         self.logo_settings["custom_position"] = True
         self.logo_settings["x_position"] = x
         self.logo_settings["y_position"] = current_y
 
+        # Save to file immediately to persist across ROM changes
+        if hasattr(self, 'save_logo_settings'):
+            self.save_logo_settings(is_global=True)
+
         print(f"Logo horizontally centered at X={x}, Y remains {current_y}")
         return True
     
-    # Ensure the load_logo_settings method properly loads custom position
     def load_logo_settings(self):
-        """Load logo settings from file with new path handling"""
+        """Load logo settings from file with new path handling and button text update"""
         settings = {
             "logo_visible": True,
             "custom_position": False,
@@ -4549,7 +4553,8 @@ class PreviewWindow(QMainWindow):
             "y_position": 20,
             "width_percentage": 15,
             "height_percentage": 15,
-            "maintain_aspect": True
+            "maintain_aspect": True,
+            "keep_horizontally_centered": False  # Add default value
         }
         
         try:
@@ -4577,15 +4582,22 @@ class PreviewWindow(QMainWindow):
                         
                         print(f"Migrated logo settings from {legacy_path} to {settings_file}")
                         settings.update(loaded_settings)
-                        return settings
+                        break
             
             # Regular loading from new location
             if os.path.exists(settings_file):
                 with open(settings_file, 'r') as f:
                     loaded_settings = json.load(f)
                     settings.update(loaded_settings)
+                    print(f"Loaded logo settings: {settings}")
+            
+            # NEW: Update center logo button text after loading settings
+            self.update_center_logo_button_text()
+            
         except Exception as e:
             print(f"Error loading logo settings: {e}")
+            import traceback
+            traceback.print_exc()
         
         return settings
     
@@ -4639,13 +4651,13 @@ class PreviewWindow(QMainWindow):
     # Add a method to add_logo to store original pixmap
     # Improved add_logo method to handle sizes better
     def add_logo(self):
-        """Add logo overlay to preview with better size handling"""
+        """Add logo overlay to preview with horizontal centering support"""
         # Find logo path
         logo_path = self.find_logo_path(self.rom_name)
         if not logo_path:
             print(f"No logo found for {self.rom_name}")
             return
-            
+                
         # Create logo label
         self.logo_label = QLabel(self.canvas)
         
@@ -4686,11 +4698,19 @@ class PreviewWindow(QMainWindow):
         # Show the logo
         self.logo_label.show()
         
+        # Check for horizontal centering flag in settings
+        is_horizontally_centered = self.logo_settings.get("keep_horizontally_centered", False)
+        
+        if is_horizontally_centered:
+            print("Logo initialized with horizontal centering enabled")
+            
+            # Force a resize to apply the correct centered position
+            QTimer.singleShot(100, self.force_logo_resize)
+        
         print(f"Logo added and sized: {self.logo_label.width()}x{self.logo_label.height()}")
-
     
     def logo_context_menu(self, event):
-        """Show context menu for logo"""
+        """Show context menu for logo with centering toggle option"""
         menu = QMenu(self)
         
         # Add options
@@ -4720,6 +4740,12 @@ class PreviewWindow(QMainWindow):
         
         menu.addMenu(position_menu)
         
+        # Add horizontal centering toggle option
+        is_centered = self.logo_settings.get("keep_horizontally_centered", False)
+        centering_action = QAction("Disable Horizontal Centering" if is_centered else "Enable Horizontal Centering", self)
+        centering_action.triggered.connect(self.toggle_horizontal_centering)
+        menu.addAction(centering_action)
+        
         # Add toggle visibility option
         visibility_action = QAction("Hide Logo" if self.logo_visible else "Show Logo", self)
         visibility_action.triggered.connect(self.toggle_logo)
@@ -4727,6 +4753,12 @@ class PreviewWindow(QMainWindow):
         
         # Show menu
         menu.exec_(event.globalPos())
+    
+    def update_center_logo_button_text(self):
+        """Update the center logo button text based on current state"""
+        if hasattr(self, 'center_logo_button'):
+            is_centered = self.logo_settings.get("keep_horizontally_centered", False)
+            self.center_logo_button.setText("Uncenter Logo" if is_centered else "Center Logo")
     
     def set_logo_position(self, position):
         """Set logo position to a preset"""
@@ -4857,6 +4889,11 @@ class PreviewWindow(QMainWindow):
             # Update position in memory
             self.logo_settings["x_position"] = new_pos.x()
             self.logo_settings["y_position"] = new_pos.y()
+            
+            # NEW: Disable horizontal centering when manually moved
+            if self.logo_settings.get("keep_horizontally_centered", False):
+                self.logo_settings["keep_horizontally_centered"] = False
+                print("Horizontal centering disabled due to manual positioning")
         
         # Update cursor
         elif hasattr(self, 'logo_label') and self.logo_label:
@@ -4867,7 +4904,7 @@ class PreviewWindow(QMainWindow):
                 
     # Add a method that forces the logo to resize according to settings
     def force_logo_resize(self):
-        """Force logo to resize according to current settings"""
+        """Force logo to resize according to current settings with improved center handling"""
         if not hasattr(self, 'logo_label') or not self.logo_label:
             print("No logo label to resize")
             return False
@@ -4920,19 +4957,54 @@ class PreviewWindow(QMainWindow):
         # Ensure label size matches pixmap size
         self.logo_label.resize(scaled_pixmap.width(), scaled_pixmap.height())
         
+        # Check for center position override
+        is_centered = self.logo_settings.get("logo_position", "") == "center"
+        
         # Position the logo
-        if self.logo_settings.get("custom_position", False):
-            self.logo_label.move(
-                self.logo_settings.get("x_position", 20),
-                self.logo_settings.get("y_position", 20)
-            )
+        if is_centered:
+            # Center the logo regardless of custom position flag
+            x = (canvas_width - scaled_pixmap.width()) // 2
+            y = (canvas_height - scaled_pixmap.height()) // 2
+            self.logo_label.move(x, y)
+            
+            # Update stored position
+            self.logo_settings["x_position"] = x
+            self.logo_settings["y_position"] = y
+            print(f"Logo centered at ({x}, {y}) after resize")
+        elif self.logo_settings.get("custom_position", False):
+            # Use custom position if not centered
+            x = self.logo_settings.get("x_position", 20)
+            y = self.logo_settings.get("y_position", 20)
+            self.logo_label.move(x, y)
+            print(f"Logo positioned at custom ({x}, {y}) after resize")
+        else:
+            # Use preset position
+            position = self.logo_settings.get("logo_position", "top-left")
+            self.position_logo(position)
+            print(f"Logo positioned at {position} after resize")
         
         print(f"Logo resized to {scaled_pixmap.width()}x{scaled_pixmap.height()} pixels")
         return True
     
+    # 4. Update the canvas resize handler to maintain horizontal centering
+    def handle_logo_during_resize(self):
+        """Update logo position during resize, maintaining horizontal centering"""
+        if not hasattr(self, 'logo_label') or not self.logo_label or not self.logo_label.isVisible():
+            return
+        
+        # Check if horizontal centering is enabled
+        is_horizontally_centered = self.logo_settings.get("keep_horizontally_centered", False)
+        
+        if is_horizontally_centered:
+            # Simply use force_logo_resize which will handle horizontal centering
+            self.force_logo_resize()
+        elif hasattr(self, 'update_logo_display'):
+            # Otherwise use standard update
+            self.update_logo_display()
+    
     # Fix logo_mouse_release to NOT auto-save
     def logo_mouse_release(self, event):
-        """Handle mouse release on logo to end dragging or resizing without auto-saving"""
+        """Handle mouse release on logo to end dragging or resizing with settings save"""
         if event.button() == Qt.LeftButton:
             was_resizing = hasattr(self, 'logo_is_resizing') and self.logo_is_resizing
             was_dragging = hasattr(self, 'logo_is_dragging') and self.logo_is_dragging
@@ -4949,7 +5021,7 @@ class PreviewWindow(QMainWindow):
             else:
                 self.logo_label.setCursor(Qt.OpenHandCursor)
             
-            # Update settings in memory only (don't save to file)
+            # Save settings if the logo was moved or resized
             if was_resizing or was_dragging:
                 # Update position and size in settings
                 if was_resizing:
@@ -4967,9 +5039,56 @@ class PreviewWindow(QMainWindow):
                     self.logo_settings["y_position"] = pos.y()
                     self.logo_settings["custom_position"] = True
                 
-                # Only update in memory (don't save to file)
-                action = "resized" if was_resizing else "moved"
-                print(f"Logo {action} - settings updated in memory only")
+                # NEW: Save settings after movement or resizing
+                if hasattr(self, 'save_logo_settings'):
+                    self.save_logo_settings()
+                    action = "resized" if was_resizing else "moved"
+                    print(f"Logo {action} - settings saved")
+    
+    def toggle_horizontal_centering(self):
+        """Toggle horizontal centering for the logo"""
+        if not hasattr(self, 'logo_label') or not self.logo_label:
+            print("No logo to center")
+            return False
+        
+        # Toggle the setting
+        current_state = self.logo_settings.get("keep_horizontally_centered", False)
+        new_state = not current_state
+        self.logo_settings["keep_horizontally_centered"] = new_state
+        
+        # If enabling, center the logo horizontally
+        if new_state:
+            # Get canvas and logo dimensions
+            canvas_width = self.canvas.width()
+            logo_width = self.logo_label.width()
+            
+            # Get current Y position
+            current_pos = self.logo_label.pos()
+            current_y = current_pos.y()
+
+            # Calculate center X position
+            x = (canvas_width - logo_width) // 2
+
+            # Move logo to new X position, keeping current Y
+            self.logo_label.move(x, current_y)
+            
+            # Update position in settings
+            self.logo_settings["x_position"] = x
+            self.logo_settings["y_position"] = current_y
+            
+            print(f"Horizontal centering enabled, logo centered at X={x}, Y={current_y}")
+        else:
+            print("Horizontal centering disabled")
+        
+        # Save settings
+        if hasattr(self, 'save_logo_settings'):
+            self.save_logo_settings(is_global=True)
+        
+        # Update button text if it exists
+        if hasattr(self, 'center_logo_button'):
+            self.center_logo_button.setText("Uncenter Logo" if new_state else "Center Logo")
+        
+        return True
     
     # Add logo resize handle display in paintEvent
     def logo_paint_event(self, event):
@@ -5041,7 +5160,7 @@ class PreviewWindow(QMainWindow):
     
     # Completely rewrite the update_logo_display method to fix size loading 
     def update_logo_display(self):
-        """Update the logo display based on current settings with fixed size loading"""
+        """Update the logo display based on current settings with persistent horizontal centering"""
         if not hasattr(self, 'logo_label') or not self.logo_label:
             print("No logo label to update")
             return
@@ -5108,13 +5227,31 @@ class PreviewWindow(QMainWindow):
         # Resize the label to match pixmap
         self.logo_label.resize(scaled_pixmap.width(), scaled_pixmap.height())
         
-        # Position the logo
-        if self.logo_settings.get("custom_position", False) and "x_position" in self.logo_settings and "y_position" in self.logo_settings:
+        # Position the logo based on settings
+        logo_position = self.logo_settings.get("logo_position", "")
+        is_horizontally_centered = self.logo_settings.get("keep_horizontally_centered", False)
+        
+        # Get current position
+        current_y = self.logo_settings.get("y_position", 20)
+        
+        if is_horizontally_centered:
+            # Calculate horizontal center position
+            x = (canvas_width - scaled_pixmap.width()) // 2
+            y = current_y  # Keep current Y position
+            
+            # Update X position in settings
+            self.logo_settings["x_position"] = x
+            
+            print(f"Logo horizontally centered at X={x}, Y={y}")
+        elif self.logo_settings.get("custom_position", False) and "x_position" in self.logo_settings and "y_position" in self.logo_settings:
+            # Use custom position
             x = self.logo_settings.get("x_position", 20)
             y = self.logo_settings.get("y_position", 20)
+            print(f"Using custom logo position: ({x}, {y})")
         else:
-            # Default position
-            x, y = 20, 20
+            # Use position based on selected preset
+            self.position_logo(logo_position)
+            return  # position_logo handles the actual move
         
         # Move to position
         self.logo_label.move(x, y)
@@ -5122,13 +5259,13 @@ class PreviewWindow(QMainWindow):
         print(f"Logo display updated: {scaled_pixmap.width()}x{scaled_pixmap.height()} pixels")
         
     def position_logo(self, position):
-        """Position the logo based on position setting"""
+        """Position the logo based on position setting with improved center handling"""
         if not hasattr(self, 'logo_label'):
             return
             
         # Get logo size
-        logo_width = self.logo_label.pixmap().width()
-        logo_height = self.logo_label.pixmap().height()
+        logo_width = self.logo_label.width()
+        logo_height = self.logo_label.height()
         
         # Padding from edges
         padding = 20
@@ -5142,6 +5279,15 @@ class PreviewWindow(QMainWindow):
         elif position == "top-right":
             x = self.canvas.width() - logo_width - padding
             y = padding
+        elif position == "center-left":
+            x = padding
+            y = (self.canvas.height() - logo_height) // 2
+        elif position == "center":
+            x = (self.canvas.width() - logo_width) // 2
+            y = (self.canvas.height() - logo_height) // 2
+        elif position == "center-right":
+            x = self.canvas.width() - logo_width - padding
+            y = (self.canvas.height() - logo_height) // 2
         elif position == "bottom-left":
             x = padding
             y = self.canvas.height() - logo_height - padding
@@ -5157,6 +5303,13 @@ class PreviewWindow(QMainWindow):
             
         # Move logo to position
         self.logo_label.move(x, y)
+        
+        # Update the stored position in settings
+        self.logo_settings["x_position"] = x
+        self.logo_settings["y_position"] = y
+        
+        print(f"Logo positioned at {position}: ({x}, {y})")
+
 
     def duplicate_control_label(self, label):
         """Duplicate a control label"""
@@ -6043,10 +6196,299 @@ class PreviewWindow(QMainWindow):
 
 
     # Replace the on_canvas_resize_with_background method
+    # 1. First, let's enhance the update_logo_display method to properly handle centering
+
+    def update_logo_display(self):
+        """Update the logo display based on current settings with improved centering"""
+        if not hasattr(self, 'logo_label') or not self.logo_label:
+            print("No logo label to update")
+            return
+        
+        # Make sure we have the original pixmap
+        if not hasattr(self, 'original_logo_pixmap') or not self.original_logo_pixmap or self.original_logo_pixmap.isNull():
+            # If we don't have original, use current pixmap as original
+            self.original_logo_pixmap = self.logo_label.pixmap()
+            if not self.original_logo_pixmap or self.original_logo_pixmap.isNull():
+                print("No logo pixmap available to resize")
+                return
+        
+        # Get current canvas dimensions 
+        canvas_width = self.canvas.width()
+        canvas_height = self.canvas.height()
+        
+        # Get size percentages from settings
+        width_percent = self.logo_settings.get("width_percentage", 15) / 100
+        height_percent = self.logo_settings.get("height_percentage", 15) / 100
+        
+        # Calculate pixel dimensions based on percentages
+        target_width = int(canvas_width * width_percent)
+        target_height = int(canvas_height * height_percent)
+        
+        print(f"Logo target size: {target_width}x{target_height} pixels ({width_percent*100:.1f}%, {height_percent*100:.1f}%)")
+        
+        # Get original size for reference
+        orig_width = self.original_logo_pixmap.width()
+        orig_height = self.original_logo_pixmap.height()
+        
+        # Handle aspect ratio if needed
+        if self.logo_settings.get("maintain_aspect", True):
+            orig_ratio = orig_width / orig_height if orig_height > 0 else 1
+            
+            # Calculate dimensions preserving aspect ratio
+            if (target_width / target_height) > orig_ratio:
+                # Height is limiting factor
+                final_height = target_height
+                final_width = int(final_height * orig_ratio)
+            else:
+                # Width is limiting factor
+                final_width = target_width
+                final_height = int(final_width / orig_ratio)
+        else:
+            # Use target dimensions directly
+            final_width = target_width
+            final_height = target_height
+        
+        # Apply minimum size constraints
+        final_width = max(30, final_width)
+        final_height = max(20, final_height)
+        
+        # Scale the original pixmap to the calculated size
+        scaled_pixmap = self.original_logo_pixmap.scaled(
+            final_width, 
+            final_height, 
+            Qt.KeepAspectRatio if self.logo_settings.get("maintain_aspect", True) else Qt.IgnoreAspectRatio, 
+            Qt.SmoothTransformation
+        )
+        
+        # Set the pixmap on the label
+        self.logo_label.setPixmap(scaled_pixmap)
+        
+        # Resize the label to match pixmap
+        self.logo_label.resize(scaled_pixmap.width(), scaled_pixmap.height())
+        
+        # Position the logo based on settings
+        logo_position = self.logo_settings.get("logo_position", "")
+        is_centered = logo_position == "center"
+        
+        # NEW: Center overrides custom position - always center if center position is selected
+        if is_centered:
+            # Calculate center position
+            x = (canvas_width - scaled_pixmap.width()) // 2
+            y = (canvas_height - scaled_pixmap.height()) // 2
+            
+            # Update the position in settings too (important for saving later)
+            self.logo_settings["x_position"] = x
+            self.logo_settings["y_position"] = y
+            
+            print(f"Logo centered at ({x}, {y})")
+        elif self.logo_settings.get("custom_position", False) and "x_position" in self.logo_settings and "y_position" in self.logo_settings:
+            # Use custom position
+            x = self.logo_settings.get("x_position", 20)
+            y = self.logo_settings.get("y_position", 20)
+            print(f"Using custom logo position: ({x}, {y})")
+        else:
+            # Use position based on selected preset
+            self.position_logo(logo_position)
+            return  # position_logo handles the actual move
+        
+        # Move to position
+        self.logo_label.move(x, y)
+        
+        print(f"Logo display updated: {scaled_pixmap.width()}x{scaled_pixmap.height()} pixels")
+
+
+    # 2. Enhance the center_logo method to properly update settings
+    def center_logo(self):
+        """Center the logo horizontally with toggle capabilities"""
+        # Enable horizontal centering and center the logo
+        current_state = self.logo_settings.get("keep_horizontally_centered", False)
+        
+        # If already centered, just toggle off
+        if current_state:
+            return self.toggle_horizontal_centering()
+        
+        # Get canvas and logo dimensions
+        canvas_width = self.canvas.width()
+        logo_width = self.logo_label.width()
+        
+        # Get current Y position
+        current_pos = self.logo_label.pos()
+        current_y = current_pos.y()
+
+        # Calculate center X position
+        x = (canvas_width - logo_width) // 2
+
+        # Move logo to new X position, keeping current Y
+        self.logo_label.move(x, current_y)
+
+        # Update settings to enable horizontal centering
+        self.logo_settings["keep_horizontally_centered"] = True
+        self.logo_settings["custom_position"] = True
+        self.logo_settings["x_position"] = x
+        self.logo_settings["y_position"] = current_y
+
+        # Save to file immediately to persist across ROM changes
+        if hasattr(self, 'save_logo_settings'):
+            self.save_logo_settings(is_global=True)
+        
+        # Update button text if it exists
+        if hasattr(self, 'center_logo_button'):
+            self.center_logo_button.setText("Uncenter Logo")
+
+        print(f"Logo horizontally centered at X={x}, Y remains {current_y}")
+        return True
+
+
+    # 3. Update the position_logo method to handle the center position better
+    def position_logo(self, position):
+        """Position the logo based on position setting with improved center handling"""
+        if not hasattr(self, 'logo_label'):
+            return
+            
+        # Get logo size
+        logo_width = self.logo_label.width()
+        logo_height = self.logo_label.height()
+        
+        # Padding from edges
+        padding = 20
+        
+        # Calculate position
+        if position == "top-left":
+            x, y = padding, padding
+        elif position == "top-center":
+            x = (self.canvas.width() - logo_width) // 2
+            y = padding
+        elif position == "top-right":
+            x = self.canvas.width() - logo_width - padding
+            y = padding
+        elif position == "center-left":
+            x = padding
+            y = (self.canvas.height() - logo_height) // 2
+        elif position == "center":
+            x = (self.canvas.width() - logo_width) // 2
+            y = (self.canvas.height() - logo_height) // 2
+        elif position == "center-right":
+            x = self.canvas.width() - logo_width - padding
+            y = (self.canvas.height() - logo_height) // 2
+        elif position == "bottom-left":
+            x = padding
+            y = self.canvas.height() - logo_height - padding
+        elif position == "bottom-center":
+            x = (self.canvas.width() - logo_width) // 2
+            y = self.canvas.height() - logo_height - padding
+        elif position == "bottom-right":
+            x = self.canvas.width() - logo_width - padding
+            y = self.canvas.height() - logo_height - padding
+        else:
+            # Default to top-left
+            x, y = padding, padding
+            
+        # Move logo to position
+        self.logo_label.move(x, y)
+        
+        # Update the stored position in settings
+        self.logo_settings["x_position"] = x
+        self.logo_settings["y_position"] = y
+        
+        print(f"Logo positioned at {position}: ({x}, {y})")
+
+
+    # 4. Update the force_logo_resize method to respect center positioning
+    def force_logo_resize(self):
+        """Force logo to resize according to current settings with persistent horizontal centering"""
+        if not hasattr(self, 'logo_label') or not self.logo_label:
+            print("No logo label to resize")
+            return False
+            
+        if not hasattr(self, 'original_logo_pixmap') or self.original_logo_pixmap.isNull():
+            # Try to load the logo image again
+            logo_path = self.find_logo_path(self.rom_name)
+            if not logo_path:
+                print("Cannot force resize - no logo image found")
+                return False
+                
+            self.original_logo_pixmap = QPixmap(logo_path)
+            if self.original_logo_pixmap.isNull():
+                print("Cannot force resize - failed to load logo image")
+                return False
+        
+        # Get canvas and logo dimensions
+        canvas_width = self.canvas.width()
+        canvas_height = self.canvas.height()
+        
+        # Calculate target size
+        width_percent = float(self.logo_settings.get("width_percentage", 15))
+        height_percent = float(self.logo_settings.get("height_percentage", 15))
+        
+        target_width = int((width_percent / 100) * canvas_width)
+        target_height = int((height_percent / 100) * canvas_height)
+        
+        print(f"Force-resizing logo to {target_width}x{target_height} pixels " +
+            f"({width_percent:.1f}%, {height_percent:.1f}%)")
+        
+        # Scale the pixmap to the target size
+        if self.logo_settings.get("maintain_aspect", True):
+            scaled_pixmap = self.original_logo_pixmap.scaled(
+                target_width, 
+                target_height, 
+                Qt.KeepAspectRatio, 
+                Qt.SmoothTransformation
+            )
+        else:
+            scaled_pixmap = self.original_logo_pixmap.scaled(
+                target_width, 
+                target_height, 
+                Qt.IgnoreAspectRatio, 
+                Qt.SmoothTransformation
+            )
+        
+        # Apply the scaled pixmap
+        self.logo_label.setPixmap(scaled_pixmap)
+        
+        # Ensure label size matches pixmap size
+        self.logo_label.resize(scaled_pixmap.width(), scaled_pixmap.height())
+        
+        # Check if horizontal centering is enabled
+        is_horizontally_centered = self.logo_settings.get("keep_horizontally_centered", False)
+        
+        # Get current Y position
+        current_y = self.logo_settings.get("y_position", 20)
+        
+        # Position the logo
+        if is_horizontally_centered:
+            # Recalculate horizontal center with new dimensions
+            x = (canvas_width - scaled_pixmap.width()) // 2
+            y = current_y  # Keep vertical position the same
+            
+            # Move logo to new position
+            self.logo_label.move(x, y)
+            
+            # Update X position in settings
+            self.logo_settings["x_position"] = x
+            
+            print(f"Logo horizontally centered at X={x}, Y={y} after resize")
+        elif self.logo_settings.get("custom_position", False):
+            # Use custom position
+            x = self.logo_settings.get("x_position", 20)
+            y = self.logo_settings.get("y_position", 20)
+            self.logo_label.move(x, y)
+            print(f"Logo positioned at custom ({x}, {y}) after resize")
+        else:
+            # Use preset position
+            position = self.logo_settings.get("logo_position", "top-left")
+            self.position_logo(position)
+            print(f"Logo positioned at {position} after resize")
+        
+        print(f"Logo resized to {scaled_pixmap.width()}x{scaled_pixmap.height()} pixels")
+        return True
+
+
+
+    # 5. Update the on_canvas_resize_with_background method to maintain centering
     def on_canvas_resize_with_background(self, event):
-        """Handle canvas resize while maintaining proper layer stacking"""
+        """Handle canvas resize while maintaining proper layer stacking and logo centering"""
         try:
-            print("\n--- Canvas resize with bezel handling ---")
+            print("\n--- Canvas resize with bezel and logo handling ---")
             
             # Recalculate the background image position and scaling
             if hasattr(self, 'original_background_pixmap') and not self.original_background_pixmap.isNull():
@@ -6109,13 +6551,10 @@ class PreviewWindow(QMainWindow):
                     self.bezel_label.setGeometry(x, y, bezel_pixmap.width(), bezel_pixmap.height())
                     
                     print(f"Bezel resized: {bezel_pixmap.width()}x{bezel_pixmap.height()}, positioned at ({x},{y})")
-                    
-                    # Fix layering again after resize
-                    self.raise_controls_above_bezel()
-
-                    # Add at the end
-                    QTimer.singleShot(100, self.force_resize_all_labels)
             
+            # Update logo positioning
+            self.handle_logo_during_resize()
+                    
             # Call the original resize handler if it exists
             if hasattr(self, 'on_canvas_resize_original'):
                 self.on_canvas_resize_original(event)
@@ -6123,12 +6562,39 @@ class PreviewWindow(QMainWindow):
             # Redraw grid if it's currently visible
             if hasattr(self, 'alignment_grid_visible') and self.alignment_grid_visible:
                 self.show_alignment_grid()
+                    
+            # Fix layering again after resize
+            QTimer.singleShot(100, self.raise_controls_above_bezel)
+            
+            # Add at the end - force resize all labels
+            QTimer.singleShot(100, self.force_resize_all_labels)
                 
         except Exception as e:
             print(f"Error in canvas resize: {e}")
             import traceback
             traceback.print_exc()
 
+    def save_logo_settings_global(self):
+        """Save logo settings globally to ensure they persist across ROM changes"""
+        try:
+            # Create settings directory if it doesn't exist
+            os.makedirs(self.settings_dir, exist_ok=True)
+            
+            # Save to global settings file
+            settings_file = os.path.join(self.settings_dir, "logo_settings.json")
+            
+            with open(settings_file, 'w') as f:
+                json.dump(self.logo_settings, f)
+                
+            print(f"Saved global logo settings to: {settings_file}")
+            print(f"Settings: {self.logo_settings}")
+            return True
+        except Exception as e:
+            print(f"Error saving global logo settings: {e}")
+            import traceback
+            traceback.print_exc()
+            return False
+    
     def check_layer_visibility(self):
         """Print diagnostic information about layer visibility"""
         print("\n----- LAYER VISIBILITY CHECK -----")
@@ -7365,7 +7831,7 @@ class PreviewWindow(QMainWindow):
         print("----------------------------")
     
 class LogoSettingsDialog(QDialog):
-    """Dialog for configuring logo appearance and position"""
+    """Dialog for configuring logo appearance and position with improved center handling"""
     def __init__(self, parent=None, settings=None):
         super().__init__(parent)
         self.setWindowTitle("Logo Settings")
@@ -7382,7 +7848,8 @@ class LogoSettingsDialog(QDialog):
             "height_percentage": 15,
             "custom_position": False,
             "x_position": 20,
-            "y_position": 20
+            "y_position": 20,
+            "maintain_aspect": True
         }
         
         # Create layout
@@ -7435,15 +7902,13 @@ class LogoSettingsDialog(QDialog):
         
         self.x_spin = QSpinBox()
         self.x_spin.setMinimum(0)
-        self.x_spin.setMaximum(1000)
+        self.x_spin.setMaximum(1920)  # Increased for higher resolution displays
         self.x_spin.setValue(self.settings.get("x_position", 20))
-        self.x_spin.setEnabled(self.settings.get("custom_position", False))
         
         self.y_spin = QSpinBox()
         self.y_spin.setMinimum(0)
-        self.y_spin.setMaximum(1000)
+        self.y_spin.setMaximum(1080)  # Increased for higher resolution displays
         self.y_spin.setValue(self.settings.get("y_position", 20))
-        self.y_spin.setEnabled(self.settings.get("custom_position", False))
         
         custom_pos_layout.addWidget(QLabel("X:"))
         custom_pos_layout.addWidget(self.x_spin)
@@ -7451,6 +7916,11 @@ class LogoSettingsDialog(QDialog):
         custom_pos_layout.addWidget(self.y_spin)
         
         position_layout.addLayout(custom_pos_layout)
+        
+        # Note about center position
+        center_note = QLabel("Note: Center position ignores custom X/Y values")
+        center_note.setStyleSheet("color: #666; font-style: italic;")
+        position_layout.addWidget(center_note)
         
         layout.addWidget(position_group)
         
@@ -7465,7 +7935,7 @@ class LogoSettingsDialog(QDialog):
         self.width_slider = QSlider(Qt.Horizontal)
         self.width_slider.setMinimum(5)
         self.width_slider.setMaximum(50)
-        self.width_slider.setValue(self.settings.get("width_percentage", 15))
+        self.width_slider.setValue(int(self.settings.get("width_percentage", 15)))
         
         self.width_value = QLabel(f"{self.width_slider.value()}%")
         self.width_slider.valueChanged.connect(
@@ -7484,7 +7954,7 @@ class LogoSettingsDialog(QDialog):
         self.height_slider = QSlider(Qt.Horizontal)
         self.height_slider.setMinimum(5)
         self.height_slider.setMaximum(50)
-        self.height_slider.setValue(self.settings.get("height_percentage", 15))
+        self.height_slider.setValue(int(self.settings.get("height_percentage", 15)))
         
         self.height_value = QLabel(f"{self.height_slider.value()}%")
         self.height_slider.valueChanged.connect(
@@ -7503,7 +7973,7 @@ class LogoSettingsDialog(QDialog):
         
         layout.addWidget(size_group)
         
-        # Preview section (placeholder)
+        # Preview section
         preview_group = QGroupBox("Preview")
         preview_layout = QVBoxLayout(preview_group)
         
@@ -7536,20 +8006,48 @@ class LogoSettingsDialog(QDialog):
         
         # Initialize UI based on settings
         self.toggle_custom_position(self.settings.get("custom_position", False))
+        
+        # If center position is selected, disable custom position
+        if self.settings.get("logo_position") == "center":
+            self.update_for_center_position()
     
     def set_position(self, position):
-        """Set the logo position"""
+        """Set the logo position with special handling for center"""
         for pos_id, button in self.position_buttons.items():
             button.setChecked(pos_id == position)
+        
+        # Special handling for center position
+        if position == "center":
+            self.update_for_center_position()
+        else:
+            # Re-enable custom position option for non-center positions
+            self.custom_position_check.setEnabled(True)
             
+    def update_for_center_position(self):
+        """Apply special settings when center position is selected"""
+        # Disable and uncheck custom position when center is selected
+        self.custom_position_check.setChecked(False)
+        self.custom_position_check.setEnabled(False)
+        self.x_spin.setEnabled(False)
+        self.y_spin.setEnabled(False)
+    
     def toggle_custom_position(self, enabled):
         """Toggle custom position controls"""
+        # Skip if center is selected
+        if self.is_center_selected():
+            return
+            
         self.x_spin.setEnabled(enabled)
         self.y_spin.setEnabled(enabled)
         
         # Update button states - disable position buttons if custom is enabled
-        for button in self.position_buttons.values():
-            button.setEnabled(not enabled)
+        for pos_id, button in self.position_buttons.items():
+            if pos_id != "center":  # Center is special case
+                button.setEnabled(not enabled)
+    
+    def is_center_selected(self):
+        """Check if center position is currently selected"""
+        return self.position_buttons["center"].isChecked()
     
     def get_current_settings(self):
         """Get the current settings from dialog controls"""
@@ -7560,16 +8058,26 @@ class LogoSettingsDialog(QDialog):
                 selected_position = pos_id
                 break
         
-        return {
+        # Get settings, handling center position specially
+        settings = {
             "logo_position": selected_position,
-            "custom_position": self.custom_position_check.isChecked(),
-            "x_position": self.x_spin.value(),
-            "y_position": self.y_spin.value(),
             "width_percentage": self.width_slider.value(),
             "height_percentage": self.height_slider.value(),
             "maintain_aspect": self.aspect_check.isChecked(),
             "logo_visible": self.settings.get("logo_visible", True)  # Preserve visibility
         }
+        
+        # For center position, override custom_position flag
+        if selected_position == "center":
+            settings["custom_position"] = False
+        else:
+            settings["custom_position"] = self.custom_position_check.isChecked()
+        
+        # Always store X/Y values even if not used
+        settings["x_position"] = self.x_spin.value()
+        settings["y_position"] = self.y_spin.value()
+        
+        return settings
     
     def apply_settings(self):
         """Apply the current settings without closing dialog"""

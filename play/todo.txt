@@ -2,8 +2,6 @@ Show all Xinput reverts to default text, and you have to re apply current text
 
 Remove shadow - pointless
 
-Move all files to preview, and preview\settings. Do one by one. Also declare in inti for each script.
-
 Add generate images from previous exe
 
 Fix logo centering for all sizes
