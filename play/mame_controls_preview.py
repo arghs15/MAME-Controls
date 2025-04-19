@@ -1,3 +1,4 @@
+import builtins
 import os
 import random
 import sys
@@ -321,57 +322,6 @@ class PreviewWindow(QMainWindow):
         #self.migrate_legacy_files()
         
         return True
-
-    '''def migrate_legacy_files(self):
-        """Migrate files from legacy locations to new directory structure"""
-        try:
-            import shutil
-            migrations = 0
-            
-            # 1. Check for legacy settings files
-            legacy_files = [
-                (os.path.join(self.mame_dir, "text_appearance_settings.json"), 
-                os.path.join(self.settings_dir, "text_appearance_settings.json")),
-                (os.path.join(self.preview_dir, "global_text_settings.json"), 
-                os.path.join(self.settings_dir, "text_appearance_settings.json")),
-                (os.path.join(self.preview_dir, "global_logo.json"), 
-                os.path.join(self.settings_dir, "logo_settings.json")),
-                (os.path.join(self.preview_dir, "control_config_settings.json"), 
-                os.path.join(self.settings_dir, "control_config_settings.json")),
-                (os.path.join(self.preview_dir, "global_positions.json"), 
-                os.path.join(self.settings_dir, "global_positions.json")),
-                (os.path.join(self.preview_dir, "grid_settings.json"), 
-                os.path.join(self.settings_dir, "grid_settings.json")),
-            ]
-            
-            # Check for ROM-specific files
-            if hasattr(self, 'rom_name') and self.rom_name:
-                legacy_files.extend([
-                    (os.path.join(self.preview_dir, f"{self.rom_name}_positions.json"), 
-                    os.path.join(self.settings_dir, f"{self.rom_name}_positions.json")),
-                    (os.path.join(self.preview_dir, f"{self.rom_name}_logo.json"), 
-                    os.path.join(self.settings_dir, f"{self.rom_name}_logo.json")),
-                ])
-            
-            # Perform migrations
-            for source, dest in legacy_files:
-                if os.path.exists(source) and not os.path.exists(dest):
-                    try:
-                        shutil.copy2(source, dest)
-                        print(f"Migrated: {source} -> {dest}")
-                        migrations += 1
-                    except Exception as e:
-                        print(f"Migration error for {source}: {e}")
-            
-            if migrations > 0:
-                print(f"Successfully migrated {migrations} files to new directory structure")
-            
-            return migrations
-        except Exception as e:
-            print(f"Error during file migration: {e}")
-            import traceback
-            traceback.print_exc()
-            return 0'''
     
     def detect_screen_after_startup(self):
         """After window is shown, detect which screen it's on and set current_screen"""
@@ -548,8 +498,6 @@ class PreviewWindow(QMainWindow):
                     print(f"Warning: Failed to delete guide: {e}")
             self.measurement_guides = []
 
-
-    
     # 5. Add integration to the PreviewWindow initialization
     def enhance_preview_window_init(self):
         """Call this in PreviewWindow.__init__ after setting up controls"""
@@ -655,9 +603,6 @@ class PreviewWindow(QMainWindow):
             import traceback
             traceback.print_exc()
 
-
-    # 2. Add these methods to PreviewWindow for controlling snapping
-    # Replace the toggle_snapping method with this improved version
     def toggle_snapping(self):
         """Toggle snapping with direct action button text"""
         # Check if snapping_enabled exists, if not initialize it
@@ -2105,17 +2050,17 @@ class PreviewWindow(QMainWindow):
 
     # Completely rewritten show_all_xinput_controls with a new approach
     def show_all_xinput_controls(self):
-        """Show all possible P1 XInput controls for global positioning without duplicates"""
+        """Show all possible P1 XInput controls for global positioning with proper styling and font handling"""
         # Standard XInput controls for positioning - P1 ONLY
         xinput_controls = {
-            "P1_JOYSTICK_UP": "Left Stick Up",
-            "P1_JOYSTICK_DOWN": "Left Stick Down",
-            "P1_JOYSTICK_LEFT": "Left Stick Left",
-            "P1_JOYSTICK_RIGHT": "Left Stick Right",
-            "P1_JOYSTICK2_UP": "Right Stick Up",
-            "P1_JOYSTICK2_DOWN": "Right Stick Down",
-            "P1_JOYSTICK2_LEFT": "Right Stick Left",
-            "P1_JOYSTICK2_RIGHT": "Right Stick Right",
+            "P1_JOYSTICK_UP": "LS Up",
+            "P1_JOYSTICK_DOWN": "LS Down",
+            "P1_JOYSTICK_LEFT": "LS Left",
+            "P1_JOYSTICK_RIGHT": "LS Right",
+            "P1_JOYSTICK2_UP": "RS Up",
+            "P1_JOYSTICK2_DOWN": "RS Down",
+            "P1_JOYSTICK2_LEFT": "RS Left",
+            "P1_JOYSTICK2_RIGHT": "RS Right",
             "P1_BUTTON1": "A Button",
             "P1_BUTTON2": "B Button",
             "P1_BUTTON3": "X Button",
@@ -2124,20 +2069,19 @@ class PreviewWindow(QMainWindow):
             "P1_BUTTON6": "Right Bumper",
             "P1_BUTTON7": "Left Trigger",
             "P1_BUTTON8": "Right Trigger",
-            "P1_BUTTON9": "Left Stick Button",
-            "P1_BUTTON10": "Right Stick Button",
+            "P1_BUTTON9": "LS Button",
+            "P1_BUTTON10": "RS Button",
             "P1_START": "Start Button",
             "P1_SELECT": "Back Button",
-            # All P2 controls removed
         }
         
         try:
-            from PyQt5.QtGui import QFont, QFontInfo
-            from PyQt5.QtCore import QPoint, Qt
-            from PyQt5.QtWidgets import QLabel
+            from PyQt5.QtGui import QFont, QFontInfo, QColor, QFontDatabase, QFontMetrics
+            from PyQt5.QtCore import QPoint, Qt, QTimer
+            from PyQt5.QtWidgets import QLabel, QSizePolicy
             import os
             
-            print("\n--- Showing all P1 XInput controls for positioning ---")
+            print("\n--- Showing all P1 XInput controls with proper font handling ---")
             
             # Save existing control positions
             if not hasattr(self, 'original_controls_backup'):
@@ -2164,24 +2108,107 @@ class PreviewWindow(QMainWindow):
             self.control_labels = {}
             print("Cleared all existing controls")
             
-            # Load saved global positions
+            # Load saved positions
             saved_positions = self.load_saved_positions()
             
-            # Get font - either from current_font or settings
+            # Extract text settings and style information
             font_family = self.text_settings.get("font_family", "Arial")
             font_size = self.text_settings.get("font_size", 28)
             bold_strength = self.text_settings.get("bold_strength", 2) > 0
+            use_uppercase = self.text_settings.get("use_uppercase", False)
+            show_button_prefix = self.text_settings.get("show_button_prefix", True)
+            y_offset = self.text_settings.get("y_offset", -40)
             
+            # Get color and gradient settings
+            use_prefix_gradient = self.text_settings.get("use_prefix_gradient", False)
+            use_action_gradient = self.text_settings.get("use_action_gradient", False)
+            prefix_color = self.text_settings.get("prefix_color", "#FFC107")
+            action_color = self.text_settings.get("action_color", "#FFFFFF")
+            prefix_gradient_start = self.text_settings.get("prefix_gradient_start", "#FFC107")
+            prefix_gradient_end = self.text_settings.get("prefix_gradient_end", "#FF5722")
+            action_gradient_start = self.text_settings.get("action_gradient_start", "#2196F3")
+            action_gradient_end = self.text_settings.get("action_gradient_end", "#4CAF50")
+            
+            # IMPORTANT: Ensure we have the best possible font loaded
+            # First try to use the font that's already been initialized in the app
+            if hasattr(self, 'font_name') and self.font_name:
+                font_family = self.font_name
+                print(f"Using initialized font name: {font_family}")
+            
+            # Create font object with all available methods for best compatibility
+            font = None
+            
+            # Method 1: Try to use current_font if available
             if hasattr(self, 'current_font') and self.current_font:
                 font = QFont(self.current_font)
+                print(f"Using current_font: {self.current_font.family()} ({font.family()})")
+            
+            # Method 2: Try to use initialized_font if available
+            elif hasattr(self, 'initialized_font') and self.initialized_font:
+                font = QFont(self.initialized_font)
+                print(f"Using initialized_font: {self.initialized_font.family()} ({font.family()})")
+            
+            # Method 3: Try to explicitly load the font from the fonts directory
+            elif hasattr(self, 'fonts_dir') and os.path.exists(self.fonts_dir):
+                found_font = False
+                
+                # First try exact filename match
+                for filename in os.listdir(self.fonts_dir):
+                    if filename.lower().endswith(('.ttf', '.otf')):
+                        name_base = os.path.splitext(filename)[0].lower()
+                        if name_base == font_family.lower() or font_family.lower() in name_base:
+                            font_path = os.path.join(self.fonts_dir, filename)
+                            
+                            # Register the font
+                            font_id = QFontDatabase.addApplicationFont(font_path)
+                            if font_id >= 0:
+                                families = QFontDatabase.applicationFontFamilies(font_id)
+                                if families and len(families) > 0:
+                                    exact_family = families[0]
+                                    font = QFont(exact_family, font_size)
+                                    font.setBold(bold_strength)
+                                    font.setStyleStrategy(QFont.PreferMatch)
+                                    found_font = True
+                                    print(f"Loaded custom font: {exact_family} from {filename}")
+                                    break
+                
+                # If no font found, create standard font
+                if not found_font:
+                    font = QFont(font_family, font_size)
+                    font.setBold(bold_strength)
+                    font.setStyleStrategy(QFont.PreferMatch)
+                    print(f"Using system font: {font_family}")
+            
+            # Method 4: Fallback to creating a basic font
             else:
                 font = QFont(font_family, font_size)
                 font.setBold(bold_strength)
+                font.setStyleStrategy(QFont.PreferMatch)
+                print(f"Using basic font: {font_family}")
             
-            # Apply text settings
-            y_offset = self.text_settings.get("y_offset", -40)
-            use_uppercase = self.text_settings.get("use_uppercase", False)
-            show_prefix = self.text_settings.get("show_button_prefix", True)
+            # Calculate the maximum text width needed 
+            font_metrics = QFontMetrics(font)
+            max_text_width = 0
+            
+            # First determine the longest text to ensure consistent sizing
+            for control_name, action_text in xinput_controls.items():
+                button_prefix = self.get_button_prefix(control_name)
+                if use_uppercase:
+                    action_text = action_text.upper()
+                
+                display_text = action_text
+                if show_button_prefix and button_prefix:
+                    display_text = f"{button_prefix}: {action_text}"
+                
+                # Calculate width needed for this text
+                text_width = font_metrics.horizontalAdvance(display_text)
+                
+                # Add some padding to ensure no cut-off
+                text_width += 20  # 10px padding on each side
+                
+                max_text_width = max(max_text_width, text_width)
+            
+            print(f"Calculated maximum text width: {max_text_width}px")
             
             # Default grid layout
             grid_x, grid_y = 0, 0
@@ -2197,20 +2224,60 @@ class PreviewWindow(QMainWindow):
                 
                 # Add prefix if enabled
                 display_text = action_text
-                if show_prefix and button_prefix:
+                if show_button_prefix and button_prefix:
                     display_text = f"{button_prefix}: {action_text}"
                 
-                # COMPLETELY DIFFERENT APPROACH:
-                # 1. Create presized labels with final dimensions
-                label, width, height = self.create_presized_label(display_text, font, control_name)
+                # Choose the correct label class based on gradient settings
+                if use_prefix_gradient or use_action_gradient:
+                    # Use gradient-enabled label
+                    label = GradientDraggableLabel(display_text, self.canvas, settings=self.text_settings.copy())
+                    
+                    # Set gradient properties
+                    label.use_prefix_gradient = use_prefix_gradient
+                    label.use_action_gradient = use_action_gradient
+                    label.prefix_gradient_start = QColor(prefix_gradient_start)
+                    label.prefix_gradient_end = QColor(prefix_gradient_end)
+                    label.action_gradient_start = QColor(action_gradient_start)
+                    label.action_gradient_end = QColor(action_gradient_end)
+                else:
+                    # Use color-enabled label
+                    label = ColoredDraggableLabel(display_text, self.canvas, settings=self.text_settings.copy())
                 
-                # 2. Create shadow with exact same dimensions
+                # Apply font and styles
+                label.setFont(font)
+                label.prefix = button_prefix
+                label.action = action_text
+                
+                # IMPORTANT: Remove size constraints and set expanding policy for proper sizing
+                label.setMinimumSize(0, 0)
+                label.setMaximumSize(16777215, 16777215)  # Qt's QWIDGETSIZE_MAX
+                label.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)
+                
+                # Make sure we have proper settings in the label
+                label.settings = self.text_settings.copy()
+                
+                # CRITICAL FIX FOR TEXT TRUNCATION:
+                # First, let the label auto-size based on content
+                label.adjustSize()
+                
+                # Then, ensure it's at least as wide as our calculated max width
+                # This creates consistency and prevents long text from being cut off
+                label_width = max(label.width(), max_text_width)
+                label_height = label.height()
+                label.resize(label_width, label_height)
+                
+                # Also set a more aggressive font style with CSS as a fallback
+                label.setStyleSheet(f"background-color: transparent; border: none; font-family: '{font.family()}';")
+                
+                # Create shadow label with similar properties but plain black text
                 shadow = QLabel(display_text, self.canvas)
                 shadow.setFont(font)
                 shadow.setStyleSheet("color: black; background-color: transparent; border: none;")
-                shadow.resize(width, height)  # Use exact same size
                 
-                # 3. Determine position - now completely separated from creation
+                # Shadow should match label size exactly
+                shadow.resize(label_width, label_height)
+                
+                # Determine position - now completely separated from creation
                 x, y = 0, 0
                 
                 # Check for saved position in the following order:
@@ -2233,7 +2300,7 @@ class PreviewWindow(QMainWindow):
                 
                 else:
                     # Use grid position with fixed spacing
-                    x = 100 + (grid_x * 200)
+                    x = 100 + (grid_x * 220)  # Wider spacing for longer labels
                     y = 100 + (grid_y * 60) + y_offset
                     original_pos = QPoint(x, y - y_offset)
                     
@@ -2243,15 +2310,14 @@ class PreviewWindow(QMainWindow):
                         grid_y += 1
                     print(f"Using grid position for {control_name}: ({x}, {y})")
                 
-                # 4. CRITICAL - Position without any adjustments
-                # Apply position DIRECTLY - no calculations after this point
+                # Apply position
                 shadow.move(x + 2, y + 2)
                 label.move(x, y)
                 
-                # 5. Stack shadow behind
+                # Stack shadow behind
                 shadow.lower()
                 
-                # 6. Store in control_labels with original position
+                # Store in control_labels with original position
                 self.control_labels[control_name] = {
                     'label': label,
                     'shadow': shadow,
@@ -2260,21 +2326,17 @@ class PreviewWindow(QMainWindow):
                     'original_pos': original_pos
                 }
                 
-                # 7. Connect shadow movement handler
+                # Connect shadow movement handler
                 original_mouseMoveEvent = label.mouseMoveEvent
                 label.mouseMoveEvent = lambda event, label=label, shadow=shadow, orig_func=original_mouseMoveEvent: self.on_label_move(event, label, shadow, orig_func)
                 
-                # 8. Apply visibility based on joystick settings
+                # Apply visibility based on joystick settings
                 is_visible = True
                 if "JOYSTICK" in control_name and hasattr(self, 'joystick_visible'):
                     is_visible = self.joystick_visible
                 
                 label.setVisible(is_visible)
                 shadow.setVisible(is_visible)
-                
-                # Record final position
-                final_x, final_y = label.pos().x(), label.pos().y()
-                print(f"Final position for {control_name}: ({final_x}, {final_y})")
             
             # Update button text
             if hasattr(self, 'xinput_controls_button'):
@@ -2283,10 +2345,15 @@ class PreviewWindow(QMainWindow):
             # Set XInput mode flag
             self.showing_all_xinput_controls = True
             
-            # Force update
+            # Force updates with staggered timers for reliable application
+            QTimer.singleShot(50, lambda: self.apply_text_settings())
+            QTimer.singleShot(100, lambda: self.force_resize_all_labels())
+            QTimer.singleShot(200, lambda: self.force_resize_all_labels())  # Second attempt for reliability
+            
+            # Force a canvas update
             self.canvas.update()
             
-            print(f"Created and displayed {len(xinput_controls)} P1 XInput controls for positioning")
+            print(f"Created and displayed {len(xinput_controls)} P1 XInput controls with proper styling and font handling")
             return True
             
         except Exception as e:
@@ -5265,44 +5332,85 @@ class PreviewWindow(QMainWindow):
     
     # Add or update a method to load saved positions
     def load_saved_positions(self):
-        """Load saved positions from ROM-specific or global config"""
+        """Load saved positions from ROM-specific or global config with improved error handling"""
         positions = {}
+        rom_positions = {}
+        global_positions = {}
         
         try:
-            # Check for ROM-specific positions first
-            preview_dir = os.path.join(self.mame_dir, "preview")
-            rom_positions_file = os.path.join(preview_dir, f"{self.rom_name}_positions.json")
-            global_positions_file = os.path.join(preview_dir, "global_positions.json")
+            print("\n=== Loading saved positions ===")
+            # Check for both ROM-specific and global positions (in settings directory)
+            rom_positions_file = os.path.join(self.settings_dir, f"{self.rom_name}_positions.json")
+            global_positions_file = os.path.join(self.settings_dir, "global_positions.json")
             
-            # First try ROM-specific positions
+            # Log what we're looking for
+            print(f"Looking for ROM-specific positions at: {rom_positions_file}")
+            print(f"Looking for global positions at: {global_positions_file}")
+            
+            # First load global positions (as a base)
+            if os.path.exists(global_positions_file):
+                with open(global_positions_file, 'r') as f:
+                    global_positions = json.load(f)
+                    print(f"Loaded global positions from {global_positions_file}")
+                    print(f"Found {len(global_positions)} global positions")
+            else:
+                print("No global position file found")
+                
+                # Check legacy global paths
+                legacy_global_paths = [
+                    os.path.join(self.preview_dir, "global_positions.json"),
+                    os.path.join(self.mame_dir, "global_positions.json")
+                ]
+                
+                for legacy_path in legacy_global_paths:
+                    if os.path.exists(legacy_path):
+                        print(f"Found legacy global positions at {legacy_path}")
+                        with open(legacy_path, 'r') as f:
+                            global_positions = json.load(f)
+                        
+                        # Migrate to new location
+                        os.makedirs(self.settings_dir, exist_ok=True)
+                        with open(global_positions_file, 'w') as f:
+                            json.dump(global_positions, f)
+                        
+                        print(f"Migrated global positions from {legacy_path} to {global_positions_file}")
+                        break
+            
+            # Then check for ROM-specific positions (which would override globals)
             if os.path.exists(rom_positions_file):
                 with open(rom_positions_file, 'r') as f:
-                    positions = json.load(f)
+                    rom_positions = json.load(f)
                     print(f"Loaded ROM-specific positions for {self.rom_name} from {rom_positions_file}")
-                    if positions:
-                        # Check if we have any control positions (not just logo settings)
-                        has_control_positions = any(key != "__logo_settings__" for key in positions.keys())
-                        print(f"ROM-specific control positions found: {has_control_positions}")
-            
-            # If no ROM-specific positions or they're empty, try global positions
-            if not positions:
-                if os.path.exists(global_positions_file):
-                    with open(global_positions_file, 'r') as f:
-                        positions = json.load(f)
-                        print(f"Loaded global positions from {global_positions_file}")
-                else:
-                    print(f"No position files found")
-            
-            # Handle special logo settings object if present
-            if "__logo_settings__" in positions:
-                # Don't include logo settings in the return value
-                del positions["__logo_settings__"]
+                    print(f"Found {len(rom_positions)} ROM-specific positions")
+            else:
+                print("No ROM-specific position file found")
                 
+                # Check legacy ROM-specific path
+                legacy_rom_path = os.path.join(self.preview_dir, f"{self.rom_name}_positions.json")
+                if os.path.exists(legacy_rom_path):
+                    print(f"Found legacy ROM-specific positions at {legacy_rom_path}")
+                    with open(legacy_rom_path, 'r') as f:
+                        rom_positions = json.load(f)
+                    
+                    # Migrate to new location
+                    os.makedirs(self.settings_dir, exist_ok=True)
+                    with open(rom_positions_file, 'w') as f:
+                        json.dump(rom_positions, f)
+                    
+                    print(f"Migrated ROM-specific positions from {legacy_rom_path} to {rom_positions_file}")
+            
+            # Start with global positions, then override with ROM-specific ones
+            positions = global_positions.copy()
+            positions.update(rom_positions)  # ROM positions take precedence
+            
+            print(f"Combined positions: {len(positions)} total ({len(global_positions)} global, {len(rom_positions)} ROM-specific)")
+            
         except Exception as e:
             print(f"Error loading saved positions: {e}")
             import traceback
             traceback.print_exc()
         
+        print(f"Returning {len(positions)} positions")
         return positions
     
     def update_control_positions(self):
