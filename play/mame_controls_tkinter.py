@@ -179,7 +179,7 @@ class MAMEControlConfig(ctk.CTk):
         self.after(100, self.state, 'zoomed')  # Use zoomed for Windows
         
         # Find necessary directories
-        self.mame_dir = self.find_mame_directory()
+        self.mame_dir = os.path.abspath(os.path.join(os.path.dirname(__file__), '..'))
         if not self.mame_dir:
             messagebox.showerror("Error", "Please place this script in the MAME directory!")
             self.quit()
@@ -567,38 +567,52 @@ class MAMEControlConfig(ctk.CTk):
 
     def find_mame_directory(self) -> Optional[str]:
         """Find the MAME directory containing necessary files"""
-        # First check in the application directory
+        # 1. Check application directory
         app_dir = get_application_path()
         app_gamedata = os.path.join(app_dir, "gamedata.json")
-        
+        app_preview_gamedata = os.path.join(app_dir, "preview", "gamedata.json")
+
         if os.path.exists(app_gamedata):
             print(f"Using bundled gamedata.json: {app_dir}")
             return app_dir
-            
-        # Then check in the current directory
+        elif os.path.exists(app_preview_gamedata):
+            print(f"Using external preview/gamedata.json: {app_dir}")
+            return app_dir
+
+        # 2. Check current script directory
         current_dir = os.path.abspath(os.path.dirname(__file__))
         current_gamedata = os.path.join(current_dir, "gamedata.json")
-        
+        current_preview_gamedata = os.path.join(current_dir, "preview", "gamedata.json")
+
         if os.path.exists(current_gamedata):
             print(f"Found MAME directory: {current_dir}")
             return current_dir
-            
-        # Then check common MAME paths
+        elif os.path.exists(current_preview_gamedata):
+            print(f"Found MAME directory via preview/gamedata.json: {current_dir}")
+            return current_dir
+
+        # 3. Check common MAME install paths (and their preview folders)
         common_paths = [
             os.path.join(os.environ.get('PROGRAMFILES', 'C:\\Program Files'), "MAME"),
             os.path.join(os.environ.get('PROGRAMFILES(X86)', 'C:\\Program Files (x86)'), "MAME"),
             "C:\\MAME",
             "D:\\MAME"
         ]
-        
+
         for path in common_paths:
             gamedata_path = os.path.join(path, "gamedata.json")
+            preview_gamedata_path = os.path.join(path, "preview", "gamedata.json")
+
             if os.path.exists(gamedata_path):
                 print(f"Found MAME directory: {path}")
                 return path
-                
+            elif os.path.exists(preview_gamedata_path):
+                print(f"Found MAME directory via preview/gamedata.json: {path}")
+                return path
+
         print("Error: gamedata.json not found in known locations")
         return None
+
 
     def toggle_xinput(self):
         """Handle toggling between JOYCODE and XInput mappings"""
@@ -630,6 +644,93 @@ class MAMEControlConfig(ctk.CTk):
             
             # Restore scroll position
             self.control_frame._scrollbar.set(*scroll_pos)
+
+    def switch_to_ingame_mode(self):
+        """Switch to a simplified, large-format display for in-game reference"""
+        if not self.current_game:
+            return
+            
+        # Clear existing display
+        for widget in self.control_frame.winfo_children():
+            widget.destroy()
+            
+        # Get the current game's controls
+        game_data = self.get_game_data(self.current_game)
+        if not game_data:
+            return
+            
+        # Get custom controls
+        cfg_controls = {}
+        if self.current_game in self.custom_configs:
+            cfg_controls = self.parse_cfg_controls(self.custom_configs[self.current_game])
+            if self.use_xinput:
+                cfg_controls = {
+                    control: self.convert_mapping(mapping, True)
+                    for control, mapping in cfg_controls.items()
+                }
+
+        # Configure single column layout
+        self.control_frame.grid_columnconfigure(0, weight=1)
+
+        # Create controls display with large font
+        controls_frame = ctk.CTkFrame(self.control_frame)
+        controls_frame.grid(row=0, column=0, padx=10, pady=10, sticky="nsew")
+        
+        row = 0
+        for player in game_data.get('players', []):
+            # Player header
+            player_label = ctk.CTkLabel(
+                controls_frame,
+                text=f"Player {player['number']}",
+                font=("Arial", 24, "bold")
+            )
+            player_label.grid(row=row, column=0, padx=10, pady=(20,10), sticky="w")
+            row += 1
+            
+            # Player controls
+            for label in player.get('labels', []):
+                control_name = label['name']
+                default_action = label['value']
+                current_mapping = cfg_controls.get(control_name, "Default")
+                
+                display_control = self.format_control_name(control_name)
+                display_mapping = self.format_mapping_display(current_mapping)
+                
+                # Create a frame for each control to better organize the information
+                control_frame = ctk.CTkFrame(controls_frame)
+                control_frame.grid(row=row, column=0, padx=20, pady=5, sticky="ew")
+                control_frame.grid_columnconfigure(1, weight=1)  # Make action column expandable
+                
+                # Control name
+                ctk.CTkLabel(
+                    control_frame,
+                    text=display_control,
+                    font=("Arial", 20, "bold"),
+                    anchor="w"
+                ).grid(row=0, column=0, padx=5, pady=2, sticky="w")
+
+                # Default action
+                default_label = ctk.CTkLabel(
+                    control_frame,
+                    text=f"Action: {default_action}",
+                    font=("Arial", 18),
+                    text_color="gray75",
+                    anchor="w"
+                )
+                default_label.grid(row=1, column=0, columnspan=2, padx=20, pady=2, sticky="w")
+                
+                # Current mapping (if different from default)
+                if current_mapping != "Default":
+                    mapping_label = ctk.CTkLabel(
+                        control_frame,
+                        text=f"Mapped to: {display_mapping}",
+                        font=("Arial", 18),
+                        text_color="yellow",
+                        anchor="w"
+                    )
+                    mapping_label.grid(row=2, column=0, columnspan=2, padx=20, pady=2, sticky="w")
+                
+                row += 1
 
     def create_layout(self):
         """Create the main application layout"""
@@ -663,7 +764,7 @@ class MAMEControlConfig(ctk.CTk):
             width=150
         )
         self.unmatched_button.grid(row=0, column=1, padx=5, pady=5, sticky="e")
-
+        
         # Generate configs button
         self.generate_configs_button = ctk.CTkButton(
             self.stats_frame,
@@ -748,7 +849,7 @@ class MAMEControlConfig(ctk.CTk):
         """Create info directory if it doesn't exist"""
         # Use application_path instead of __file__ for PyInstaller compatibility
         app_path = get_application_path()
-        info_dir = os.path.join(app_path, "preview", "settings", "info")
+        info_dir = os.path.join(app_path, "info")
         if not os.path.exists(info_dir):
             os.makedirs(info_dir)
         return info_dir
@@ -1638,10 +1739,10 @@ class MAMEControlConfig(ctk.CTk):
         
         if in_preview_folder:
             # If we're in preview folder, settings are in preview/settings
-            settings_path = os.path.join(self.mame_dir, "gamedata.json")
+            settings_path = os.path.join(self.mame_dir, "preview", "gamedata.json")
         else:
             # Normal path relative to mame_dir
-            settings_path = os.path.join(self.mame_dir, "gamedata.json")
+            settings_path = os.path.join(self.mame_dir, "preview", "gamedata.json")
         
         # Create directory if it doesn't exist
         os.makedirs(os.path.dirname(settings_path), exist_ok=True)
@@ -1796,7 +1897,7 @@ class MAMEControlConfig(ctk.CTk):
             "hide_preview_buttons": getattr(self, 'hide_preview_buttons', False)
         }
         
-        settings_path = os.path.join(self.mame_dir, "preview", "control_config_settings.json")
+        settings_path = os.path.join(self.mame_dir, "preview", "settings", "control_config_settings.json")
         try:
             with open(settings_path, 'w') as f:
                 json.dump(settings, f)
@@ -1805,7 +1906,7 @@ class MAMEControlConfig(ctk.CTk):
 
     def load_settings(self):
         """Load settings from JSON file if it exists"""
-        settings_path = os.path.join(self.mame_dir, "preview", "control_config_settings.json")
+        settings_path = os.path.join(self.mame_dir, "preview", "settings", "control_config_settings.json")
         # Set sensible defaults
         self.preferred_preview_screen = 1  # Default to second screen
         self.visible_control_types = ["BUTTON"]  # Default to just buttons
@@ -2668,7 +2769,8 @@ class MAMEControlConfig(ctk.CTk):
         json_paths = [
             os.path.join(self.mame_dir, "gamedata.json"),
             os.path.join(self.mame_dir, "metadata", "gamedata.json"),
-            os.path.join(self.mame_dir, "data", "gamedata.json")
+            os.path.join(self.mame_dir, "data", "gamedata.json"),
+            os.path.join(self.mame_dir, "preview", "gamedata.json")
         ]
             
         json_path = None
