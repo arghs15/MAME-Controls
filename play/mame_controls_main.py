@@ -1,6 +1,6 @@
 """
 Updates to mame_controls_main.py to support the new directory structure
-where the main app runs from the preview folder
+where the main app runs from the preview folder, with Tkinter as default UI
 """
 
 import os
@@ -53,7 +53,7 @@ def main():
     parser.add_argument('--screen', type=int, default=1, help='Screen number to display preview on (default: 1)')
     parser.add_argument('--auto-close', action='store_true', help='Automatically close preview when MAME exits')
     parser.add_argument('--no-buttons', action='store_true', help='Hide buttons in preview mode (overrides settings)')
-    parser.add_argument('--tk', action='store_true', help='Use the Tkinter version of the main GUI (default: PyQt)')
+    parser.add_argument('--pyqt', action='store_true', help='Use the PyQt version of the main GUI (default: Tkinter)')
     args = parser.parse_args()
     print("Arguments parsed.")
     
@@ -108,8 +108,8 @@ def main():
             print("PyQt5 or necessary modules not found for preview mode.")
             sys.exit(1)
     
-    # For the main application, check which UI to use - now defaulting to PyQt
-    if not args.tk:  # Changed condition to check for --tk flag
+    # For the main application, check which UI to use - now defaulting to Tkinter
+    if args.pyqt:  # Changed condition to check for --pyqt flag
         # Initialize PyQt application
         try:
             from PyQt5.QtWidgets import QApplication
@@ -146,10 +146,12 @@ def main():
             sys.exit(app.exec_())
         except ImportError:
             print("PyQt5 not found, falling back to Tkinter version.")
-            args.tk = True  # Fall back to Tkinter if PyQt fails
+            use_tkinter = True  # Fall back to Tkinter if PyQt fails
+    else:
+        use_tkinter = True  # Default to Tkinter when --pyqt flag is not used
     
-    # If using Tkinter (either by flag or PyQt failure)
-    if args.tk:
+    # If not using PyQt (either by default or PyQt failure)
+    if not args.pyqt or use_tkinter:
         try:
             # Import the Tkinter version
             import customtkinter as ctk

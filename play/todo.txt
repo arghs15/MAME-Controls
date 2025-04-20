@@ -1,5 +1,3 @@
-Show all Xinput reverts to default text, and you have to re apply current text
-
 Remove shadow - pointless
 
 Add generate images from previous exe
