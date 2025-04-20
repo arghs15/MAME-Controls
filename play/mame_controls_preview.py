@@ -5,7 +5,7 @@ import sys
 import json
 import traceback
 from PyQt5 import sip
-from PyQt5.QtWidgets import (QAction, QGridLayout, QLineEdit, QMainWindow, QMenu, QMessageBox, QSizePolicy, QSpinBox, QVBoxLayout, QHBoxLayout, QWidget, 
+from PyQt5.QtWidgets import (QAction, QGridLayout, QLayout, QLineEdit, QMainWindow, QMenu, QMessageBox, QSizePolicy, QSpinBox, QVBoxLayout, QHBoxLayout, QWidget, 
                             QLabel, QPushButton, QFrame, QApplication, QDesktopWidget,
                             QDialog, QGroupBox, QCheckBox, QSlider, QComboBox)
 from PyQt5.QtGui import QBrush, QFontInfo, QImage, QLinearGradient, QPalette, QPixmap, QFont, QColor, QPainter, QPen, QFontMetrics
@@ -270,6 +270,20 @@ class PreviewWindow(QMainWindow):
             QMessageBox.critical(self, "Error", f"Error initializing preview: {e}")
             self.close()
 
+    # Add this method to the PreviewWindow class
+    def resizeEvent(self, event):
+        """Handle main window resize events"""
+        # Call the parent class's resizeEvent first
+        super().resizeEvent(event)
+        
+        # Reposition the button frame
+        if hasattr(self, 'position_button_frame'):
+            self.position_button_frame()
+        
+        # Also handle bezel resizing if needed
+        if hasattr(self, 'on_resize_with_bezel'):
+            self.on_resize_with_bezel(event)
+    
     def setup_directory_structure(self):
         """Set up and validate the directory structure for the application"""
         # Determine base path
@@ -1601,28 +1615,45 @@ class PreviewWindow(QMainWindow):
     def position_button_frame(self, initial_position=None):
         """Position the button frame with option for custom initial position"""
         if hasattr(self, 'button_frame'):
-            # Calculate width and position
-            frame_width = int(min(1000, self.width() * 0.9))  # 90% of window width, max 1000px
+            # Calculate target width - 90% of window width, max 1000px
+            target_width = int(min(1000, self.width() * 0.9))
             
-            # Set width first so we can get the correct height
-            self.button_frame.setFixedWidth(frame_width)
+            # Make sure the layout respects our width constraints
+            if hasattr(self, 'main_layout'):
+                self.main_layout.setSizeConstraint(QLayout.SetMinAndMaxSize)
+                
+            # Adjust size first to get natural height based on contents
             self.button_frame.adjustSize()
+            
+            # Get the natural dimensions
+            natural_width = self.button_frame.width()
             button_height = self.button_frame.height()
+            
+            # Use the larger of calculated or natural width
+            frame_width = max(natural_width, target_width)
+            
+            # Set fixed width AFTER getting natural size
+            self.button_frame.setFixedWidth(frame_width)
             
             # If initial position is specified, use it
             if initial_position:
                 x_pos, y_pos = initial_position
             else:
-                # Default position - change these values to adjust initial position
-                x_pos = self.width() - frame_width - 20  # 20px from right edge
-                y_pos = 20  # 20px from top
-            
-            # Keep within window bounds
+                # Position at bottom center, 20px from bottom
+                x_pos = (self.width() - frame_width) // 2  # Center horizontally
+                y_pos = self.height() - button_height - 20  # 20px from bottom
+                
+            # Make sure position is valid
             x_pos = max(0, min(self.width() - frame_width, x_pos))
             y_pos = max(0, min(self.height() - button_height, y_pos))
             
-            # Move to position
+            # Move to position and force update
             self.button_frame.move(x_pos, y_pos)
+            self.button_frame.updateGeometry()
+            
+            # Debug output
+            print(f"Button frame positioned: {frame_width}x{button_height} at ({x_pos}, {y_pos})")
+            print(f"Window size: {self.width()}x{self.height()}")
 
     def on_resize_with_buttons(self, event):
         """Handle resize events and reposition the button frame"""
@@ -6188,6 +6219,7 @@ class EnhancedLabel(QLabel):
         self.shadow_color = color
         self.update()
 
+
 class DraggableLabel(EnhancedLabel):
     """An enhanced draggable label with built-in shadow"""
     def __init__(self, text, parent=None, shadow_offset=2, settings=None, initialized_font=None):
@@ -6201,8 +6233,6 @@ class DraggableLabel(EnhancedLabel):
         # Enable mouse tracking
         self.setMouseTracking(True)
         self.dragging = False
-        self.resizing = False
-        self.was_resizing = False
         self.offset = QPoint()
         
         # Original position for reset
@@ -6210,9 +6240,6 @@ class DraggableLabel(EnhancedLabel):
         
         # Original font size
         self.original_font_size = self.settings.get("font_size", 28)
-        
-        # Size for resize handle
-        self.resize_handle_size = 15  # Larger handle area
         
         # Create context menu
         self.setup_context_menu()
@@ -6316,32 +6343,18 @@ class DraggableLabel(EnhancedLabel):
                 self.setText(content)
         else:
             self.setText(text)
-    
-    # Add this to mousePressEvent to store initial position for better resize calculations
+            
     def mousePressEvent(self, event):
-        """Handle mouse press events with better resize handling"""
+        """Handle mouse press events for dragging"""
         from PyQt5.QtCore import Qt
         if event.button() == Qt.LeftButton:
-            # Check if we're in the resize corner
-            if self.is_in_resize_corner(event.pos()):
-                self.resizing = True
-                self.last_resize_pos = event.pos()  # Store initial position
-                self.setCursor(Qt.SizeFDiagCursor)
-            else:
-                self.dragging = True
-                self.offset = event.pos()
-                self.setCursor(Qt.ClosedHandCursor)
+            self.dragging = True
+            self.offset = event.pos()
+            self.setCursor(Qt.ClosedHandCursor)
         
-    # Completely rewrite the mouseMoveEvent method to directly adjust text size
     def mouseMoveEvent(self, event):
         """Enhanced mouseMoveEvent with improved snapping controls"""
         from PyQt5.QtCore import Qt
-        # Update cursor when hovering over resize corner
-        if not self.dragging and not self.resizing:
-            if self.is_in_resize_corner(event.pos()):
-                self.setCursor(Qt.SizeFDiagCursor)
-            else:
-                self.setCursor(Qt.OpenHandCursor)
         
         # Handle dragging with better snapping control
         if self.dragging:
@@ -6500,53 +6513,6 @@ class DraggableLabel(EnhancedLabel):
                 if hasattr(parent, "update_shadow_position"):
                     parent.update_shadow_position(self)
         
-        # Handle resizing with direct font size control
-        elif self.resizing:
-            # [Keep existing resizing code from the original implementation]
-            self.was_resizing = True
-            
-            # Calculate the relative change based on mouse movement
-            delta_x = event.x() - self.last_resize_pos.x() if hasattr(self, 'last_resize_pos') else 0
-            delta_y = event.y() - self.last_resize_pos.y() if hasattr(self, 'last_resize_pos') else 0
-            
-            # Use the larger of horizontal or vertical movement
-            delta = max(abs(delta_x), abs(delta_y))
-            if (delta_x < 0 or delta_y < 0) and delta > 0:
-                delta = -delta  # Make delta negative if shrinking
-                
-            # Store current position for next move
-            self.last_resize_pos = event.pos()
-            
-            # Get current font and size
-            current_font = self.font()
-            current_size = current_font.pointSize()
-            
-            # Adjust size with appropriate sensitivity
-            sensitivity = 0.5  # Higher = less sensitive
-            new_size = current_size + (delta / sensitivity)
-            
-            # Enforce min/max limits
-            new_size = max(8, min(120, new_size))
-            
-            # Only update if there's a meaningful change
-            if abs(new_size - current_size) >= 0.5:
-                # Apply new font size
-                rounded_size = int(round(new_size))
-                current_font.setPointSize(rounded_size)
-                self.setFont(current_font)
-                
-                # Also resize the label to fit the text
-                self.adjustSize()
-                
-                # Update settings
-                if hasattr(self, 'settings'):
-                    self.settings["font_size"] = rounded_size
-                    print(f"Font size updated to: {rounded_size}")
-                
-                # Notify the parent to update shadow label if it exists
-                if hasattr(self.parent(), "update_shadow_font"):
-                    self.parent().update_shadow_font(self)
-            
     def find_preview_window_parent(self):
         """Find the PreviewWindow parent to access alignment guide methods"""
         current = self.parent()
@@ -6563,89 +6529,17 @@ class DraggableLabel(EnhancedLabel):
         """Handle mouse release without crashing on parent navigation"""
         if event.button() == Qt.LeftButton:
             self.dragging = False
-            self.resizing = False
             
-            # Update local settings if it was resizing, but don't save to file
-            if hasattr(self, 'was_resizing') and self.was_resizing:
-                self.was_resizing = False
-                current_size = self.font().pointSize()
-                
-                # Update settings object only
-                if hasattr(self, 'settings'):
-                    self.settings["font_size"] = current_size
-                    
-                    # Find the PreviewWindow to update its settings (but not save to file)
-                    parent_widget = self.parent()
-                    
-                    # Check if parent has update_text_settings_no_save method
-                    if parent_widget and hasattr(parent_widget, 'update_text_settings_no_save'):
-                        parent_widget.update_text_settings_no_save(self.settings)
-                        print(f"Font size {current_size} updated in memory (not saved to file)")
-                    else:
-                        # Try to find the PreviewWindow instance
-                        # This is the safe way to navigate up the parent chain
-                        preview_window = None
-                        current = self.parent()
-                        
-                        # Safely navigate up the parent hierarchy
-                        while current is not None:
-                            if hasattr(current, 'update_text_settings_no_save'):
-                                preview_window = current
-                                break
-                            try:
-                                # Access the parent attribute, don't call it as a method
-                                current = current.parent()
-                            except Exception as e:
-                                print(f"Error accessing parent: {e}")
-                                break
-                        
-                        # Update settings in memory only if we found the PreviewWindow
-                        if preview_window:
-                            preview_window.update_text_settings_no_save(self.settings)
-                            print(f"Font size {current_size} updated in memory via parent chain")
+            # Update cursor
+            self.setCursor(Qt.OpenHandCursor)
             
-            # Update cursor based on position
-            if self.is_in_resize_corner(event.pos()):
-                self.setCursor(Qt.SizeFDiagCursor)
-            else:
-                self.setCursor(Qt.OpenHandCursor)
-            
-    # Add a method to PreviewWindow to update text settings without saving
-    def update_text_settings_no_save(self, settings):
-        """Update text settings in memory only without saving to file"""
-        # Update local settings with merge
-        self.text_settings.update(settings)
-        
-        # Apply to existing controls
-        self.apply_text_settings()
-        
-        print(f"Text settings updated in memory (not saved): {self.text_settings}")
-    
     def contextMenuEvent(self, event):
         """Show context menu on right-click"""
         self.menu.exec_(event.globalPos())
     
-    def is_in_resize_corner(self, pos):
-        """Check if the position is in the resize corner"""
-        return (pos.x() > self.width() - self.resize_handle_size and 
-                pos.y() > self.height() - self.resize_handle_size)
-    
     def paintEvent(self, event):
-        """Override paint event to draw resize handle"""
+        """Override paint event to draw without resize handle"""
         super().paintEvent(event)
-        
-        # Draw resize handle in the bottom-right corner
-        painter = QPainter(self)
-        painter.setPen(Qt.white)
-        
-        # Draw simple diagonal lines for resize handle
-        x = self.width() - self.resize_handle_size
-        y = self.height() - self.resize_handle_size
-        for i in range(1, 4):
-            painter.drawLine(
-                x + i * 2, y + self.resize_handle_size - 2,
-                x + self.resize_handle_size - 2, y + i * 2
-            )
     
     def change_font_size(self, size):
         """Change font size through context menu"""
@@ -6702,71 +6596,13 @@ class DraggableLabel(EnhancedLabel):
                 if hasattr(label, 'setShadowColor'):
                     label.setShadowColor(color)
 
-    # Add this method to update the duplicate_control_label function to better handle shadows
-    def duplicate_control_label(self, label):
-        """Duplicate a control label"""
-        # Find which control this label belongs to
-        for control_name, control_data in self.control_labels.items():
-            if control_data['label'] == label:
-                # Create a new unique control name
-                new_control_name = f"{control_name}_copy"
-                counter = 1
-                
-                # Make sure the name is unique
-                while new_control_name in self.control_labels:
-                    new_control_name = f"{control_name}_copy{counter}"
-                    counter += 1
-                
-                # Create a new label with the same text
-                action_text = control_data['action']
-                
-                # Create a new draggable label
-                new_label = DraggableLabel(action_text, self.canvas, settings=self.text_settings)
-                
-                # Copy font and other properties
-                new_label.setFont(label.font())
-                new_label.setStyleSheet(label.styleSheet())
-                
-                # Create shadow effect for better visibility
-                shadow_label = QLabel(action_text, self.canvas)
-                shadow_label.setStyleSheet("color: black; background-color: transparent; border: none;")
-                shadow_label.setFont(new_label.font())
-                
-                # Position slightly offset from original
-                new_pos = QPoint(label.pos().x() + 20, label.pos().y() + 20)
-                
-                # Position shadow behind the label
-                shadow_label.move(new_pos.x() + 2, new_pos.y() + 2)
-                new_label.move(new_pos)
-                
-                # Make sure shadow is behind
-                shadow_label.lower()
-                
-                # Store the new labels
-                self.control_labels[new_control_name] = {
-                    'label': new_label,
-                    'shadow': shadow_label,
-                    'action': action_text,
-                    'original_pos': new_pos
-                }
-                
-                # Connect position update for shadow
-                original_mouseMoveEvent = new_label.mouseMoveEvent
-                new_label.mouseMoveEvent = lambda event, label=new_label, shadow=shadow_label, orig_func=original_mouseMoveEvent: self.on_label_move(event, label, shadow, orig_func)
-                
-                # Show the new labels
-                shadow_label.show()
-                new_label.show()
-                
-                break
-    
     def duplicate_label(self):
         """Duplicate this label"""
         if hasattr(self.parent(), "duplicate_control_label"):
             self.parent().duplicate_control_label(self)
 
 class TextSettingsDialog(QDialog):
-    """Dialog for configuring text appearance in preview"""
+    """Dialog for configuring text appearance in preview with improved live preview"""
     def __init__(self, parent=None, settings=None):
         super().__init__(parent)
         self.setWindowTitle("Text Appearance Settings")
@@ -6785,9 +6621,15 @@ class TextSettingsDialog(QDialog):
             "bold_strength": 2,
             "use_uppercase": False,
             "show_button_prefix": True,  # New default setting
-            "prefix_color": "#FFFFFF",   # Default prefix color
-            "text_color": "#FFFFFF",     # Default text color
-            "y_offset": -40
+            "prefix_color": "#FFC107",   # Default prefix color
+            "action_color": "#FFFFFF",     # Default text color
+            "y_offset": -40,
+            "use_prefix_gradient": False,
+            "use_action_gradient": False,
+            "prefix_gradient_start": "#FFC107",
+            "prefix_gradient_end": "#FF5722",
+            "action_gradient_start": "#2196F3",
+            "action_gradient_end": "#4CAF50"
         }
         
         # Create layout
@@ -7113,87 +6955,254 @@ class TextSettingsDialog(QDialog):
             self.update_preview()
     
     def update_preview(self):
-        """Update the preview label with current settings"""
-        # Get current settings
-        font_family = self.font_combo.currentText()
-        font_size = self.size_slider.value()
-        bold_strength = self.bold_slider.value()
-        use_uppercase = self.uppercase_check.isChecked()
-        show_prefix = self.prefix_check.isChecked()
-        
-        # Color and gradient settings
-        prefix_color = self.prefix_color_edit.text()
-        action_color = self.action_color_edit.text()
-        use_prefix_gradient = self.prefix_gradient_check.isChecked()
-        prefix_gradient_start = self.prefix_gradient_start.text()
-        prefix_gradient_end = self.prefix_gradient_end.text()
-        use_action_gradient = self.action_gradient_check.isChecked()
-        action_gradient_start = self.action_gradient_start.text()
-        action_gradient_end = self.action_gradient_end.text()
-        
-        # Create font
-        font = QFont(font_family, font_size)
-        font.setBold(bold_strength > 0)
-        font.setWeight(QFont.Bold if bold_strength > 0 else QFont.Normal)
-        
-        # Apply to preview
-        self.preview_label.setFont(font)
-        
-        # Apply uppercase if enabled
-        preview_text = "Preview Text"
-        if use_uppercase:
-            preview_text = preview_text.upper()
-        
-        # Create HTML-based preview with colors and gradients
-        if show_prefix:
-            # Create prefix style
-            prefix_style = ""
-            if use_prefix_gradient:
-                # For simplicity, we'll use a background linear gradient as approximation
-                prefix_style = f"background: linear-gradient(to right, {prefix_gradient_start}, {prefix_gradient_end}); " + \
-                            "background-clip: text; -webkit-background-clip: text; color: transparent;"
+        """Update the preview label with better spacing for custom fonts"""
+        try:
+            # Get current settings
+            font_family = self.font_combo.currentText()
+            font_size = self.size_slider.value()
+            bold_strength = self.bold_slider.value()
+            use_uppercase = self.uppercase_check.isChecked()
+            show_prefix = self.prefix_check.isChecked()
+            
+            # Color and gradient settings
+            prefix_color = self.prefix_color_edit.text()
+            action_color = self.action_color_edit.text()
+            use_prefix_gradient = self.prefix_gradient_check.isChecked()
+            prefix_gradient_start = self.prefix_gradient_start.text()
+            prefix_gradient_end = self.prefix_gradient_end.text()
+            use_action_gradient = self.action_gradient_check.isChecked()
+            action_gradient_start = self.action_gradient_start.text()
+            action_gradient_end = self.action_gradient_end.text()
+            
+            # Create font
+            font = QFont(font_family, font_size)
+            font.setBold(bold_strength > 0)
+            font.setWeight(QFont.Bold if bold_strength > 0 else QFont.Normal)
+            
+            # Apply font to preview
+            self.preview_label.setFont(font)
+            
+            # Apply uppercase if enabled
+            preview_text = "Preview Text"
+            if use_uppercase:
+                preview_text = preview_text.upper()
+            
+            # Get preview label dimensions for scaling
+            preview_width = self.preview_label.width()
+            preview_height = self.preview_label.height()
+            
+            # Determine a good font size for the preview - between 18 and 32 depending on the chosen size
+            preview_font_size = min(max(int(font_size * 0.9), 18), 32)
+            
+            # Create enhanced preview with proper colors and gradients
+            if show_prefix:
+                # Define a fixed left position 
+                left_margin = 20  # Fixed left margin
+                top_margin = preview_height // 2  # Vertical center
+                
+                svg_width = preview_width
+                svg_height = preview_height
+                
+                # Start SVG
+                svg_content = f"""
+                <svg width="{svg_width}" height="{svg_height}" xmlns="http://www.w3.org/2000/svg">
+                <rect width="100%" height="100%" fill="black"/>
+                """
+                
+                # Approach 1: Create a containing group with a left-aligned position
+                # This approach visually separates the prefix and text
+                svg_content += f"""
+                <g>
+                """
+                
+                # Current X position starts at left margin
+                current_x = left_margin
+                
+                # Add prefix text with color or gradient
+                prefix_text = "A:"
+                
+                if use_prefix_gradient:
+                    # Use linearGradient for prefix
+                    gradient_id = "prefixGradient"
+                    svg_content += f"""
+                    <defs>
+                        <linearGradient id="{gradient_id}" x1="0%" y1="0%" x2="0%" y2="100%">
+                            <stop offset="0%" stop-color="{prefix_gradient_start}"/>
+                            <stop offset="100%" stop-color="{prefix_gradient_end}"/>
+                        </linearGradient>
+                    </defs>
+                    <text x="{current_x}" y="{top_margin}" 
+                        font-family="{font_family}" font-size="{preview_font_size}" 
+                        fill="url(#{gradient_id})" 
+                        dominant-baseline="central"
+                        font-weight="{bold_strength * 100 if bold_strength > 0 else 'normal'}">
+                        {prefix_text}
+                    </text>
+                    """
+                else:
+                    # Use solid color for prefix
+                    svg_content += f"""
+                    <text x="{current_x}" y="{top_margin}" 
+                        font-family="{font_family}" font-size="{preview_font_size}" 
+                        fill="{prefix_color}" 
+                        dominant-baseline="central"
+                        font-weight="{bold_strength * 100 if bold_strength > 0 else 'normal'}">
+                        {prefix_text}
+                    </text>
+                    """
+                
+                # Estimate width of prefix text with extra spacing for custom fonts
+                # Use a more generous estimate for custom fonts
+                is_custom_font = font_family not in ["Arial", "Verdana", "Tahoma", "Times New Roman", 
+                                                    "Courier New", "Segoe UI", "Calibri", "Georgia", 
+                                                    "Impact", "System"]
+                
+                if is_custom_font:
+                    # More generous spacing for custom fonts that might have unusual metrics
+                    prefix_width = len(prefix_text) * (preview_font_size * 0.8) + 15
+                else:
+                    # Standard spacing for system fonts
+                    prefix_width = len(prefix_text) * (preview_font_size * 0.6) + 5
+                
+                # Add spacing after prefix
+                current_x += prefix_width
+                
+                # Add action text with color or gradient
+                if use_action_gradient:
+                    # Use linearGradient for action text
+                    gradient_id = "actionGradient"
+                    svg_content += f"""
+                    <defs>
+                        <linearGradient id="{gradient_id}" x1="0%" y1="0%" x2="0%" y2="100%">
+                            <stop offset="0%" stop-color="{action_gradient_start}"/>
+                            <stop offset="100%" stop-color="{action_gradient_end}"/>
+                        </linearGradient>
+                    </defs>
+                    <text x="{current_x}" y="{top_margin}" 
+                        font-family="{font_family}" font-size="{preview_font_size}" 
+                        fill="url(#{gradient_id})" 
+                        dominant-baseline="central"
+                        font-weight="{bold_strength * 100 if bold_strength > 0 else 'normal'}">
+                        {preview_text}
+                    </text>
+                    """
+                else:
+                    # Use solid color for action text
+                    svg_content += f"""
+                    <text x="{current_x}" y="{top_margin}" 
+                        font-family="{font_family}" font-size="{preview_font_size}" 
+                        fill="{action_color}" 
+                        dominant-baseline="central"
+                        font-weight="{bold_strength * 100 if bold_strength > 0 else 'normal'}">
+                        {preview_text}
+                    </text>
+                    """
+                
+                # Close the group
+                svg_content += "</g>"
+                
+                # Close SVG
+                svg_content += "</svg>"
+                
+                # Apply to preview label
+                self.preview_label.setText("")  # Clear text content
+                self.preview_label.setPixmap(self.svg_to_pixmap(svg_content))
+                
             else:
-                prefix_style = f"color: {prefix_color};"
+                # Single text element (no prefix) - use left alignment
+                svg_width = preview_width
+                svg_height = preview_height
+                
+                # Start SVG
+                svg_content = f"""
+                <svg width="{svg_width}" height="{svg_height}" xmlns="http://www.w3.org/2000/svg">
+                <rect width="100%" height="100%" fill="black"/>
+                """
+                
+                # Define a fixed left position
+                left_margin = 20  # Fixed left margin
+                top_margin = preview_height // 2  # Vertical center
+                
+                if use_action_gradient:
+                    # Use linearGradient for text
+                    gradient_id = "textGradient"
+                    svg_content += f"""
+                    <defs>
+                        <linearGradient id="{gradient_id}" x1="0%" y1="0%" x2="0%" y2="100%">
+                            <stop offset="0%" stop-color="{action_gradient_start}"/>
+                            <stop offset="100%" stop-color="{action_gradient_end}"/>
+                        </linearGradient>
+                    </defs>
+                    <text x="{left_margin}" y="{top_margin}" 
+                        font-family="{font_family}" font-size="{preview_font_size}" 
+                        fill="url(#{gradient_id})" 
+                        dominant-baseline="central"
+                        font-weight="{bold_strength * 100 if bold_strength > 0 else 'normal'}">
+                        {preview_text}
+                    </text>
+                    """
+                else:
+                    # Use solid color for text
+                    svg_content += f"""
+                    <text x="{left_margin}" y="{top_margin}" 
+                        font-family="{font_family}" font-size="{preview_font_size}" 
+                        fill="{action_color}" 
+                        dominant-baseline="central"
+                        font-weight="{bold_strength * 100 if bold_strength > 0 else 'normal'}">
+                        {preview_text}
+                    </text>
+                    """
+                
+                # Close SVG
+                svg_content += "</svg>"
+                
+                # Apply to preview label
+                self.preview_label.setText("")  # Clear text content
+                self.preview_label.setPixmap(self.svg_to_pixmap(svg_content))
+                
+        except Exception as e:
+            print(f"Error updating preview: {e}")
+            import traceback
+            traceback.print_exc()
             
-            # Create action style
-            action_style = ""
-            if use_action_gradient:
-                action_style = f"background: linear-gradient(to right, {action_gradient_start}, {action_gradient_end}); " + \
-                            "background-clip: text; -webkit-background-clip: text; color: transparent;"
-            else:
-                action_style = f"color: {action_color};"
+            # Fallback to simple text preview if rendering fails
+            self.preview_label.setText(f"A: {preview_text}" if show_prefix else preview_text)
+            self.preview_label.setStyleSheet("background-color: black; color: white;")
+
+    def svg_to_pixmap(self, svg_content):
+        """Convert SVG content to a QPixmap that fits in the preview label"""
+        try:
+            from PyQt5.QtSvg import QSvgRenderer
+            from PyQt5.QtCore import QByteArray, QSize, QRectF
             
-            # Create composite HTML
-            html = f"<div style='background-color: black; padding: 10px;'>" + \
-                f"<span style='{prefix_style}'>A: </span>" + \
-                f"<span style='{action_style}'>{preview_text}</span>" + \
-                "</div>"
+            # Create a QSvgRenderer with the SVG content
+            renderer = QSvgRenderer(QByteArray(svg_content.encode()))
             
-            # Apply to preview label
-            self.preview_label.setText(html)
-            self.preview_label.setTextFormat(Qt.RichText)
-        else:
-            # Single text style without prefix
-            if use_action_gradient:
-                style = f"background: linear-gradient(to right, {action_gradient_start}, {action_gradient_end}); " + \
-                    "background-clip: text; -webkit-background-clip: text; color: transparent;"
-            else:
-                style = f"color: {action_color};"
+            # Create a pixmap to render to - use the ACTUAL size of the preview label
+            preview_size = self.preview_label.size()
+            pixmap = QPixmap(preview_size)
+            pixmap.fill(Qt.black)  # Fill with black background to match the preview styling
             
-            html = f"<div style='background-color: black; padding: 10px;'>" + \
-                f"<span style='{style}'>{preview_text}</span>" + \
-                "</div>"
+            # Create painter for the pixmap
+            painter = QPainter(pixmap)
+            painter.setRenderHint(QPainter.Antialiasing)
+            painter.setRenderHint(QPainter.TextAntialiasing)  # Add text antialiasing
+            painter.setRenderHint(QPainter.SmoothPixmapTransform)  # Add smooth transform
             
-            self.preview_label.setText(html)
-            self.preview_label.setTextFormat(Qt.RichText)
-        
-        # Apply shadow effect based on bold strength
-        if bold_strength > 0:
-            # Add text shadow to preview label
-            shadow_style = f"text-shadow: {bold_strength}px {bold_strength}px {bold_strength}px #000000;"
-            self.preview_label.setStyleSheet(f"background-color: black; {shadow_style}")
-        else:
-            self.preview_label.setStyleSheet("background-color: black;")
+            # Render SVG to the pixmap
+            renderer.render(painter)
+            painter.end()
+            
+            return pixmap
+        except Exception as e:
+            print(f"Error converting SVG to pixmap: {e}")
+            import traceback
+            traceback.print_exc()
+            
+            # Return empty pixmap on error
+            empty_pixmap = QPixmap(self.preview_label.size())
+            empty_pixmap.fill(Qt.black)
+            return empty_pixmap
 
     def get_current_settings(self):
         """Get the current settings from dialog controls"""
@@ -7207,7 +7216,7 @@ class TextSettingsDialog(QDialog):
             "prefix_color": self.prefix_color_edit.text(),
             "action_color": self.action_color_edit.text(),
             "use_prefix_gradient": self.prefix_gradient_check.isChecked(),
-            "prefix_gradient_start": self.prefix_gradient_start.text(), 
+            "prefix_gradient_start": self.prefix_gradient_start.text(),
             "prefix_gradient_end": self.prefix_gradient_end.text(),
             "use_action_gradient": self.action_gradient_check.isChecked(),
             "action_gradient_start": self.action_gradient_start.text(),
@@ -7229,10 +7238,6 @@ class TextSettingsDialog(QDialog):
         """Save settings and close dialog"""
         self.apply_settings()
         self.accept()
-
-"""
-Modifications to the PreviewWindow class in mame_controls_preview.py
-"""
 
 class GridSettingsDialog(QDialog):
     def __init__(self, parent=None):
@@ -7838,8 +7843,6 @@ class ColoredPrefixLabel(DraggableLabel):
             painter.setPen(action_color)
             painter.drawText(x, y, text)
 
-# New label classes that combine draggable functionality with color/gradient support
-
 class ColoredDraggableLabel(DraggableLabel):
     """A draggable label that supports different colors for prefix and action text"""
     def __init__(self, text, parent=None, shadow_offset=2, settings=None):
@@ -7860,7 +7863,7 @@ class ColoredDraggableLabel(DraggableLabel):
             self.action = text
     
     def paintEvent(self, event):
-        """Override paint event to draw text with different colors while preserving drag functionality"""
+        """Override paint event to draw text with different colors"""
         if not self.text():
             return
 
@@ -7877,18 +7880,6 @@ class ColoredDraggableLabel(DraggableLabel):
         # Get colors from settings
         prefix_color = QColor(self.settings.get("prefix_color", "#FFC107"))
         action_color = QColor(self.settings.get("action_color", "#FFFFFF"))
-
-        # Draw resize handle from DraggableLabel
-        if hasattr(self, 'is_in_resize_corner') and hasattr(self, 'resize_handle_size'):
-            # Draw resize handle in the bottom-right corner
-            x = self.width() - self.resize_handle_size
-            y_handle = self.height() - self.resize_handle_size
-            painter.setPen(Qt.white)
-            for i in range(1, 4):
-                painter.drawLine(
-                    x + i * 2, y_handle + self.resize_handle_size - 2,
-                    x + self.resize_handle_size - 2, y_handle + i * 2
-                )
 
         if self.prefix and ": " in self.text():
             prefix_text = f"{self.prefix}: "
@@ -7928,7 +7919,6 @@ class ColoredDraggableLabel(DraggableLabel):
             painter.setPen(action_color)
             painter.drawText(x, y, text)
 
-
 class GradientDraggableLabel(DraggableLabel):
     """A draggable label that supports gradient text for prefix and action text"""
     def __init__(self, text, parent=None, shadow_offset=2, settings=None):
@@ -7957,7 +7947,7 @@ class GradientDraggableLabel(DraggableLabel):
             self.action = text
     
     def paintEvent(self, event):
-        """Paint event with correct gradient rendering while preserving drag functionality"""
+        """Paint event with gradient rendering without resize handle"""
         if not self.text():
             return
             
@@ -7970,18 +7960,6 @@ class GradientDraggableLabel(DraggableLabel):
         
         # Vertical centering
         y = int((self.height() + metrics.ascent() - metrics.descent()) / 2)
-        
-        # Draw resize handle from DraggableLabel
-        if hasattr(self, 'is_in_resize_corner') and hasattr(self, 'resize_handle_size'):
-            # Draw resize handle in the bottom-right corner
-            x_handle = self.width() - self.resize_handle_size
-            y_handle = self.height() - self.resize_handle_size
-            painter.setPen(Qt.white)
-            for i in range(1, 4):
-                painter.drawLine(
-                    x_handle + i * 2, y_handle + self.resize_handle_size - 2,
-                    x_handle + self.resize_handle_size - 2, y_handle + i * 2
-                )
         
         if self.prefix and ": " in self.text():
             prefix_text = f"{self.prefix}: "

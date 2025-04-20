@@ -215,10 +215,12 @@ class MAMEControlConfig(ctk.CTk):
             # Set up directory structure
             self.preview_dir = os.path.join(self.mame_dir, "preview")
             self.settings_dir = os.path.join(self.preview_dir, "settings")
-            
+            self.info_dir = os.path.join(self.preview_dir, "info")  # Changed to preview/info
+
             # Create these directories if they don't exist
             os.makedirs(self.preview_dir, exist_ok=True)
             os.makedirs(self.settings_dir, exist_ok=True)
+            os.makedirs(self.info_dir, exist_ok=True)
             
             debug_print(f"Preview directory: {self.preview_dir}")
             debug_print(f"Settings directory: {self.settings_dir}")
@@ -1034,7 +1036,7 @@ class MAMEControlConfig(ctk.CTk):
             # Try legacy paths
             legacy_paths = [
                 os.path.join(self.preview_dir, "settings", "info", "default.conf"),
-                os.path.join(self.preview_dir, "info", "default.conf"),
+                os.path.join(self.preview_dir, "info", "default.conf"),  # This is now the primary path
                 os.path.join(self.app_dir, "info", "default.conf")
             ]
             
