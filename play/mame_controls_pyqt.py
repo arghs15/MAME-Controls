@@ -10,6 +10,30 @@ from PyQt5.QtWidgets import (QApplication, QDesktopWidget, QMainWindow, QWidget,
 from PyQt5.QtCore import QTimer, Qt, QSize, pyqtSignal
 from PyQt5.QtGui import QFont, QTextCursor, QColor, QPalette
 
+def get_application_path(self):
+    """Get the base path for the application (handles PyInstaller bundling)"""
+    if getattr(sys, 'frozen', False):
+        # Running as compiled executable
+        return os.path.dirname(sys.executable)
+    else:
+        # Running as script
+        return os.path.dirname(os.path.abspath(__file__))
+
+def get_mame_parent_dir(self, app_path=None):
+    """
+    Get the parent directory where MAME, ROMs, and artwork are located.
+    If we're in the preview folder, the parent is the MAME directory.
+    """
+    if app_path is None:
+        app_path = self.get_application_path()
+    
+    # If we're in the preview folder, the parent is the MAME directory
+    if os.path.basename(app_path).lower() == "preview":
+        return os.path.dirname(app_path)
+    else:
+        # We're already in the MAME directory
+        return app_path
+    
 class GameListWidget(QTextEdit):
     """Custom widget for the game list with highlighting support"""
     gameSelected = pyqtSignal(str, int)  # Signal for game selection (game_name, line_number)
@@ -118,11 +142,30 @@ class MAMEControlConfig(QMainWindow):
         self.logo_width_percentage = 15
         self.logo_height_percentage = 15
         
-        # Find necessary directories - needed for both modes
+        # Enhanced directory structure setup
+        self.app_dir = self.get_application_path()
+        print(f"Application directory: {self.app_dir}")
+        
         self.mame_dir = self.find_mame_directory()
+        print(f"MAME directory: {self.mame_dir}")
+        
         if not self.mame_dir:
             QMessageBox.critical(self, "Error", "Please place this script in the MAME directory!")
             sys.exit(1)
+        
+        # Set up directory structure like tkinter version
+        self.preview_dir = os.path.join(self.mame_dir, "preview")
+        self.settings_dir = os.path.join(self.preview_dir, "settings")
+        self.info_dir = os.path.join(self.settings_dir, "info")
+        
+        print(f"Preview directory: {self.preview_dir}")
+        print(f"Settings directory: {self.settings_dir}")
+        print(f"Info directory: {self.info_dir}")
+        
+        # Create these directories if they don't exist
+        os.makedirs(self.preview_dir, exist_ok=True)
+        os.makedirs(self.settings_dir, exist_ok=True)
+        os.makedirs(self.info_dir, exist_ok=True)
         
         # Skip main window setup if in preview-only mode
         if not preview_only:
@@ -134,7 +177,6 @@ class MAMEControlConfig(QMainWindow):
             
             # Load all data
             self.load_all_data()
-            # We will maximize in the calling function
         else:
             # For preview-only mode, just initialize minimal attributes
             self.load_settings()  # Still need settings for preview
@@ -159,20 +201,37 @@ class MAMEControlConfig(QMainWindow):
         """Find the MAME directory containing necessary files"""
         # First check in the application directory
         app_dir = self.get_application_path()
-        app_gamedata = os.path.join(app_dir, "gamedata.json")
+        print(f"Application directory: {app_dir}")
         
+        # If we're in the preview folder, try the parent directory first
+        if os.path.basename(app_dir).lower() == "preview":
+            parent_dir = os.path.dirname(app_dir)
+            parent_roms = os.path.join(parent_dir, "roms")
+            
+            if os.path.exists(parent_roms):
+                print(f"Found MAME directory (parent of preview): {parent_dir}")
+                return parent_dir
+        
+        # Check for gamedata.json
+        app_gamedata = os.path.join(app_dir, "gamedata.json")
         if os.path.exists(app_gamedata):
             print(f"Using bundled gamedata.json: {app_dir}")
             return app_dir
-            
-        # Then check in the current directory
+        
+        # Check current directory
         current_dir = os.path.abspath(os.path.dirname(__file__))
         current_gamedata = os.path.join(current_dir, "gamedata.json")
         
         if os.path.exists(current_gamedata):
             print(f"Found MAME directory: {current_dir}")
             return current_dir
-            
+        
+        # Check for roms directory
+        app_roms = os.path.join(app_dir, "roms")
+        if os.path.exists(app_roms):
+            print(f"Found MAME directory with roms folder: {app_dir}")
+            return app_dir
+                
         # Then check common MAME paths
         common_paths = [
             os.path.join(os.environ.get('PROGRAMFILES', 'C:\\Program Files'), "MAME"),
@@ -186,8 +245,20 @@ class MAMEControlConfig(QMainWindow):
             if os.path.exists(gamedata_path):
                 print(f"Found MAME directory: {path}")
                 return path
-                
+        
         print("Error: gamedata.json not found in known locations")
+        print(f"Current app directory: {app_dir}")
+        print(f"Current working directory: {os.getcwd()}")
+        
+        # As a last resort, walk up from current directory to find roms
+        check_dir = os.getcwd()
+        for _ in range(3):  # Check up to 3 levels up
+            roms_dir = os.path.join(check_dir, "roms")
+            if os.path.exists(roms_dir):
+                print(f"Found MAME directory by locating roms folder: {check_dir}")
+                return check_dir
+            check_dir = os.path.dirname(check_dir)
+                
         return None
         
     def select_first_rom(self):
@@ -477,7 +548,7 @@ class MAMEControlConfig(QMainWindow):
 
     # Replace the show_preview method with this:
     def show_preview(self):
-        """Show a preview of the control layout for the current game"""
+        """Show a preview of the control layout with enhanced path handling"""
         if not self.current_game:
             QMessageBox.information(self, "No Game Selected", "Please select a game first")
             return
@@ -491,11 +562,36 @@ class MAMEControlConfig(QMainWindow):
         try:
             # Import the preview window module
             print(f"Attempting to import preview module from: {self.mame_dir}")
-            # Make sure we can find the module
-            script_dir = os.path.dirname(os.path.abspath(__file__))
-            if script_dir not in sys.path:
-                sys.path.append(script_dir)
-                print(f"Added {script_dir} to sys.path")
+            
+            # Try multiple possible locations for the preview module
+            preview_module_paths = [
+                os.path.join(self.app_dir, "mame_controls_preview.py"),
+                os.path.join(self.mame_dir, "mame_controls_preview.py"),
+                os.path.join(self.mame_dir, "preview", "mame_controls_preview.py")
+            ]
+            
+            # Add directories to sys.path if they're not already there
+            for path in [self.app_dir, self.mame_dir, os.path.join(self.mame_dir, "preview")]:
+                if path not in sys.path:
+                    sys.path.append(path)
+                    print(f"Added {path} to sys.path")
+            
+            # Try to import the module
+            found_module = False
+            for path in preview_module_paths:
+                if os.path.exists(path):
+                    print(f"Found preview module at: {path}")
+                    found_module = True
+                    # Add directory to path if not already there
+                    dir_path = os.path.dirname(path)
+                    if dir_path not in sys.path:
+                        sys.path.append(dir_path)
+                        print(f"Added {dir_path} to sys.path")
+                    break
+                    
+            if not found_module:
+                QMessageBox.critical(self, "Error", "Could not find mame_controls_preview.py module")
+                return
             
             # Import from current directory
             from mame_controls_preview import PreviewWindow
@@ -503,7 +599,8 @@ class MAMEControlConfig(QMainWindow):
             
             # Create preview window as a modal dialog to ensure it appears on top
             print(f"Creating preview window for {self.current_game}")
-            self.preview_window = PreviewWindow(self.current_game, game_data, self.mame_dir, self)
+            self.preview_window = PreviewWindow(self.current_game, game_data, self.mame_dir, self, 
+                                            self.hide_preview_buttons)
             
             # Make preview window modal
             print("Setting preview window as modal")
@@ -519,6 +616,11 @@ class MAMEControlConfig(QMainWindow):
         except ImportError as e:
             QMessageBox.critical(self, "Error", f"Could not import preview module: {str(e)}")
             print(f"Import error: {e}")
+            import traceback
+            traceback.print_exc()
+        except Exception as e:
+            QMessageBox.critical(self, "Error", f"Error showing preview: {str(e)}")
+            print(f"Error: {e}")
             import traceback
             traceback.print_exc()
     
@@ -1027,12 +1129,15 @@ class MAMEControlConfig(QMainWindow):
         self.select_first_rom()
     
     def scan_roms_directory(self):
-        """Scan the roms directory for available games"""
+        """Scan the roms directory for available games with corrected path"""
+        # Use the correct path: mame_dir/roms (not preview/roms)
         roms_dir = os.path.join(self.mame_dir, "roms")
         print(f"\nScanning ROMs directory: {roms_dir}")
         
         if not os.path.exists(roms_dir):
             print(f"ERROR: ROMs directory not found: {roms_dir}")
+            QMessageBox.warning(self, "No ROMs Found", f"ROMs directory not found: {roms_dir}")
+            self.available_roms = set()
             return
 
         self.available_roms = set()  # Reset the set
@@ -1040,10 +1145,21 @@ class MAMEControlConfig(QMainWindow):
 
         try:
             for filename in os.listdir(roms_dir):
+                # Skip directories and non-ROM files
+                full_path = os.path.join(roms_dir, filename)
+                if os.path.isdir(full_path):
+                    continue
+                    
+                # Skip files with known non-ROM extensions
+                extension = os.path.splitext(filename)[1].lower()
+                if extension in ['.txt', '.ini', '.cfg', '.bat', '.exe', '.dll']:
+                    continue
+                    
                 # Strip common ROM extensions
                 base_name = os.path.splitext(filename)[0]
                 self.available_roms.add(base_name)
                 rom_count += 1
+                
                 if rom_count <= 5:  # Print first 5 ROMs as sample
                     print(f"Found ROM: {base_name}")
             
@@ -1054,37 +1170,49 @@ class MAMEControlConfig(QMainWindow):
                 print("WARNING: No ROMs were found!")
         except Exception as e:
             print(f"Error scanning ROMs directory: {e}")
+            import traceback
+            traceback.print_exc()
+            QMessageBox.error(self, "Error", f"Failed to scan ROMs directory: {e}")
     
     def load_gamedata_json(self):
-        """Load and parse the gamedata.json file for control data with improved clone handling"""
+        """Load and parse the gamedata.json file with enhanced path handling"""
         if hasattr(self, 'gamedata_json') and self.gamedata_json:
             # Already loaded
             return self.gamedata_json
                 
         self.gamedata_json = {}
         self.parent_lookup = {}  # Add a dedicated parent lookup table
-            
-        # Look for gamedata.json in common locations
+        
+        # Check all possible locations in priority order
         json_paths = [
-            os.path.join(self.mame_dir, "gamedata.json"),
-            os.path.join(self.mame_dir, "metadata", "gamedata.json"),
-            os.path.join(self.mame_dir, "data", "gamedata.json")
+            os.path.join(self.settings_dir, "gamedata.json"),              # New primary location
+            os.path.join(self.preview_dir, "gamedata.json"),               # Legacy preview location
+            os.path.join(self.mame_dir, "gamedata.json"),                  # Root location
+            os.path.join(self.mame_dir, "metadata", "gamedata.json"),      # Metadata location
+            os.path.join(self.mame_dir, "data", "gamedata.json")           # Data location
         ]
-            
+        
+        print(f"Searching for gamedata.json in {len(json_paths)} possible locations")
+        
         json_path = None
-        for path in json_paths:
+        for i, path in enumerate(json_paths):
+            print(f"Checking path {i+1}: {path}")
             if os.path.exists(path):
                 json_path = path
+                print(f"Found gamedata.json at: {path}")
                 break
             
         if not json_path:
-            print("gamedata.json not found")
+            print("ERROR: gamedata.json not found in any known location")
+            QMessageBox.critical(self, "Missing File", "gamedata.json not found in any known location")
             return {}
                 
         try:
             print(f"Loading gamedata.json from: {json_path}")
             with open(json_path, 'r', encoding='utf-8') as f:
                 data = json.load(f)
+            
+            print(f"Successfully loaded gamedata.json with {len(data)} entries")
                     
             # Process the data to find both main games and clones
             for rom_name, game_data in data.items():
@@ -1098,17 +1226,123 @@ class MAMEControlConfig(QMainWindow):
                         # Also store in the parent lookup table
                         self.parent_lookup[clone_name] = rom_name
                         self.gamedata_json[clone_name] = clone_data
-                        #print(f"Indexed clone {clone_name} with parent {rom_name}")
                 
-            #print(f"Loaded {len(self.gamedata_json)} games from gamedata.json")
-            #print(f"Indexed {len(self.parent_lookup)} parent-clone relationships")
+            print(f"Processed gamedata.json: {len(self.gamedata_json)} total games, {len(self.parent_lookup)} parent-clone relationships")
             return self.gamedata_json
                 
         except Exception as e:
-            print(f"Error loading gamedata.json: {str(e)}")
+            print(f"ERROR loading gamedata.json: {str(e)}")
             import traceback
             traceback.print_exc()
+            QMessageBox.critical(self, "Error", f"Failed to load gamedata.json: {str(e)}")
             return {}
+    
+    def load_text_positions(self, game_name):
+        """Load text positions from file with enhanced path handling"""
+        positions = {}
+        
+        # First try ROM-specific positions in settings dir
+        rom_positions_file = os.path.join(self.settings_dir, f"{game_name}_positions.json")
+        if os.path.exists(rom_positions_file):
+            try:
+                with open(rom_positions_file, 'r') as f:
+                    positions = json.load(f)
+                print(f"Loaded {len(positions)} ROM-specific positions from: {rom_positions_file}")
+                return positions
+            except Exception as e:
+                print(f"Error loading ROM-specific positions: {e}")
+        
+        # Try legacy path in preview dir
+        legacy_rom_file = os.path.join(self.preview_dir, f"{game_name}_positions.json")
+        if os.path.exists(legacy_rom_file):
+            try:
+                with open(legacy_rom_file, 'r') as f:
+                    positions = json.load(f)
+                    
+                # Also save to new location for future use
+                try:
+                    with open(rom_positions_file, 'w') as f:
+                        json.dump(positions, f)
+                    print(f"Migrated positions to new location: {rom_positions_file}")
+                except:
+                    pass
+                    
+                print(f"Loaded {len(positions)} ROM-specific positions from legacy path: {legacy_rom_file}")
+                return positions
+            except Exception as e:
+                print(f"Error loading ROM-specific positions from legacy path: {e}")
+        
+        # Fall back to global positions in settings dir
+        global_positions_file = os.path.join(self.settings_dir, "global_positions.json")
+        if os.path.exists(global_positions_file):
+            try:
+                with open(global_positions_file, 'r') as f:
+                    positions = json.load(f)
+                print(f"Loaded {len(positions)} positions from global file: {global_positions_file}")
+                return positions
+            except Exception as e:
+                print(f"Error loading global positions: {e}")
+        
+        # Try legacy global positions in preview dir
+        legacy_global_file = os.path.join(self.preview_dir, "global_positions.json")
+        if os.path.exists(legacy_global_file):
+            try:
+                with open(legacy_global_file, 'r') as f:
+                    positions = json.load(f)
+                    
+                # Also save to new location for future use
+                try:
+                    with open(global_positions_file, 'w') as f:
+                        json.dump(positions, f)
+                    print(f"Migrated global positions to new location: {global_positions_file}")
+                except:
+                    pass
+                    
+                print(f"Loaded {len(positions)} positions from legacy global file: {legacy_global_file}")
+            except Exception as e:
+                print(f"Error loading global positions from legacy path: {e}")
+        
+        return positions
+    
+    def load_text_appearance_settings(self):
+        """Load text appearance settings from file with enhanced path handling"""
+        settings = {
+            "font_family": "Arial",
+            "font_size": 28,
+            "title_font_size": 36,
+            "bold_strength": 2,
+            "y_offset": -40
+        }
+        
+        try:
+            # Check settings directory first
+            settings_file = os.path.join(self.settings_dir, "text_appearance_settings.json")
+            
+            # If not in settings dir, check legacy location
+            if not os.path.exists(settings_file):
+                legacy_file = os.path.join(self.mame_dir, "text_appearance_settings.json")
+                if os.path.exists(legacy_file):
+                    # Migrate from legacy location
+                    with open(legacy_file, 'r') as f:
+                        loaded_settings = json.load(f)
+                        
+                    # Save to new location
+                    with open(settings_file, 'w') as f:
+                        json.dump(loaded_settings, f)
+                        
+                    print(f"Migrated text appearance settings from {legacy_file} to {settings_file}")
+                    settings.update(loaded_settings)
+                    return settings
+            
+            # Normal loading from settings dir
+            if os.path.exists(settings_file):
+                with open(settings_file, 'r') as f:
+                    loaded_settings = json.load(f)
+                    settings.update(loaded_settings)
+        except Exception as e:
+            print(f"Error loading text appearance settings: {e}")
+        
+        return settings
     
     def load_custom_configs(self):
         """Load custom configurations from cfg directory"""
@@ -1208,13 +1442,32 @@ class MAMEControlConfig(QMainWindow):
         return controls
     
     def load_settings(self):
-        """Load settings from JSON file if it exists"""
-        settings_path = os.path.join(self.mame_dir, "preview", "control_config_settings.json")
+        """Load settings from JSON file with enhanced path handling"""
+        # Settings file in new location
+        settings_path = os.path.join(self.settings_dir, "control_config_settings.json")
+        
         # Set sensible defaults
         self.preferred_preview_screen = 1  # Default to second screen
         self.visible_control_types = ["BUTTON"]  # Default to just buttons
         self.hide_preview_buttons = False
         self.show_button_names = False
+        
+        # Check legacy path if not found in settings dir
+        if not os.path.exists(settings_path):
+            legacy_path = os.path.join(self.preview_dir, "control_config_settings.json")
+            if os.path.exists(legacy_path):
+                # Migrate from legacy location
+                try:
+                    with open(legacy_path, 'r') as f:
+                        settings = json.load(f)
+                    
+                    # Save to new location
+                    with open(settings_path, 'w') as f:
+                        json.dump(settings, f)
+                        
+                    print(f"Migrated control settings from {legacy_path} to {settings_path}")
+                except Exception as e:
+                    print(f"Error migrating settings: {e}")
         
         if os.path.exists(settings_path):
             try:
@@ -1262,9 +1515,9 @@ class MAMEControlConfig(QMainWindow):
                     # Update toggle if it exists
                     if hasattr(self, 'hide_buttons_toggle'):
                         if self.hide_preview_buttons:
-                            self.hide_buttons_toggle.select()
+                            self.hide_buttons_toggle.setChecked(True)
                         else:
-                            self.hide_buttons_toggle.deselect()
+                            self.hide_buttons_toggle.setChecked(False)
                 else:
                     self.hide_preview_buttons = False
                     
