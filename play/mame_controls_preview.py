@@ -2948,11 +2948,9 @@ class PreviewWindow(QMainWindow):
         menu.exec_(event.globalPos())
     
     def update_center_logo_button_text(self):
-        """Update the center logo button text based on current state"""
+        """Make sure the center logo button always says 'Center Logo'"""
         if hasattr(self, 'center_logo_button'):
-            is_centered = self.logo_settings.get("keep_horizontally_centered", False)
-            self.center_logo_button.setText("Uncenter Logo" if is_centered else "Center Logo")
-            print(f"Updated center logo button text based on setting: {is_centered}")
+            self.center_logo_button.setText("Center Logo")
     
     def set_logo_position(self, position):
         """Set logo position to a preset"""
@@ -4490,16 +4488,12 @@ class PreviewWindow(QMainWindow):
         print(f"Logo display updated: {scaled_pixmap.width()}x{scaled_pixmap.height()} pixels")
 
 
-    # 2. Enhance the center_logo method to properly update settings
     def center_logo(self):
-        """Center the logo horizontally with toggle capabilities"""
-        # Enable horizontal centering and center the logo
-        current_state = self.logo_settings.get("keep_horizontally_centered", False)
-        
-        # If already centered, just toggle off
-        if current_state:
-            return self.toggle_horizontal_centering()
-        
+        """Center the logo horizontally in the canvas while preserving Y position"""
+        if not hasattr(self, 'logo_label') or not self.logo_label:
+            print("No logo to center")
+            return False
+
         # Get canvas and logo dimensions
         canvas_width = self.canvas.width()
         logo_width = self.logo_label.width()
@@ -4523,9 +4517,6 @@ class PreviewWindow(QMainWindow):
         # Save to file immediately to persist across ROM changes
         if hasattr(self, 'save_logo_settings'):
             self.save_logo_settings(is_global=True)
-        
-        # Update button text
-        self.update_center_logo_button_text()
 
         print(f"Logo horizontally centered at X={x}, Y remains {current_y}")
         return True
