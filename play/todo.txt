@@ -1,5 +1,3 @@
-Remove shadow - pointless
-
 Add generate images from previous exe
 
 Remove redundant logo code - there's a lot. also, compare old center-left etc logo functions. They may work better.

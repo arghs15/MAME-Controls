@@ -263,6 +263,12 @@ class MAMEControlConfig(ctk.CTk):
             debug_print("Loading data...")
             self.load_all_data()
             debug_print("Data loaded")
+
+            # Add this near the end of __init__:
+            self.preview_processes = []  # Track any preview processes we launch
+            
+            # Set the WM_DELETE_WINDOW protocol
+            self.protocol("WM_DELETE_WINDOW", self.on_closing)
             
             debug_print("Initialization complete")
         except Exception as e:
@@ -270,6 +276,62 @@ class MAMEControlConfig(ctk.CTk):
             traceback.print_exc()
             messagebox.showerror("Initialization Error", f"Failed to initialize: {e}")
     
+    def on_closing(self):
+        """Handle proper cleanup when closing the application"""
+        print("Application closing, performing cleanup...")
+        
+        # Cancel any pending timers
+        for attr_name in dir(self):
+            attr = getattr(self, attr_name)
+            if attr_name.endswith('_timer') and hasattr(attr, 'cancel'):
+                try:
+                    attr.cancel()
+                    print(f"Canceled timer: {attr_name}")
+                except:
+                    pass
+        
+        # Explicitly destroy all child windows
+        for widget in self.winfo_children():
+            try:
+                widget.destroy()
+                print(f"Destroyed widget: {widget}")
+            except:
+                pass
+        
+        # If you've opened any preview windows, make sure they're closed
+        if hasattr(self, 'preview_processes'):
+            for process in self.preview_processes:
+                try:
+                    process.terminate()
+                    print(f"Terminated process: {process}")
+                except:
+                    pass
+        
+        # Explicitly destroy all custom top-level windows
+        for attr_name in dir(self):
+            if attr_name.endswith('_dialog') or attr_name.endswith('_window'):
+                attr = getattr(self, attr_name)
+                if hasattr(attr, 'destroy'):
+                    try:
+                        attr.destroy()
+                        print(f"Destroyed window: {attr_name}")
+                    except:
+                        pass
+        
+        # Force garbage collection
+        import gc
+        gc.collect()
+        
+        # Destroy the main window
+        self.destroy()
+        
+        # Quit the application
+        self.quit()
+        
+        # Add an explicit exit call
+        import sys
+        sys.exit(0)
+        
     def get_game_data(self, romname):
         """Get control data for a ROM from gamedata.json with improved clone handling"""
         if not hasattr(self, 'gamedata_json'):
@@ -1971,8 +2033,9 @@ class MAMEControlConfig(ctk.CTk):
         
         return generic_control_games, missing_control_games
     
+    # Update your show_preview method to track the processes
     def show_preview(self):
-        """Launch the PyQt preview window as a separate process with updated path handling"""
+        """Launch the preview window as a separate process with proper PyInstaller handling"""
         if not self.current_game:
             messagebox.showinfo("No Game Selected", "Please select a game first")
             return
@@ -1983,7 +2046,26 @@ class MAMEControlConfig(ctk.CTk):
             messagebox.showinfo("No Control Data", f"No control data found for {self.current_game}")
             return
         
-        # Launch preview as a separate process
+        # Special handling when running as executable (PyInstaller frozen)
+        if getattr(sys, 'frozen', False):
+            command = [
+                sys.executable,  # Use the same executable
+                "--preview-only",
+                "--game", self.current_game
+            ]
+            if hasattr(self, 'hide_preview_buttons') and self.hide_preview_buttons:
+                command.append("--no-buttons")
+                
+            # Launch the process
+            process = subprocess.Popen(command)
+            
+            # Track the process for cleanup
+            if not hasattr(self, 'preview_processes'):
+                self.preview_processes = []
+            self.preview_processes.append(process)
+            return
+        
+        # If not frozen, use the normal script-based approach
         try:
             # Use the path from the application directory
             script_dir = get_application_path()
@@ -2021,7 +2103,12 @@ class MAMEControlConfig(ctk.CTk):
                 
             # Launch the process
             print(f"Launching preview process with command: {command}")
-            subprocess.Popen(command)
+            process = subprocess.Popen(command)
+            
+            # Track the process for cleanup
+            if not hasattr(self, 'preview_processes'):
+                self.preview_processes = []
+            self.preview_processes.append(process)
         except Exception as e:
             print(f"Error launching preview: {e}")
             import traceback

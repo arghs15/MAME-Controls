@@ -6166,6 +6166,110 @@ class PreviewWindow(QMainWindow):
                 f"Failed to save image: {str(e)}"
             )
             return False
+    
+    # Add these methods to the PreviewWindow class in mame_controls_preview.py
+    def closeEvent(self, event):
+        """Override close event to ensure proper cleanup"""
+        print("PreviewWindow closeEvent triggered, performing cleanup...")
+        
+        # Cancel any pending timers
+        for attr_name in dir(self):
+            attr = getattr(self, attr_name)
+            if isinstance(attr, QTimer):
+                try:
+                    attr.stop()
+                    print(f"Stopped timer: {attr_name}")
+                except:
+                    pass
+        
+        # Free resources
+        self.cleanup_resources()
+        
+        # Accept the close event to allow the window to close
+        event.accept()
+        
+        # If we're in standalone mode, quit the application
+        if getattr(self, 'standalone_mode', False):
+            QApplication.quit()
+
+    def cleanup_resources(self):
+        """Clean up all resources to ensure proper application shutdown"""
+        print("Cleaning up PreviewWindow resources...")
+        
+        # Clear any stored pixmaps
+        pixmap_attributes = [
+            'background_pixmap', 'original_background_pixmap', 
+            'bezel_pixmap', 'original_bezel_pixmap',
+            'logo_pixmap', 'original_logo_pixmap'
+        ]
+        
+        for attr_name in pixmap_attributes:
+            if hasattr(self, attr_name):
+                try:
+                    setattr(self, attr_name, None)
+                    print(f"Cleared {attr_name}")
+                except:
+                    pass
+        
+        # Remove all control labels
+        if hasattr(self, 'control_labels'):
+            for control_name in list(self.control_labels.keys()):
+                control_data = self.control_labels[control_name]
+                if 'label' in control_data and control_data['label']:
+                    try:
+                        control_data['label'].setParent(None)
+                        control_data['label'].deleteLater()
+                    except:
+                        pass
+                if 'shadow' in control_data and control_data['shadow']:
+                    try:
+                        control_data['shadow'].setParent(None)
+                        control_data['shadow'].deleteLater()
+                    except:
+                        pass
+            self.control_labels.clear()
+            print("Cleared control labels")
+        
+        # Clear other UI elements
+        ui_elements = [
+            'bg_label', 'bezel_label', 'logo_label', 'button_frame',
+            'position_indicator', 'guide_labels', 'grid_lines'
+        ]
+        
+        for elem_name in ui_elements:
+            if hasattr(self, elem_name):
+                elem = getattr(self, elem_name)
+                if elem:
+                    if isinstance(elem, list):
+                        for item in elem:
+                            try:
+                                if not sip.isdeleted(item):
+                                    item.setParent(None)
+                                    item.deleteLater()
+                            except:
+                                pass
+                        setattr(self, elem_name, [])
+                    else:
+                        try:
+                            if not sip.isdeleted(elem):
+                                elem.setParent(None)
+                                elem.deleteLater()
+                            setattr(self, elem_name, None)
+                        except:
+                            pass
+                print(f"Cleared {elem_name}")
+        
+        # Force update
+        if hasattr(self, 'canvas') and self.canvas:
+            try:
+                self.canvas.update()
+            except:
+                pass
+        
+        # Force immediate garbage collection
+        import gc
+        gc.collect()
+        print("Garbage collection completed")
 
 class EnhancedLabel(QLabel):
     """A label with built-in shadow capabilities"""
