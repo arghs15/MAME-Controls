@@ -1,5 +1,9 @@
 Remove redundant code
-Remove multi checks for gamedata
+Remove multi checks for game data
+
+mame_controls_pyqt
+-for analyze controls button, on the edit game screen, edit the white background for the buttons and joystick numbers dropdown items. Initial number might be there, but same colour - white
+-Also analyse button has a tkinter type theme. Might be easier going forward to edit the whole gui, and I may delete tkinter and only use this. Simplifies things. 
 
 Text Settings
 -show all xinput and then normal controls sets a default font. exit, and re-enter shows correct font

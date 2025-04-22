@@ -309,10 +309,6 @@ def main():
                         # Define unified game data getter
                         def get_unified_game_data(self, romname):
                             """Get game data from database if available, falling back to JSON lookup"""
-                            print(f"Unified game data getter called for: {romname}")
-                            print(f"Has database access: {hasattr(self, 'get_game_data_from_db')}")
-                            print(f"Database enabled: {hasattr(self, 'use_database') and self.use_database}")
-                            
                             # First check cache
                             if hasattr(self, 'rom_data_cache') and romname in self.rom_data_cache:
                                 print(f"Using cached data for {romname}")
@@ -322,7 +318,6 @@ def main():
                             if hasattr(self, 'get_game_data_from_db') and hasattr(self, 'use_database') and self.use_database:
                                 import time
                                 start_time = time.time()
-                                print(f"Attempting database lookup for {romname}")
                                 db_data = self.get_game_data_from_db(romname)
                                 load_time = time.time() - start_time
                                 
@@ -338,9 +333,7 @@ def main():
                             print(f"Falling back to JSON lookup for {romname}")
                             import time
                             start_time = time.time()
-                            # Use the original method directly to avoid recursive calls
-                            original_method = original_get_game_data
-                            json_data = original_method(romname)
+                            json_data = self.get_game_data(romname)
                             load_time = time.time() - start_time
                             print(f"JSON lookup completed in {load_time:.3f} seconds")
                             
