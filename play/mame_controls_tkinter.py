@@ -207,29 +207,20 @@ class MAMEControlConfig(ctk.CTk):
             self.logo_width_percentage = 15
             self.logo_height_percentage = 15
             
-            # Get application path for proper directory structure
-            self.app_dir = get_application_path()
-            self.mame_dir = get_mame_parent_dir(self.app_dir)
+            # NEW CODE: Replace individual directory setup with the centralized method
+            self.initialize_directory_structure()
             
+            # Migrate gamedata.json if needed
+            #self.migrate_gamedata_if_needed()
+            
+            # The rest of your initialization code...
             debug_print(f"App directory: {self.app_dir}")
             debug_print(f"MAME directory: {self.mame_dir}")
-            
-            # Set up directory structure
-            self.preview_dir = os.path.join(self.mame_dir, "preview")
-            self.settings_dir = os.path.join(self.preview_dir, "settings")
-            self.info_dir = os.path.join(self.preview_dir, "info")  # Changed to preview/info
-
-            # Create these directories if they don't exist
-            os.makedirs(self.preview_dir, exist_ok=True)
-            os.makedirs(self.settings_dir, exist_ok=True)
-            os.makedirs(self.info_dir, exist_ok=True)
-            
             debug_print(f"Preview directory: {self.preview_dir}")
             debug_print(f"Settings directory: {self.settings_dir}")
             
             # Initialize the position manager
             self.position_manager = PositionManager(self)
-            debug_print("Position manager initialized")
 
             # Configure the window
             self.title("MAME Control Configuration Checker")
@@ -278,43 +269,49 @@ class MAMEControlConfig(ctk.CTk):
             traceback.print_exc()
             messagebox.showerror("Initialization Error", f"Failed to initialize: {e}")
     
+    def initialize_directory_structure(self):
+        """Initialize the standardized directory structure"""
+        self.app_dir = get_application_path()
+        self.mame_dir = get_mame_parent_dir(self.app_dir)
+        
+        # Set up directory structure - all data will be stored in these locations
+        self.preview_dir = os.path.join(self.mame_dir, "preview")
+        self.settings_dir = os.path.join(self.preview_dir, "settings")
+        self.info_dir = os.path.join(self.settings_dir, "info")
+
+        # Create these directories if they don't exist
+        os.makedirs(self.preview_dir, exist_ok=True)
+        os.makedirs(self.settings_dir, exist_ok=True)
+        os.makedirs(self.info_dir, exist_ok=True)
+        
+        # Define standard paths for key files
+        self.gamedata_path = os.path.join(self.settings_dir, "gamedata.json")
+        self.db_path = os.path.join(self.settings_dir, "gamedata.db")
+        self.settings_path = os.path.join(self.settings_dir, "control_config_settings.json")
+        
+        # Return if the directories were created successfully
+        return (os.path.exists(self.preview_dir) and 
+                os.path.exists(self.settings_dir) and 
+                os.path.exists(self.info_dir))
+    
     def check_db_update_needed(self):
         """Check if the SQLite database needs to be updated based on gamedata.json timestamp"""
-        debug_print("Checking if database update is needed...")
-        
-        # Get the path to gamedata.json
-        gamedata_path = self.get_gamedata_path()
-        if not os.path.exists(gamedata_path):
-            debug_print(f"ERROR: gamedata.json not found at {gamedata_path}")
+        # Ensure gamedata.json exists first
+        if not os.path.exists(self.gamedata_path):
             return False
-            
-        # Define the SQLite database path
-        self.db_path = os.path.join(self.settings_dir, "gamedata.db")
-        
+                
         # Check if database exists
         if not os.path.exists(self.db_path):
-            debug_print(f"Database doesn't exist yet, creating at: {self.db_path}")
+            print(f"Database doesn't exist yet, creating at: {self.db_path}")
             return True
-            
+                
         # Get file modification timestamps
-        gamedata_mtime = os.path.getmtime(gamedata_path)
+        gamedata_mtime = os.path.getmtime(self.gamedata_path)
         db_mtime = os.path.getmtime(self.db_path)
         
-        # Format timestamps for logging - Fix for datetime module
-        gamedata_time = datetime.datetime.fromtimestamp(gamedata_mtime).strftime('%Y-%m-%d %H:%M:%S')
-        db_time = datetime.datetime.fromtimestamp(db_mtime).strftime('%Y-%m-%d %H:%M:%S')
-        
-        debug_print(f"  gamedata.json modified: {gamedata_time}")
-        debug_print(f"  gamedata.db modified:   {db_time}")
-        
-        # Compare timestamps
-        if gamedata_mtime > db_mtime:
-            debug_print(f"Database update needed: gamedata.json is newer than database")
-            return True
-        else:
-            debug_print(f"Database is up to date")
-            return False
-    
+        # Compare timestamps - only rebuild if gamedata is newer than database
+        return gamedata_mtime > db_mtime
+
     def on_closing(self):
         """Handle proper cleanup when closing the application"""
         print("Application closing, performing cleanup...")
@@ -372,27 +369,26 @@ class MAMEControlConfig(ctk.CTk):
         sys.exit(0)
         
     def get_game_data(self, romname):
-        """Get control data for a ROM with database prioritization"""
-        # Check if we have a ROM data cache
+        """Get game data with integrated database prioritization"""
+        # 1. Check cache first
         if hasattr(self, 'rom_data_cache') and romname in self.rom_data_cache:
             return self.rom_data_cache[romname]
         
-        # First try to get from the database
-        db_data = self.get_game_data_from_db(romname)
-        if db_data:
-            # Cache the result if caching is enabled
-            if hasattr(self, 'rom_data_cache'):
-                self.rom_data_cache[romname] = db_data
-            return db_data
+        # 2. Try database first if available
+        if os.path.exists(self.db_path):
+            db_data = self.get_game_data_from_db(romname)
+            if db_data:
+                # Cache the result
+                if hasattr(self, 'rom_data_cache'):
+                    self.rom_data_cache[romname] = db_data
+                return db_data
         
-        # If not found in database or database not available, fall back to the original method
-        # This is the original get_game_data method logic
-        if not hasattr(self, 'gamedata_json'):
+        # 3. Fall back to JSON lookup if needed
+        # Load gamedata.json first if needed
+        if not hasattr(self, 'gamedata_json') or not self.gamedata_json:
             self.load_gamedata_json()
                 
-        # Debug output
-        #print(f"\nLooking up game data for: {romname}")
-        
+        # Continue with the existing lookup logic...
         if romname in self.gamedata_json:
             game_data = self.gamedata_json[romname]
             
@@ -595,25 +591,23 @@ class MAMEControlConfig(ctk.CTk):
                 self.rom_data_cache[romname] = converted_data
                 
             return converted_data
-            
-        # Try parent lookup if direct lookup failed
-        if romname in self.gamedata_json and 'parent' in self.gamedata_json[romname]:
-            parent_rom = self.gamedata_json[romname]['parent']
-            if parent_rom:
-                # Recursive call to get parent data
-                parent_data = self.get_game_data(parent_rom)
-                if parent_data:
-                    # Update with this ROM's info
-                    parent_data['romname'] = romname
-                    parent_data['gamename'] = self.gamedata_json[romname].get('description', f"{romname} (Clone)")
-                    
-                    # Cache the result if caching is enabled
-                    if hasattr(self, 'rom_data_cache'):
-                        self.rom_data_cache[romname] = parent_data
-                        
-                    return parent_data
         
-        # Not found
+        # Try parent lookup before giving up
+        if hasattr(self, 'parent_lookup') and romname in self.parent_lookup:
+            parent_rom = self.parent_lookup[romname]
+            parent_data = self.get_game_data(parent_rom)  # Recursive call
+            if parent_data:
+                # Update with this ROM's info and cache
+                parent_data['romname'] = romname
+                if romname in self.gamedata_json:
+                    parent_data['gamename'] = self.gamedata_json[romname].get('description', f"{romname} (Clone)")
+                
+                # Cache and return
+                if hasattr(self, 'rom_data_cache'):
+                    self.rom_data_cache[romname] = parent_data
+                return parent_data
+        
+        # Not found anywhere
         return None
         
     def load_custom_configs(self):
@@ -1972,27 +1966,20 @@ class MAMEControlConfig(ctk.CTk):
     
     def build_gamedata_db(self):
         """Build SQLite database from gamedata.json for faster lookups"""
-        print("Building SQLite database from gamedata.json...")
+        print("Building SQLite database...")
         start_time = time.time()
         
-        # Load gamedata.json
-        gamedata_path = self.get_gamedata_path()
-        if not os.path.exists(gamedata_path):
-            print(f"ERROR: gamedata.json not found at {gamedata_path}")
+        # Load gamedata.json if needed
+        if not hasattr(self, 'gamedata_json') or not self.gamedata_json:
+            self.load_gamedata_json()
+        
+        # Verify gamedata is loaded
+        if not self.gamedata_json:
+            print("ERROR: No gamedata available to build database")
             return False
         
         try:
-            with open(gamedata_path, 'r', encoding='utf-8') as f:
-                gamedata = json.load(f)
-        except Exception as e:
-            print(f"ERROR loading gamedata.json: {e}")
-            return False
-        
-        # Define the SQLite database path
-        self.db_path = os.path.join(self.settings_dir, "gamedata.db")
-        
-        # Create database connection
-        try:
+            # Create database connection
             conn = sqlite3.connect(self.db_path)
             cursor = conn.cursor()
             
@@ -2046,7 +2033,11 @@ class MAMEControlConfig(ctk.CTk):
             clones_inserted = 0
             
             # Process main games first
-            for rom_name, game_data in gamedata.items():
+            for rom_name, game_data in self.gamedata_json.items():
+                # Skip entries that are clones (handled separately below)
+                if 'parent' in game_data:
+                    continue
+                    
                 # Extract basic game properties
                 game_name = game_data.get('description', rom_name)
                 player_count = int(game_data.get('playercount', 1))
@@ -2065,14 +2056,8 @@ class MAMEControlConfig(ctk.CTk):
                 
                 # Extract and insert controls
                 if 'controls' in game_data:
-                    for control_name, control_data in game_data['controls'].items():
-                        display_name = control_data.get('name', '')
-                        if display_name:
-                            cursor.execute(
-                                "INSERT INTO game_controls (rom_name, control_name, display_name) VALUES (?, ?, ?)",
-                                (rom_name, control_name, display_name)
-                            )
-                            controls_inserted += 1
+                    self._insert_controls(cursor, rom_name, game_data['controls'])
+                    controls_inserted += len(game_data['controls'])
                 
                 # Process clones
                 if 'clones' in game_data and isinstance(game_data['clones'], dict):
@@ -2101,36 +2086,46 @@ class MAMEControlConfig(ctk.CTk):
                         
                         # Extract and insert clone controls
                         if 'controls' in clone_data:
-                            for control_name, control_data in clone_data['controls'].items():
-                                display_name = control_data.get('name', '')
-                                if display_name:
-                                    cursor.execute(
-                                        "INSERT INTO game_controls (rom_name, control_name, display_name) VALUES (?, ?, ?)",
-                                        (clone_name, control_name, display_name)
-                                    )
-                                    controls_inserted += 1
+                            self._insert_controls(cursor, clone_name, clone_data['controls'])
+                            controls_inserted += len(clone_data['controls'])
             
             # Commit changes and close connection
             conn.commit()
             conn.close()
             
             elapsed_time = time.time() - start_time
-            print(f"Database build complete in {elapsed_time:.2f} seconds")
-            print(f"Inserted {games_inserted} games, {controls_inserted} controls, and {clones_inserted} clone relationships")
+            print(f"Database built in {elapsed_time:.2f}s with {games_inserted} games, {controls_inserted} controls")
             return True
             
+        except sqlite3.Error as e:
+            print(f"SQLite error: {e}")
+            if 'conn' in locals():
+                conn.close()
+            return False
         except Exception as e:
             print(f"ERROR building database: {e}")
             import traceback
             traceback.print_exc()
+            if 'conn' in locals():
+                conn.close()
             return False
 
+    def _insert_controls(self, cursor, rom_name, controls_dict):
+        """Helper method to insert controls into the database"""
+        for control_name, control_data in controls_dict.items():
+            display_name = control_data.get('name', '')
+            if display_name:
+                cursor.execute(
+                    "INSERT INTO game_controls (rom_name, control_name, display_name) VALUES (?, ?, ?)",
+                    (rom_name, control_name, display_name)
+                )
+    
     def get_game_data_from_db(self, romname):
-        """Get control data for a ROM from the SQLite database"""
-        if not hasattr(self, 'db_path') or not self.db_path or not os.path.exists(self.db_path):
-            debug_print(f"Database not available for {romname}, falling back to JSON lookup")
+        """Get control data for a ROM from the SQLite database with streamlined error handling"""
+        if not os.path.exists(self.db_path):
             return None
         
+        conn = None
         try:
             # Create connection
             conn = sqlite3.connect(self.db_path)
@@ -2239,103 +2234,63 @@ class MAMEControlConfig(ctk.CTk):
             conn.close()
             return game_data
             
-        except Exception as e:
-            debug_print(f"Error getting game data from DB: {e}")
-            import traceback
-            traceback.print_exc()
-            conn.close() if 'conn' in locals() else None
+        except sqlite3.Error as e:
+            print(f"Database error: {e}")
+            if conn:
+                conn.close()
             return None
-            
         except Exception as e:
             print(f"Error getting game data from DB: {e}")
-            import traceback
-            traceback.print_exc()
+            if conn:
+                conn.close()
             return None
 
     # Modified version of load_all_data to incorporate database building
     def load_all_data(self):
-        """Load all necessary data sources with database optimization"""
-        debug_print("Loading all data...")
+        """Load all necessary data with streamlined logic"""
         start_time = time.time()
         
         try:
             # Initialize ROM data cache
             self.rom_data_cache = {}
             
-            # Load settings from file
-            debug_print("Loading settings...")
-            settings_time = time.time()
+            # 1. Load settings
             self.load_settings()
-            debug_print(f"Settings loaded in {time.time() - settings_time:.3f} seconds")
             
-            # Scan ROMs directory
-            debug_print("Scanning ROMs directory...")
-            roms_time = time.time()
+            # 2. Scan ROMs directory
             self.scan_roms_directory()
-            debug_print(f"ROM scan complete in {time.time() - roms_time:.3f} seconds. Found {len(self.available_roms)} ROMs")
             
-            # Load default controls
-            debug_print("Loading default controls...")
-            controls_time = time.time()
+            # 3. Load default controls
             self.load_default_config()
-            debug_print(f"Default controls loaded in {time.time() - controls_time:.3f} seconds")
             
-            # Check if we need to update the database
-            debug_print("Checking database status...")
-            db_check_time = time.time()
+            # 4. Check if database needs update
             db_needs_update = self.check_db_update_needed()
-            debug_print(f"Database check completed in {time.time() - db_check_time:.3f} seconds")
             
             if db_needs_update:
-                # If database update is needed, first load gamedata.json
-                debug_print("Database needs update, loading gamedata.json...")
-                json_time = time.time()
+                # If database update is needed, load gamedata.json and build db
                 self.load_gamedata_json()
-                debug_print(f"gamedata.json loaded in {time.time() - json_time:.3f} seconds")
-                
-                # Build the database
-                debug_print("Building SQLite database...")
-                db_build_time = time.time()
                 self.build_gamedata_db()
-                debug_print(f"Database built in {time.time() - db_build_time:.3f} seconds")
             else:
-                debug_print("Using existing SQLite database")
-                # Initialize empty gamedata_json for compatibility with original code
-                self.gamedata_json = {}
-                self.parent_lookup = {}
+                # Using existing SQLite database - no need to load full gamedata.json
+                self.gamedata_json = {}  # Empty placeholder
+                self.parent_lookup = {}  # Empty placeholder
             
-            # Always load custom configs
-            debug_print("Loading custom configs...")
-            config_time = time.time()
+            # 5. Load custom configs
             self.load_custom_configs()
-            debug_print(f"Custom configs loaded in {time.time() - config_time:.3f} seconds")
             
-            # Update UI
-            debug_print("Updating UI elements...")
-            ui_time = time.time()
+            # 6. Update UI
             self.update_stats_label()
             self.update_game_list()
-            debug_print(f"UI updated in {time.time() - ui_time:.3f} seconds")
             
-            # Auto-select first ROM
-            debug_print("Auto-selecting first ROM...")
-            select_time = time.time()
+            # 7. Auto-select first ROM
             self.select_first_rom()
-            debug_print(f"First ROM selected in {time.time() - select_time:.3f} seconds")
             
             total_time = time.time() - start_time
-            debug_print(f"All data loading complete in {total_time:.3f} seconds")
-            
-            ##############################
-            ###### Commented Out Popup ###
-            ##############################
-            # Create a simple popup to show the data source if the database was used
-            #if not db_needs_update and hasattr(self, 'db_path') and os.path.exists(self.db_path):
-                #messagebox.showinfo("Database Information", 
-                                #f"Using SQLite database for game data.\nTotal startup time: {total_time:.2f} seconds")
+            print(f"Data loading complete in {total_time:.2f}s")
             
         except Exception as e:
-            debug_print(f"ERROR loading data: {e}")
+            print(f"Error loading data: {e}")
+            import traceback
             traceback.print_exc()
             messagebox.showerror("Data Loading Error", f"Failed to load application data: {e}")
 
@@ -2478,7 +2433,7 @@ class MAMEControlConfig(ctk.CTk):
     
     # Update your show_preview method to track the processes
     def show_preview(self):
-        """Launch the preview window as a separate process with proper PyInstaller handling"""
+        """Launch the preview window with simplified path handling"""
         if not self.current_game:
             messagebox.showinfo("No Game Selected", "Please select a game first")
             return
@@ -2489,50 +2444,42 @@ class MAMEControlConfig(ctk.CTk):
             messagebox.showinfo("No Control Data", f"No control data found for {self.current_game}")
             return
         
-        # Special handling when running as executable (PyInstaller frozen)
+        # Handle PyInstaller frozen executable
         if getattr(sys, 'frozen', False):
             command = [
-                sys.executable,  # Use the same executable
+                sys.executable,
                 "--preview-only",
                 "--game", self.current_game
             ]
-            if hasattr(self, 'hide_preview_buttons') and self.hide_preview_buttons:
+            if self.hide_preview_buttons:
                 command.append("--no-buttons")
                 
-            # Launch the process
+            # Launch and track the process
             process = subprocess.Popen(command)
-            
-            # Track the process for cleanup
             if not hasattr(self, 'preview_processes'):
                 self.preview_processes = []
             self.preview_processes.append(process)
             return
         
-        # If not frozen, use the normal script-based approach
+        # Use script-based approach
         try:
-            # Use the path from the application directory
-            script_dir = get_application_path()
-            script_path = os.path.join(script_dir, "mame_controls_main.py")
+            # First check the main app directory
+            script_path = os.path.join(self.app_dir, "mame_controls_main.py")
             
-            # If script not found at application path, try as a relative path
+            # If not found, check the MAME root directory
             if not os.path.exists(script_path):
-                script_path = os.path.join(os.getcwd(), "mame_controls_main.py")
-                
-            # If still not found, look in known locations
+                script_path = os.path.join(self.mame_dir, "mame_controls_main.py")
+            
+            # Still not found, check preview directory
             if not os.path.exists(script_path):
-                possible_paths = [
-                    os.path.join(self.mame_dir, "preview", "mame_controls_main.py"),
-                    os.path.join(self.mame_dir, "mame_controls_main.py")
-                ]
+                script_path = os.path.join(self.preview_dir, "mame_controls_main.py")
                 
-                for path in possible_paths:
-                    if os.path.exists(path):
-                        script_path = path
-                        break
-            
-            print(f"Using script path: {script_path}")
-            
-            # Build command with appropriate flags
+            # If none of the above worked, we can't find the main script
+            if not os.path.exists(script_path):
+                messagebox.showerror("Error", "Could not find mame_controls_main.py")
+                return
+                
+            # Found the script, build the command
             command = [
                 sys.executable,
                 script_path,
@@ -2540,22 +2487,16 @@ class MAMEControlConfig(ctk.CTk):
                 "--game", self.current_game
             ]
             
-            # Add hide buttons flag if enabled
-            if hasattr(self, 'hide_preview_buttons') and self.hide_preview_buttons:
+            if self.hide_preview_buttons:
                 command.append("--no-buttons")
                 
-            # Launch the process
-            print(f"Launching preview process with command: {command}")
+            # Launch and track the process
             process = subprocess.Popen(command)
-            
-            # Track the process for cleanup
             if not hasattr(self, 'preview_processes'):
                 self.preview_processes = []
             self.preview_processes.append(process)
         except Exception as e:
             print(f"Error launching preview: {e}")
-            import traceback
-            traceback.print_exc()
             messagebox.showerror("Error", f"Failed to launch preview: {str(e)}")
 
     def toggle_hide_preview_buttons(self):
@@ -2566,51 +2507,32 @@ class MAMEControlConfig(ctk.CTk):
         self.save_settings()
         
     def save_settings(self):
-        """Save current settings to a JSON file in settings directory"""
+        """Save current settings to the standard settings file"""
         settings = {
-            "preferred_preview_screen": getattr(self, 'preferred_preview_screen', 2),
+            "preferred_preview_screen": getattr(self, 'preferred_preview_screen', 1),
             "visible_control_types": self.visible_control_types,
-            "hide_preview_buttons": getattr(self, 'hide_preview_buttons', False)
+            "hide_preview_buttons": getattr(self, 'hide_preview_buttons', False),
+            "show_button_names": getattr(self, 'show_button_names', True)
         }
         
-        settings_path = os.path.join(self.settings_dir, "control_config_settings.json")
         try:
-            with open(settings_path, 'w') as f:
+            with open(self.settings_path, 'w') as f:
                 json.dump(settings, f)
-            print(f"Settings saved to: {settings_path}")
         except Exception as e:
             print(f"Error saving settings: {e}")
 
     def load_settings(self):
         """Load settings from JSON file in settings directory"""
-        settings_path = os.path.join(self.settings_dir, "control_config_settings.json")
-        
-        # Check legacy path if not found in settings dir
-        if not os.path.exists(settings_path):
-            legacy_path = os.path.join(self.preview_dir, "settings", "control_config_settings.json")
-            if os.path.exists(legacy_path):
-                # Migrate from legacy location
-                try:
-                    with open(legacy_path, 'r') as f:
-                        settings = json.load(f)
-                    
-                    # Save to new location
-                    with open(settings_path, 'w') as f:
-                        json.dump(settings, f)
-                        
-                    print(f"Migrated control settings from {legacy_path} to {settings_path}")
-                except Exception as e:
-                    print(f"Error migrating settings: {e}")
-        
         # Set sensible defaults
         self.preferred_preview_screen = 1
         self.visible_control_types = ["BUTTON"]
         self.hide_preview_buttons = False
-        self.show_button_names = False
+        self.show_button_names = True
         
-        if os.path.exists(settings_path):
+        # Load custom settings if available
+        if os.path.exists(self.settings_path):
             try:
-                with open(settings_path, 'r') as f:
+                with open(self.settings_path, 'r') as f:
                     settings = json.load(f)
                     
                 # Load screen preference
@@ -2619,20 +2541,15 @@ class MAMEControlConfig(ctk.CTk):
                     
                 # Load visibility settings
                 if 'visible_control_types' in settings:
-                    # Properly handle empty or invalid lists
                     if isinstance(settings['visible_control_types'], list):
                         self.visible_control_types = settings['visible_control_types']
                     
-                    # Make sure BUTTON is always included for proper display
+                    # Make sure BUTTON is always included
                     if "BUTTON" not in self.visible_control_types:
                         self.visible_control_types.append("BUTTON")
-                        settings['visible_control_types'] = self.visible_control_types
-                        with open(settings_path, 'w') as f:
-                            json.dump(settings, f)
 
                 # Load hide preview buttons setting
                 if 'hide_preview_buttons' in settings:
-                    # Handle both boolean and integer (0/1) formats
                     if isinstance(settings['hide_preview_buttons'], bool):
                         self.hide_preview_buttons = settings['hide_preview_buttons']
                     elif isinstance(settings['hide_preview_buttons'], int):
@@ -2647,36 +2564,23 @@ class MAMEControlConfig(ctk.CTk):
                             
                 # Load show button names setting
                 if 'show_button_names' in settings:
-                    # Handle both boolean and integer (0/1) formats
                     if isinstance(settings['show_button_names'], bool):
                         self.show_button_names = settings['show_button_names']
                     elif isinstance(settings['show_button_names'], int):
                         self.show_button_names = bool(settings['show_button_names'])
-                else:
-                    # Default to showing button names for backward compatibility
-                    self.show_button_names = True
-                    settings['show_button_names'] = True
-                    with open(settings_path, 'w') as f:
-                        json.dump(settings, f)
                         
             except Exception as e:
                 print(f"Error loading settings: {e}")
-                import traceback
-                traceback.print_exc()
         else:
             # Create settings file with defaults
-            settings = {
-                'preferred_preview_screen': self.preferred_preview_screen,
-                'visible_control_types': self.visible_control_types,
-                'hide_preview_buttons': self.hide_preview_buttons,
-                'show_button_names': self.show_button_names
-            }
-            try:
-                with open(settings_path, 'w') as f:
-                    json.dump(settings, f)
-                print("Created default settings file")
-            except Exception as e:
-                print(f"Error creating settings file: {e}")
+            self.save_settings()
+                
+        return {
+            'preferred_preview_screen': self.preferred_preview_screen,
+            'visible_control_types': self.visible_control_types,
+            'hide_preview_buttons': self.hide_preview_buttons,
+            'show_button_names': self.show_button_names
+        }
 
     def convert_mapping(self, mapping: str, to_xinput: bool) -> str:
         """Convert between JOYCODE and XInput mappings"""
@@ -2808,71 +2712,70 @@ class MAMEControlConfig(ctk.CTk):
     # Update load_all_data with debugging
        
     def select_first_rom(self):
-        """Select and display the first available ROM"""
-        print("\n=== Auto-selecting first ROM ===")
+        """Select and display the first available ROM with improved performance"""
+        # Get the first available ROM that has game data (using cache when possible)
+        available_games = []
         
-        try:
-            # Get the first available ROM that has game data
-            available_games = sorted([rom for rom in self.available_roms if self.get_game_data(rom)])
+        # First check cache to avoid database hits
+        if hasattr(self, 'rom_data_cache'):
+            available_games = sorted([rom for rom in self.available_roms if rom in self.rom_data_cache])
             
-            if not available_games:
-                print("No ROMs with game data found")
-                return
-                
-            first_rom = available_games[0]
-            print(f"Selected first ROM: {first_rom}")
-            
-            # Check if the game list has content
-            list_content = self.game_list.get("1.0", "end-1c")
-            if not list_content.strip():
-                print("Game list appears to be empty")
-                return
-            
-            # Find the line with our ROM
-            lines = list_content.split('\n')
-            target_line = None
-            
-            for i, line in enumerate(lines):
-                if first_rom in line:
-                    target_line = i + 1  # Lines are 1-indexed in Tkinter
-                    print(f"Found ROM on line {target_line}: '{line}'")
-                    break
+        # If no cached games, do a minimal lookup
+        if not available_games:
+            if hasattr(self, 'db_path') and os.path.exists(self.db_path):
+                # Use database for faster lookup
+                try:
+                    conn = sqlite3.connect(self.db_path)
+                    cursor = conn.cursor()
+                    cursor.execute("SELECT rom_name FROM games ORDER BY rom_name LIMIT 5")
+                    db_roms = [row[0] for row in cursor.fetchall()]
+                    conn.close()
                     
-            if target_line is None:
-                print(f"Could not find '{first_rom}' in game list")
-                return
-            
-            # Highlight the selected line
-            self.highlight_selected_game(target_line)
-            self.current_game = first_rom
-            
-            # Get game data
-            game_data = self.get_game_data(first_rom)
-            if game_data:
-                # Update game title
-                self.game_title.configure(text=game_data['gamename'])
+                    # Filter to only those that are in available_roms
+                    available_games = [rom for rom in db_roms if rom in self.available_roms]
+                except:
+                    pass
+                    
+        # If still no games found, do a full scan
+        if not available_games:
+            available_games = sorted([rom for rom in self.available_roms if self.get_game_data(rom)])
+        
+        if not available_games:
+            print("No ROMs with game data found")
+            return
                 
-                # Clear existing display
-                for widget in self.control_frame.winfo_children():
-                    widget.destroy()
-                
-                # Force display update by simulating a game selection
-                # Create a mock event targeting the line
-                class MockEvent:
-                    def __init__(self):
-                        self.x = 10
-                        self.y = target_line * 20
-                
-                self.on_game_select(MockEvent())
-                
-                print(f"Auto-selected ROM: {first_rom}")
-            else:
-                print(f"No game data available for {first_rom}")
-                
-        except Exception as e:
-            print(f"Error in auto-selection: {e}")
-            import traceback
-            traceback.print_exc()
+        first_rom = available_games[0]
+        
+        # Check if the game list has content
+        list_content = self.game_list.get("1.0", "end-1c")
+        if not list_content.strip():
+            print("Game list appears to be empty")
+            return
+        
+        # Find the line with our ROM
+        lines = list_content.split('\n')
+        target_line = None
+        
+        for i, line in enumerate(lines):
+            if first_rom in line:
+                target_line = i + 1  # Lines are 1-indexed in Tkinter
+                break
+                    
+        if target_line is None:
+            return
+        
+        # Highlight the selected line
+        self.highlight_selected_game(target_line)
+        self.current_game = first_rom
+        
+        # Create a mock event targeting the line
+        class MockEvent:
+            def __init__(self):
+                self.x = 10
+                self.y = target_line * 20
+        
+        # Simulate a selection
+        self.on_game_select(MockEvent())
             
     def highlight_selected_game(self, line_index):
         """Highlight the selected game in the list"""
@@ -2888,7 +2791,7 @@ class MAMEControlConfig(ctk.CTk):
         self.game_list.see(f"{line_index}.0")
         
     def on_game_select(self, event):
-        """Handle game selection and display controls"""
+        """Handle game selection and display controls with improved performance"""
         try:
             # Get the selected game name
             index = self.game_list.index(f"@{event.x},{event.y}")
@@ -2899,6 +2802,10 @@ class MAMEControlConfig(ctk.CTk):
             # Get the text from this line
             line = self.game_list.get(f"{line_num}.0", f"{line_num}.0 lineend")
             
+            # Skip if line is empty or "No matching ROMs found"
+            if not line or line.startswith("No matching ROMs"):
+                return
+                
             # Highlight the selected line
             self.highlight_selected_game(line_num)
             
@@ -2911,7 +2818,7 @@ class MAMEControlConfig(ctk.CTk):
             romname = line.split(" - ")[0]
             self.current_game = romname
 
-            # Get game data including variants
+            # Get game data
             game_data = self.get_game_data(romname)
             
             # Clear existing display
@@ -2923,8 +2830,8 @@ class MAMEControlConfig(ctk.CTk):
                 self.game_title.configure(text=f"No control data: {romname}")
                 return
 
-            # Update game title - now with data source
-            source_text = f" (Source: {game_data.get('source', 'unknown')})"
+            # Update game title
+            source_text = f" ({game_data.get('source', 'unknown')})"
             self.game_title.configure(text=f"{game_data['gamename']}{source_text}")
 
             # Configure columns for the controls table
@@ -2934,12 +2841,12 @@ class MAMEControlConfig(ctk.CTk):
 
             row = 0
 
-            # Basic game info - using a frame for better organization
+            # Display basic game info
             info_frame = ctk.CTkFrame(self.control_frame)
             info_frame.grid(row=row, column=0, columnspan=3, padx=5, pady=5, sticky="ew")
             info_frame.grid_columnconfigure(0, weight=1)
 
-            # Game info with larger font and better spacing
+            # Game info with larger font
             info_text = (
                 f"ROM: {game_data['romname']}\n\n"
                 f"Players: {game_data['numPlayers']}\n"
@@ -2960,9 +2867,10 @@ class MAMEControlConfig(ctk.CTk):
             info_label.grid(row=0, column=0, padx=10, pady=10, sticky="ew")
             row += 1
 
-            # Get custom controls if they exist
+            # Get custom controls if they exist (cached lookup)
             cfg_controls = {}
             if romname in self.custom_configs:
+                # Only parse the custom configs if we need them
                 cfg_controls = self.parse_cfg_controls(self.custom_configs[romname])
                 
                 # Convert mappings if XInput is enabled
@@ -2972,88 +2880,100 @@ class MAMEControlConfig(ctk.CTk):
                         for control, mapping in cfg_controls.items()
                     }
 
-            # Column headers with consistent styling
-            headers = ["Control", "Default Action", "Current Mapping"]
-            header_frame = ctk.CTkFrame(self.control_frame)
-            header_frame.grid(row=row, column=0, columnspan=3, padx=5, pady=(20,5), sticky="ew")
-            
-            for col, header in enumerate(headers):
-                header_frame.grid_columnconfigure(col, weight=[2,2,3][col])
-                header_label = ctk.CTkLabel(
-                    header_frame,
-                    text=header,
-                    font=("Arial", 14, "bold")
-                )
-                header_label.grid(row=0, column=col, padx=5, pady=5, sticky="ew")
-            row += 1
-
-            # Create a frame for the controls list
-            controls_frame = ctk.CTkFrame(self.control_frame)
-            controls_frame.grid(row=row, column=0, columnspan=3, padx=5, pady=5, sticky="ew")
-            for col in range(3):
-                controls_frame.grid_columnconfigure(col, weight=[2,2,3][col])
-            
-            # Display control comparisons
-            comparisons = self.compare_controls(game_data, cfg_controls)
-            control_row = 0
-            for control_name, default_label, current_mapping, is_different in comparisons:
-                # Control name - now with formatting
-                display_control = self.format_control_name(control_name)
-                name_label = ctk.CTkLabel(
-                    controls_frame,
-                    text=display_control,
-                    font=("Arial", 12)
-                )
-                name_label.grid(row=control_row, column=0, padx=5, pady=2, sticky="w")
-                
-                # Default action
-                default_label = ctk.CTkLabel(
-                    controls_frame,
-                    text=default_label,
-                    font=("Arial", 12)
-                )
-                default_label.grid(row=control_row, column=1, padx=5, pady=2, sticky="w")
-                
-                # Current mapping
-                display_mapping = self.format_mapping_display(current_mapping)
-                
-                mapping_label = ctk.CTkLabel(
-                    controls_frame,
-                    text=display_mapping,
-                    text_color="yellow" if is_different else None,
-                    font=("Arial", 12)
-                )
-                mapping_label.grid(row=control_row, column=2, padx=5, pady=2, sticky="w")
-                
-                control_row += 1
-            row += 1
-
-            # Display raw custom config if it exists
-            if romname in self.custom_configs:
-                custom_header = ctk.CTkLabel(
-                    self.control_frame,
-                    text="RAW CONFIGURATION FILE",
-                    font=("Arial", 16, "bold")
-                )
-                custom_header.grid(row=row, column=0, columnspan=3,
-                                padx=5, pady=(20,5), sticky="w")
-                row += 1
-
-                custom_text = ctk.CTkTextbox(
-                    self.control_frame,
-                    height=200,
-                    width=200  # The frame will expand this
-                )
-                custom_text.grid(row=row, column=0, columnspan=3,
-                            padx=20, pady=5, sticky="ew")
-                custom_text.insert("1.0", self.custom_configs[romname])
-                custom_text.configure(state="disabled")
+            # Display controls 
+            self.display_controls_table(row, game_data, cfg_controls)
 
         except Exception as e:
             print(f"Error displaying game: {str(e)}")
             import traceback
             traceback.print_exc()
             
+    def display_controls_table(self, start_row, game_data, cfg_controls):
+        """Extract control table display to a separate method for clarity"""
+        row = start_row
+        
+        # Column headers with consistent styling
+        headers = ["Control", "Default Action", "Current Mapping"]
+        header_frame = ctk.CTkFrame(self.control_frame)
+        header_frame.grid(row=row, column=0, columnspan=3, padx=5, pady=(20,5), sticky="ew")
+        
+        for col, header in enumerate(headers):
+            header_frame.grid_columnconfigure(col, weight=[2,2,3][col])
+            header_label = ctk.CTkLabel(
+                header_frame,
+                text=header,
+                font=("Arial", 14, "bold")
+            )
+            header_label.grid(row=0, column=col, padx=5, pady=5, sticky="ew")
+        row += 1
+
+        # Create a frame for the controls list
+        controls_frame = ctk.CTkFrame(self.control_frame)
+        controls_frame.grid(row=row, column=0, columnspan=3, padx=5, pady=5, sticky="ew")
+        for col in range(3):
+            controls_frame.grid_columnconfigure(col, weight=[2,2,3][col])
+        
+        # Get control comparisons
+        comparisons = self.compare_controls(game_data, cfg_controls)
+        control_row = 0
+        
+        # Display the controls
+        for control_name, default_label, current_mapping, is_different in comparisons:
+            # Control name
+            display_control = self.format_control_name(control_name)
+            name_label = ctk.CTkLabel(
+                controls_frame,
+                text=display_control,
+                font=("Arial", 12)
+            )
+            name_label.grid(row=control_row, column=0, padx=5, pady=2, sticky="w")
+            
+            # Default action
+            default_label = ctk.CTkLabel(
+                controls_frame,
+                text=default_label,
+                font=("Arial", 12)
+            )
+            default_label.grid(row=control_row, column=1, padx=5, pady=2, sticky="w")
+            
+            # Current mapping
+            display_mapping = self.format_mapping_display(current_mapping)
+            
+            mapping_label = ctk.CTkLabel(
+                controls_frame,
+                text=display_mapping,
+                text_color="yellow" if is_different else None,
+                font=("Arial", 12)
+            )
+            mapping_label.grid(row=control_row, column=2, padx=5, pady=2, sticky="w")
+            
+            control_row += 1
+        row += 1
+
+        # Display raw custom config if it exists
+        romname = game_data['romname']
+        if romname in self.custom_configs:
+            custom_header = ctk.CTkLabel(
+                self.control_frame,
+                text="RAW CONFIGURATION FILE",
+                font=("Arial", 16, "bold")
+            )
+            custom_header.grid(row=row, column=0, columnspan=3,
+                            padx=5, pady=(20,5), sticky="w")
+            row += 1
+
+            custom_text = ctk.CTkTextbox(
+                self.control_frame,
+                height=200,
+                width=200
+            )
+            custom_text.grid(row=row, column=0, columnspan=3,
+                        padx=20, pady=5, sticky="ew")
+            custom_text.insert("1.0", self.custom_configs[romname])
+            custom_text.configure(state="disabled")
+        
+        return row + 1
+    
     def compare_controls(self, game_data: Dict, cfg_controls: Dict) -> List[Tuple[str, str, str, bool]]:
         """Compare controls with game-specific and default mappings"""
         comparisons = []
@@ -3244,18 +3164,99 @@ class MAMEControlConfig(ctk.CTk):
         close_button.pack(pady=10)
         
     def update_game_list(self):
-        """Update the game list to show all available ROMs with visual enhancements"""
+        """Update the game list to show all available ROMs with improved performance"""
         self.game_list.delete("1.0", "end")
         
         # Sort available ROMs
         available_roms = sorted(self.available_roms)
         
-        # Add alternating row backgrounds for better readability
-        row_count = 0
+        # Pre-fetch custom config status for all ROMs (faster than checking one by one)
+        has_config = {rom: rom in self.custom_configs for rom in available_roms}
         
+        # Batch process with fewer database hits
         for romname in available_roms:
-            # Get game data
-            game_data = self.get_game_data(romname)
+            # Check first if ROM data is in cache to avoid database lookups
+            if hasattr(self, 'rom_data_cache') and romname in self.rom_data_cache:
+                game_data = self.rom_data_cache[romname]
+                has_data = True
+            else:
+                # Minimal check for existence - don't load full data yet
+                has_data = self.rom_exists_in_db(romname) if hasattr(self, 'db_path') else False
+                game_data = None
+            
+            # Build the prefix
+            prefix = "* " if has_config.get(romname, False) else "  "
+            
+            if has_data:
+                prefix += "+ "
+                # Only fetch the full data if not in cache and needed for display
+                if not game_data:
+                    game_data = self.get_game_data(romname)
+                
+                if game_data:
+                    display_name = f"{romname} - {game_data['gamename']}"
+                else:
+                    display_name = romname
+            else:
+                prefix += "- "
+                display_name = romname
+            
+            # Insert the line
+            self.game_list.insert("end", f"{prefix}{display_name}\n")
+
+    def rom_exists_in_db(self, romname):
+        """Quick check if ROM exists in database without loading full data"""
+        if not os.path.exists(self.db_path):
+            return False
+            
+        try:
+            conn = sqlite3.connect(self.db_path)
+            cursor = conn.cursor()
+            cursor.execute("SELECT 1 FROM games WHERE rom_name = ? LIMIT 1", (romname,))
+            result = cursor.fetchone() is not None
+            conn.close()
+            return result
+        except:
+            return False
+    
+    def filter_games(self, *args):
+        """Filter the game list based on search text with improved performance"""
+        search_text = self.search_var.get().lower()
+        self.game_list.delete("1.0", "end")
+        
+        # Reset the selected line when filtering
+        self.selected_line = None
+        
+        # Only perform filtering if search text is provided
+        if not search_text:
+            self.update_game_list()  # Just show all games
+            return
+        
+        # Use cached game data where possible for faster filtering
+        filtered_count = 0
+        
+        # Track which ROMs match the filter for faster processing
+        matching_roms = []
+        
+        for romname in sorted(self.available_roms):
+            # Check if ROM name matches search
+            if search_text in romname.lower():
+                matching_roms.append(romname)
+                continue
+                
+            # Check cached game data first (fastest)
+            if hasattr(self, 'rom_data_cache') and romname in self.rom_data_cache:
+                game_data = self.rom_data_cache[romname]
+                if 'gamename' in game_data and search_text in game_data['gamename'].lower():
+                    matching_roms.append(romname)
+                    continue
+        
+        # Now display all matches efficiently
+        for romname in matching_roms:
+            # Get game data using cache when possible
+            game_data = None
+            if hasattr(self, 'rom_data_cache') and romname in self.rom_data_cache:
+                game_data = self.rom_data_cache[romname]
             has_config = romname in self.custom_configs
             
             # Build the prefix
@@ -3268,56 +3269,11 @@ class MAMEControlConfig(ctk.CTk):
                 display_name = romname
             
             # Insert the line
-            line_start = self.game_list.index("end-1c")
             self.game_list.insert("end", f"{prefix}{display_name}\n")
-            
-            # Apply alternate row background for better readability
-            row_count += 1
-            
-        print(f"\nGame List Update:")
-        print(f"Total ROMs: {len(available_roms)}")
-        print(f"ROMs with control data: {sum(1 for rom in available_roms if self.get_game_data(rom))}")
-        print(f"ROMs with configs: {len(self.custom_configs)}")
-
-    def filter_games(self, *args):
-        """Filter the game list based on search text"""
-        search_text = self.search_var.get().lower()
-        self.game_list.delete("1.0", "end")
+            filtered_count += 1
         
-        # Sort available ROMs
-        available_roms = sorted(self.available_roms)
-        
-        # Reset the selected line when filtering
-        self.selected_line = None
-        
-        # Add alternating row backgrounds for better readability
-        row_count = 0
-        
-        for romname in available_roms:
-            # Get game data including variants
-            game_data = self.get_game_data(romname)
-            
-            # Check if ROM matches search
-            if (search_text in romname.lower() or 
-                (game_data and search_text in game_data['gamename'].lower())):
-                
-                has_config = romname in self.custom_configs
-                
-                # Build the prefix
-                prefix = "* " if has_config else "  "
-                if game_data:
-                    prefix += "+ "
-                    display_name = f"{romname} - {game_data['gamename']}"
-                else:
-                    prefix += "- "
-                    display_name = romname
-                
-                # Insert the line
-                line_start = self.game_list.index("end-1c")
-                self.game_list.insert("end", f"{prefix}{display_name}\n")
-                
-                # Apply alternate row background for better readability
-                row_count += 1
+        if filtered_count == 0:
+            self.game_list.insert("end", "No matching ROMs found.\n")
     
     # Update scan_roms_directory method 
     def scan_roms_directory(self):
@@ -3367,74 +3323,31 @@ class MAMEControlConfig(ctk.CTk):
             messagebox.showerror("Error", f"Failed to scan ROMs directory: {e}")
     
     def load_text_positions(self, rom_name):
-        """Load text positions from new settings directory structure"""
+        """Load text positions with simplified path handling"""
         positions = {}
         
-        # First try ROM-specific positions in settings dir
+        # Try ROM-specific positions first
         rom_positions_file = os.path.join(self.settings_dir, f"{rom_name}_positions.json")
         if os.path.exists(rom_positions_file):
             try:
                 with open(rom_positions_file, 'r') as f:
-                    positions = json.load(f)
-                print(f"Loaded {len(positions)} ROM-specific positions from: {rom_positions_file}")
-                return positions
-            except Exception as e:
-                print(f"Error loading ROM-specific positions: {e}")
+                    return json.load(f)
+            except Exception:
+                pass
         
-        # Try legacy path in preview dir
-        legacy_rom_file = os.path.join(self.preview_dir, f"{rom_name}_positions.json")
-        if os.path.exists(legacy_rom_file):
-            try:
-                with open(legacy_rom_file, 'r') as f:
-                    positions = json.load(f)
-                    
-                # Also save to new location for future use
-                try:
-                    with open(rom_positions_file, 'w') as f:
-                        json.dump(positions, f)
-                    print(f"Migrated positions to new location: {rom_positions_file}")
-                except:
-                    pass
-                    
-                print(f"Loaded {len(positions)} ROM-specific positions from legacy path: {legacy_rom_file}")
-                return positions
-            except Exception as e:
-                print(f"Error loading ROM-specific positions from legacy path: {e}")
-        
-        # Fall back to global positions in settings dir
+        # Fall back to global positions
         global_positions_file = os.path.join(self.settings_dir, "global_positions.json")
         if os.path.exists(global_positions_file):
             try:
                 with open(global_positions_file, 'r') as f:
-                    positions = json.load(f)
-                print(f"Loaded {len(positions)} positions from global file: {global_positions_file}")
-                return positions
-            except Exception as e:
-                print(f"Error loading global positions: {e}")
+                    return json.load(f)
+            except Exception:
+                pass
         
-        # Try legacy global positions in preview dir
-        legacy_global_file = os.path.join(self.preview_dir, "global_positions.json")
-        if os.path.exists(legacy_global_file):
-            try:
-                with open(legacy_global_file, 'r') as f:
-                    positions = json.load(f)
-                    
-                # Also save to new location for future use
-                try:
-                    with open(global_positions_file, 'w') as f:
-                        json.dump(positions, f)
-                    print(f"Migrated global positions to new location: {global_positions_file}")
-                except:
-                    pass
-                    
-                print(f"Loaded {len(positions)} positions from legacy global file: {legacy_global_file}")
-            except Exception as e:
-                print(f"Error loading global positions from legacy path: {e}")
-        
-        return positions
+        return positions  # Return empty dict if nothing found
             
     def load_text_appearance_settings(self):
-        """Load text appearance settings from file in new settings directory"""
+        """Load text appearance settings with simplified path handling"""
         settings = {
             "font_family": "Arial",
             "font_size": 28,
@@ -3443,100 +3356,59 @@ class MAMEControlConfig(ctk.CTk):
             "y_offset": -40
         }
         
-        try:
-            # Check settings directory first
-            settings_file = os.path.join(self.settings_dir, "text_appearance_settings.json")
-            
-            # If not in settings dir, check legacy location
-            if not os.path.exists(settings_file):
-                legacy_file = os.path.join(self.mame_dir, "text_appearance_settings.json")
-                if os.path.exists(legacy_file):
-                    # Migrate from legacy location
-                    with open(legacy_file, 'r') as f:
-                        loaded_settings = json.load(f)
-                        
-                    # Save to new location
-                    with open(settings_file, 'w') as f:
-                        json.dump(loaded_settings, f)
-                        
-                    print(f"Migrated text appearance settings from {legacy_file} to {settings_file}")
-                    settings.update(loaded_settings)
-                    return settings
-            
-            # Normal loading from settings dir
-            if os.path.exists(settings_file):
+        # Check settings directory
+        settings_file = os.path.join(self.settings_dir, "text_appearance_settings.json")
+        if os.path.exists(settings_file):
+            try:
                 with open(settings_file, 'r') as f:
                     loaded_settings = json.load(f)
                     settings.update(loaded_settings)
-        except Exception as e:
-            print(f"Error loading text appearance settings: {e}")
+            except Exception as e:
+                print(f"Error loading text appearance settings: {e}")
         
         return settings
     
     # Update load_gamedata_json method
     def load_gamedata_json(self):
-        """Load and parse the gamedata.json file for control data with improved path handling"""
-        debug_print("Loading gamedata.json...")
-        
+        """Load gamedata.json from the canonical settings location"""
         if hasattr(self, 'gamedata_json') and self.gamedata_json:
-            # Already loaded
-            debug_print("gamedata.json already loaded, using cached version")
-            return self.gamedata_json
+            return self.gamedata_json  # Already loaded
                 
-        self.gamedata_json = {}
-        self.parent_lookup = {}  # Add a dedicated parent lookup table
+        # Make sure it's been migrated
+        #self.migrate_gamedata_if_needed()
         
-        # Check all possible locations in priority order
-        json_paths = [
-            os.path.join(self.settings_dir, "gamedata.json"),              # New primary location
-            os.path.join(self.preview_dir, "gamedata.json"),               # Legacy preview location
-            os.path.join(self.mame_dir, "gamedata.json"),                  # Root location
-            os.path.join(self.mame_dir, "metadata", "gamedata.json"),      # Metadata location
-            os.path.join(self.mame_dir, "data", "gamedata.json")           # Data location
-        ]
-        
-        debug_print(f"Searching for gamedata.json in {len(json_paths)} possible locations")
-        
-        json_path = None
-        for i, path in enumerate(json_paths):
-            debug_print(f"Checking path {i+1}: {path}")
-            if os.path.exists(path):
-                json_path = path
-                debug_print(f"Found gamedata.json at: {path}")
-                break
-            
-        if not json_path:
-            debug_print("ERROR: gamedata.json not found in any known location")
-            messagebox.showerror("Missing File", "gamedata.json not found in any known location")
+        # Ensure the file exists
+        if not os.path.exists(self.gamedata_path):
+            print(f"ERROR: gamedata.json not found at {self.gamedata_path}")
+            self.gamedata_json = {}
+            self.parent_lookup = {}
             return {}
                 
         try:
-            debug_print(f"Loading gamedata.json from: {json_path}")
-            with open(json_path, 'r', encoding='utf-8') as f:
+            with open(self.gamedata_path, 'r', encoding='utf-8') as f:
                 data = json.load(f)
             
-            debug_print(f"Successfully loaded gamedata.json with {len(data)} entries")
-                    
-            # Process the data to find both main games and clones
+            # Process the data for main games and clones
+            self.gamedata_json = {}
+            self.parent_lookup = {}
+            
             for rom_name, game_data in data.items():
                 self.gamedata_json[rom_name] = game_data
                     
-                # Index clones with more explicit parent relationship
+                # Build parent-child relationship
                 if 'clones' in game_data:
                     for clone_name, clone_data in game_data['clones'].items():
-                        # Store explicit parent reference
+                        # Store parent reference
                         clone_data['parent'] = rom_name
-                        # Also store in the parent lookup table
                         self.parent_lookup[clone_name] = rom_name
                         self.gamedata_json[clone_name] = clone_data
                 
-            debug_print(f"Processed gamedata.json: {len(self.gamedata_json)} total games, {len(self.parent_lookup)} parent-clone relationships")
             return self.gamedata_json
                 
         except Exception as e:
-            debug_print(f"ERROR loading gamedata.json: {str(e)}")
-            traceback.print_exc()
-            messagebox.showerror("Error", f"Failed to load gamedata.json: {str(e)}")
+            print(f"ERROR loading gamedata.json: {str(e)}")
+            self.gamedata_json = {}
+            self.parent_lookup = {}
             return {}
         
     # Add these remaining methods to the MAMEControlConfig class in mame_controls_tk.py:
