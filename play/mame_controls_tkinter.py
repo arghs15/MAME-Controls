@@ -1,10 +1,12 @@
 import builtins
 import datetime
+import sqlite3
 import sys
 import os
 import json
 import re
 import subprocess
+import time
 import traceback
 from typing import Dict, Optional, Set, List, Tuple
 import xml.etree.ElementTree as ET
@@ -276,6 +278,43 @@ class MAMEControlConfig(ctk.CTk):
             traceback.print_exc()
             messagebox.showerror("Initialization Error", f"Failed to initialize: {e}")
     
+    def check_db_update_needed(self):
+        """Check if the SQLite database needs to be updated based on gamedata.json timestamp"""
+        debug_print("Checking if database update is needed...")
+        
+        # Get the path to gamedata.json
+        gamedata_path = self.get_gamedata_path()
+        if not os.path.exists(gamedata_path):
+            debug_print(f"ERROR: gamedata.json not found at {gamedata_path}")
+            return False
+            
+        # Define the SQLite database path
+        self.db_path = os.path.join(self.settings_dir, "gamedata.db")
+        
+        # Check if database exists
+        if not os.path.exists(self.db_path):
+            debug_print(f"Database doesn't exist yet, creating at: {self.db_path}")
+            return True
+            
+        # Get file modification timestamps
+        gamedata_mtime = os.path.getmtime(gamedata_path)
+        db_mtime = os.path.getmtime(self.db_path)
+        
+        # Format timestamps for logging - Fix for datetime module
+        gamedata_time = datetime.datetime.fromtimestamp(gamedata_mtime).strftime('%Y-%m-%d %H:%M:%S')
+        db_time = datetime.datetime.fromtimestamp(db_mtime).strftime('%Y-%m-%d %H:%M:%S')
+        
+        debug_print(f"  gamedata.json modified: {gamedata_time}")
+        debug_print(f"  gamedata.db modified:   {db_time}")
+        
+        # Compare timestamps
+        if gamedata_mtime > db_mtime:
+            debug_print(f"Database update needed: gamedata.json is newer than database")
+            return True
+        else:
+            debug_print(f"Database is up to date")
+            return False
+    
     def on_closing(self):
         """Handle proper cleanup when closing the application"""
         print("Application closing, performing cleanup...")
@@ -333,10 +372,24 @@ class MAMEControlConfig(ctk.CTk):
         sys.exit(0)
         
     def get_game_data(self, romname):
-        """Get control data for a ROM from gamedata.json with improved clone handling"""
+        """Get control data for a ROM with database prioritization"""
+        # Check if we have a ROM data cache
+        if hasattr(self, 'rom_data_cache') and romname in self.rom_data_cache:
+            return self.rom_data_cache[romname]
+        
+        # First try to get from the database
+        db_data = self.get_game_data_from_db(romname)
+        if db_data:
+            # Cache the result if caching is enabled
+            if hasattr(self, 'rom_data_cache'):
+                self.rom_data_cache[romname] = db_data
+            return db_data
+        
+        # If not found in database or database not available, fall back to the original method
+        # This is the original get_game_data method logic
         if not hasattr(self, 'gamedata_json'):
             self.load_gamedata_json()
-            
+                
         # Debug output
         #print(f"\nLooking up game data for: {romname}")
         
@@ -536,6 +589,11 @@ class MAMEControlConfig(ctk.CTk):
                 
             # Mark as gamedata source
             converted_data['source'] = 'gamedata.json'
+            
+            # Cache the result if caching is enabled
+            if hasattr(self, 'rom_data_cache'):
+                self.rom_data_cache[romname] = converted_data
+                
             return converted_data
             
         # Try parent lookup if direct lookup failed
@@ -548,6 +606,11 @@ class MAMEControlConfig(ctk.CTk):
                     # Update with this ROM's info
                     parent_data['romname'] = romname
                     parent_data['gamename'] = self.gamedata_json[romname].get('description', f"{romname} (Clone)")
+                    
+                    # Cache the result if caching is enabled
+                    if hasattr(self, 'rom_data_cache'):
+                        self.rom_data_cache[romname] = parent_data
+                        
                     return parent_data
         
         # Not found
@@ -1907,6 +1970,386 @@ class MAMEControlConfig(ctk.CTk):
         )
         close_button.pack(side="right", padx=10, pady=5)
     
+    def build_gamedata_db(self):
+        """Build SQLite database from gamedata.json for faster lookups"""
+        print("Building SQLite database from gamedata.json...")
+        start_time = time.time()
+        
+        # Load gamedata.json
+        gamedata_path = self.get_gamedata_path()
+        if not os.path.exists(gamedata_path):
+            print(f"ERROR: gamedata.json not found at {gamedata_path}")
+            return False
+        
+        try:
+            with open(gamedata_path, 'r', encoding='utf-8') as f:
+                gamedata = json.load(f)
+        except Exception as e:
+            print(f"ERROR loading gamedata.json: {e}")
+            return False
+        
+        # Define the SQLite database path
+        self.db_path = os.path.join(self.settings_dir, "gamedata.db")
+        
+        # Create database connection
+        try:
+            conn = sqlite3.connect(self.db_path)
+            cursor = conn.cursor()
+            
+            # Drop existing tables if they exist
+            cursor.execute("DROP TABLE IF EXISTS games")
+            cursor.execute("DROP TABLE IF EXISTS game_controls")
+            cursor.execute("DROP TABLE IF EXISTS clone_relationships")
+            
+            # Create tables
+            cursor.execute('''
+            CREATE TABLE games (
+                rom_name TEXT PRIMARY KEY,
+                game_name TEXT,
+                player_count INTEGER,
+                buttons INTEGER,
+                sticks INTEGER,
+                alternating BOOLEAN,
+                is_clone BOOLEAN,
+                parent_rom TEXT
+            )
+            ''')
+            
+            cursor.execute('''
+            CREATE TABLE game_controls (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                rom_name TEXT,
+                control_name TEXT,
+                display_name TEXT,
+                FOREIGN KEY (rom_name) REFERENCES games (rom_name)
+            )
+            ''')
+            
+            cursor.execute('''
+            CREATE TABLE clone_relationships (
+                parent_rom TEXT,
+                clone_rom TEXT,
+                PRIMARY KEY (parent_rom, clone_rom),
+                FOREIGN KEY (parent_rom) REFERENCES games (rom_name),
+                FOREIGN KEY (clone_rom) REFERENCES games (rom_name)
+            )
+            ''')
+            
+            # Create indices for faster lookups
+            cursor.execute("CREATE INDEX idx_game_controls_rom ON game_controls (rom_name)")
+            cursor.execute("CREATE INDEX idx_clone_parent ON clone_relationships (parent_rom)")
+            cursor.execute("CREATE INDEX idx_clone_child ON clone_relationships (clone_rom)")
+            
+            # Process the data
+            games_inserted = 0
+            controls_inserted = 0
+            clones_inserted = 0
+            
+            # Process main games first
+            for rom_name, game_data in gamedata.items():
+                # Extract basic game properties
+                game_name = game_data.get('description', rom_name)
+                player_count = int(game_data.get('playercount', 1))
+                buttons = int(game_data.get('buttons', 0))
+                sticks = int(game_data.get('sticks', 0))
+                alternating = 1 if game_data.get('alternating', False) else 0
+                is_clone = 0  # Main entries aren't clones
+                parent_rom = None
+                
+                # Insert game data
+                cursor.execute(
+                    "INSERT INTO games VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+                    (rom_name, game_name, player_count, buttons, sticks, alternating, is_clone, parent_rom)
+                )
+                games_inserted += 1
+                
+                # Extract and insert controls
+                if 'controls' in game_data:
+                    for control_name, control_data in game_data['controls'].items():
+                        display_name = control_data.get('name', '')
+                        if display_name:
+                            cursor.execute(
+                                "INSERT INTO game_controls (rom_name, control_name, display_name) VALUES (?, ?, ?)",
+                                (rom_name, control_name, display_name)
+                            )
+                            controls_inserted += 1
+                
+                # Process clones
+                if 'clones' in game_data and isinstance(game_data['clones'], dict):
+                    for clone_name, clone_data in game_data['clones'].items():
+                        # Extract clone properties
+                        clone_game_name = clone_data.get('description', clone_name)
+                        clone_player_count = int(clone_data.get('playercount', player_count))  # Inherit from parent if not specified
+                        clone_buttons = int(clone_data.get('buttons', buttons))
+                        clone_sticks = int(clone_data.get('sticks', sticks))
+                        clone_alternating = 1 if clone_data.get('alternating', alternating) else 0
+                        
+                        # Insert clone as a game
+                        cursor.execute(
+                            "INSERT INTO games VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+                            (clone_name, clone_game_name, clone_player_count, clone_buttons, clone_sticks, 
+                            clone_alternating, 1, rom_name)  # is_clone=1, parent=rom_name
+                        )
+                        games_inserted += 1
+                        
+                        # Add clone relationship
+                        cursor.execute(
+                            "INSERT INTO clone_relationships VALUES (?, ?)",
+                            (rom_name, clone_name)
+                        )
+                        clones_inserted += 1
+                        
+                        # Extract and insert clone controls
+                        if 'controls' in clone_data:
+                            for control_name, control_data in clone_data['controls'].items():
+                                display_name = control_data.get('name', '')
+                                if display_name:
+                                    cursor.execute(
+                                        "INSERT INTO game_controls (rom_name, control_name, display_name) VALUES (?, ?, ?)",
+                                        (clone_name, control_name, display_name)
+                                    )
+                                    controls_inserted += 1
+            
+            # Commit changes and close connection
+            conn.commit()
+            conn.close()
+            
+            elapsed_time = time.time() - start_time
+            print(f"Database build complete in {elapsed_time:.2f} seconds")
+            print(f"Inserted {games_inserted} games, {controls_inserted} controls, and {clones_inserted} clone relationships")
+            return True
+            
+        except Exception as e:
+            print(f"ERROR building database: {e}")
+            import traceback
+            traceback.print_exc()
+            return False
+
+    def get_game_data_from_db(self, romname):
+        """Get control data for a ROM from the SQLite database"""
+        if not hasattr(self, 'db_path') or not self.db_path or not os.path.exists(self.db_path):
+            debug_print(f"Database not available for {romname}, falling back to JSON lookup")
+            return None
+        
+        try:
+            # Create connection
+            conn = sqlite3.connect(self.db_path)
+            # Don't use row factory to avoid case sensitivity issues
+            cursor = conn.cursor()
+            
+            # Get basic game info
+            cursor.execute("""
+                SELECT rom_name, game_name, player_count, buttons, sticks, alternating, is_clone, parent_rom
+                FROM games WHERE rom_name = ?
+            """, (romname,))
+            
+            game_row = cursor.fetchone()
+            
+            if not game_row:
+                # Check if this is a clone with a different name in the database
+                cursor.execute("""
+                    SELECT parent_rom FROM games WHERE rom_name = ? AND is_clone = 1
+                """, (romname,))
+                parent_result = cursor.fetchone()
+                
+                if parent_result and parent_result[0]:
+                    # This is a clone, get parent data
+                    parent_rom = parent_result[0]
+                    conn.close()
+                    return self.get_game_data_from_db(parent_rom)
+                else:
+                    # No data found
+                    conn.close()
+                    return None
+            
+            # Access columns by index instead of by name
+            rom_name = game_row[0]
+            game_name = game_row[1] 
+            player_count = game_row[2]
+            buttons = game_row[3]
+            sticks = game_row[4]
+            alternating = bool(game_row[5])
+            is_clone = bool(game_row[6])
+            parent_rom = game_row[7]
+            
+            # Build game data structure
+            game_data = {
+                'romname': romname,
+                'gamename': game_name,
+                'numPlayers': player_count,
+                'alternating': alternating,
+                'mirrored': False,
+                'miscDetails': f"Buttons: {buttons}, Sticks: {sticks}",
+                'players': [],
+                'source': 'gamedata.db'
+            }
+            
+            # Get control data
+            cursor.execute("""
+                SELECT control_name, display_name FROM game_controls WHERE rom_name = ?
+            """, (romname,))
+            control_rows = cursor.fetchall()
+            
+            # If no controls found and this is a clone, try parent controls
+            if not control_rows and is_clone and parent_rom:
+                cursor.execute("""
+                    SELECT control_name, display_name FROM game_controls WHERE rom_name = ?
+                """, (parent_rom,))
+                control_rows = cursor.fetchall()
+                
+            # Process controls
+            p1_controls = []
+            p2_controls = []
+            
+            for control in control_rows:
+                control_name = control[0]  # First column
+                display_name = control[1]  # Second column
+                
+                if control_name.startswith('P1_'):
+                    p1_controls.append({
+                        'name': control_name,
+                        'value': display_name
+                    })
+                elif control_name.startswith('P2_'):
+                    p2_controls.append({
+                        'name': control_name,
+                        'value': display_name
+                    })
+            
+            # Sort controls by name for consistent order
+            p1_controls.sort(key=lambda x: x['name'])
+            p2_controls.sort(key=lambda x: x['name'])
+            
+            # Add player 1 if we have controls
+            if p1_controls:
+                game_data['players'].append({
+                    'number': 1,
+                    'numButtons': buttons,
+                    'labels': p1_controls
+                })
+                
+            # Add player 2 if we have controls
+            if p2_controls:
+                game_data['players'].append({
+                    'number': 2,
+                    'numButtons': buttons,
+                    'labels': p2_controls
+                })
+                
+            conn.close()
+            return game_data
+            
+        except Exception as e:
+            debug_print(f"Error getting game data from DB: {e}")
+            import traceback
+            traceback.print_exc()
+            conn.close() if 'conn' in locals() else None
+            return None
+            
+        except Exception as e:
+            print(f"Error getting game data from DB: {e}")
+            import traceback
+            traceback.print_exc()
+            return None
+
+    # Modified version of load_all_data to incorporate database building
+    def load_all_data(self):
+        """Load all necessary data sources with database optimization"""
+        debug_print("Loading all data...")
+        start_time = time.time()
+        
+        try:
+            # Initialize ROM data cache
+            self.rom_data_cache = {}
+            
+            # Load settings from file
+            debug_print("Loading settings...")
+            settings_time = time.time()
+            self.load_settings()
+            debug_print(f"Settings loaded in {time.time() - settings_time:.3f} seconds")
+            
+            # Scan ROMs directory
+            debug_print("Scanning ROMs directory...")
+            roms_time = time.time()
+            self.scan_roms_directory()
+            debug_print(f"ROM scan complete in {time.time() - roms_time:.3f} seconds. Found {len(self.available_roms)} ROMs")
+            
+            # Load default controls
+            debug_print("Loading default controls...")
+            controls_time = time.time()
+            self.load_default_config()
+            debug_print(f"Default controls loaded in {time.time() - controls_time:.3f} seconds")
+            
+            # Check if we need to update the database
+            debug_print("Checking database status...")
+            db_check_time = time.time()
+            db_needs_update = self.check_db_update_needed()
+            debug_print(f"Database check completed in {time.time() - db_check_time:.3f} seconds")
+            
+            if db_needs_update:
+                # If database update is needed, first load gamedata.json
+                debug_print("Database needs update, loading gamedata.json...")
+                json_time = time.time()
+                self.load_gamedata_json()
+                debug_print(f"gamedata.json loaded in {time.time() - json_time:.3f} seconds")
+                
+                # Build the database
+                debug_print("Building SQLite database...")
+                db_build_time = time.time()
+                self.build_gamedata_db()
+                debug_print(f"Database built in {time.time() - db_build_time:.3f} seconds")
+            else:
+                debug_print("Using existing SQLite database")
+                # Initialize empty gamedata_json for compatibility with original code
+                self.gamedata_json = {}
+                self.parent_lookup = {}
+            
+            # Always load custom configs
+            debug_print("Loading custom configs...")
+            config_time = time.time()
+            self.load_custom_configs()
+            debug_print(f"Custom configs loaded in {time.time() - config_time:.3f} seconds")
+            
+            # Update UI
+            debug_print("Updating UI elements...")
+            ui_time = time.time()
+            self.update_stats_label()
+            self.update_game_list()
+            debug_print(f"UI updated in {time.time() - ui_time:.3f} seconds")
+            
+            # Auto-select first ROM
+            debug_print("Auto-selecting first ROM...")
+            select_time = time.time()
+            self.select_first_rom()
+            debug_print(f"First ROM selected in {time.time() - select_time:.3f} seconds")
+            
+            total_time = time.time() - start_time
+            debug_print(f"All data loading complete in {total_time:.3f} seconds")
+            
+            ##############################
+            ###### Commented Out Popup ###
+            ##############################
+            # Create a simple popup to show the data source if the database was used
+            #if not db_needs_update and hasattr(self, 'db_path') and os.path.exists(self.db_path):
+                #messagebox.showinfo("Database Information", 
+                                #f"Using SQLite database for game data.\nTotal startup time: {total_time:.2f} seconds")
+            
+        except Exception as e:
+            debug_print(f"ERROR loading data: {e}")
+            traceback.print_exc()
+            messagebox.showerror("Data Loading Error", f"Failed to load application data: {e}")
+
+    # Modified version of get_game_data to use the database
+    def get_game_data_with_db(self, romname):
+        """Get control data for a ROM with database prioritization"""
+        # First try to get from the database
+        db_data = self.get_game_data_from_db(romname)
+        if db_data:
+            return db_data
+        
+        # If not found in database, fall back to the original method
+        return self.get_game_data(romname)
+    
     # Updated get_gamedata_path method to work when exe is in preview folder
     def get_gamedata_path(self):
         """Get the path to the gamedata.json file based on new folder structure"""
@@ -2363,53 +2806,7 @@ class MAMEControlConfig(ctk.CTk):
         return mapping
         
     # Update load_all_data with debugging
-    def load_all_data(self):
-        """Load all necessary data sources with debug tracing"""
-        debug_print("Loading all data...")
-        
-        try:
-            # Load settings from file
-            debug_print("Loading settings...")
-            self.load_settings()
-            debug_print("Settings loaded")
-            
-            # Scan ROMs directory
-            debug_print("Scanning ROMs directory...")
-            self.scan_roms_directory()
-            debug_print(f"ROM scan complete. Found {len(self.available_roms)} ROMs")
-            
-            # Load default controls
-            debug_print("Loading default controls...")
-            self.load_default_config()
-            debug_print("Default controls loaded")
-            
-            # Load gamedata.json
-            debug_print("Loading gamedata.json...")
-            self.load_gamedata_json()
-            debug_print("gamedata.json loaded")
-            
-            # Always load custom configs
-            debug_print("Loading custom configs...")
-            self.load_custom_configs()
-            debug_print("Custom configs loaded")
-            
-            # Update UI
-            debug_print("Updating UI elements...")
-            self.update_stats_label()
-            self.update_game_list()
-            debug_print("UI updated")
-            
-            # Auto-select first ROM
-            debug_print("Auto-selecting first ROM...")
-            self.select_first_rom()
-            debug_print("First ROM selected")
-            
-            debug_print("All data loading complete")
-        except Exception as e:
-            debug_print(f"ERROR loading data: {e}")
-            traceback.print_exc()
-            messagebox.showerror("Data Loading Error", f"Failed to load application data: {e}")
-        
+       
     def select_first_rom(self):
         """Select and display the first available ROM"""
         print("\n=== Auto-selecting first ROM ===")
@@ -2510,7 +2907,7 @@ class MAMEControlConfig(ctk.CTk):
                 line = line[2:]
             if line.startswith("+ ") or line.startswith("- "):
                 line = line[2:]
-                
+                    
             romname = line.split(" - ")[0]
             self.current_game = romname
 
@@ -2526,8 +2923,9 @@ class MAMEControlConfig(ctk.CTk):
                 self.game_title.configure(text=f"No control data: {romname}")
                 return
 
-            # Update game title
-            self.game_title.configure(text=game_data['gamename'])
+            # Update game title - now with data source
+            source_text = f" (Source: {game_data.get('source', 'unknown')})"
+            self.game_title.configure(text=f"{game_data['gamename']}{source_text}")
 
             # Configure columns for the controls table
             self.control_frame.grid_columnconfigure(0, weight=2)  # Control name
