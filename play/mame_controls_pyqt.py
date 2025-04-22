@@ -15,7 +15,7 @@ from PyQt5.QtGui import QFont, QTextCursor, QColor, QPalette
 import sqlite3
 import time
 
-def get_application_path(self):
+def get_application_path():
     """Get the base path for the application (handles PyInstaller bundling)"""
     if getattr(sys, 'frozen', False):
         # Running as compiled executable
@@ -24,13 +24,13 @@ def get_application_path(self):
         # Running as script
         return os.path.dirname(os.path.abspath(__file__))
 
-def get_mame_parent_dir(self, app_path=None):
+def get_mame_parent_dir(app_path=None):
     """
     Get the parent directory where MAME, ROMs, and artwork are located.
     If we're in the preview folder, the parent is the MAME directory.
     """
     if app_path is None:
-        app_path = self.get_application_path()
+        app_path = get_application_path()
     
     # If we're in the preview folder, the parent is the MAME directory
     if os.path.basename(app_path).lower() == "preview":
@@ -154,30 +154,20 @@ class MAMEControlConfig(QMainWindow):
         self.logo_width_percentage = 15
         self.logo_height_percentage = 15
         
-        # Enhanced directory structure setup
-        self.app_dir = self.get_application_path()
-        print(f"Application directory: {self.app_dir}")
+        # NEW CODE: Use the centralized directory structure method
+        self.initialize_directory_structure()
+        #self.migrate_gamedata_if_needed()
         
-        self.mame_dir = self.find_mame_directory()
-        print(f"MAME directory: {self.mame_dir}")
-        
+        # Check for critical directory
         if not self.mame_dir:
             QMessageBox.critical(self, "Error", "Please place this script in the MAME directory!")
             sys.exit(1)
         
-        # Set up directory structure like tkinter version
-        self.preview_dir = os.path.join(self.mame_dir, "preview")
-        self.settings_dir = os.path.join(self.preview_dir, "settings")
-        self.info_dir = os.path.join(self.settings_dir, "info")
-        
+        print(f"Application directory: {self.app_dir}")
+        print(f"MAME directory: {self.mame_dir}")
         print(f"Preview directory: {self.preview_dir}")
         print(f"Settings directory: {self.settings_dir}")
         print(f"Info directory: {self.info_dir}")
-        
-        # Create these directories if they don't exist
-        os.makedirs(self.preview_dir, exist_ok=True)
-        os.makedirs(self.settings_dir, exist_ok=True)
-        os.makedirs(self.info_dir, exist_ok=True)
         
         # Skip main window setup if in preview-only mode
         if not preview_only:
@@ -200,7 +190,30 @@ class MAMEControlConfig(QMainWindow):
         self.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)
         self.setMinimumSize(800, 600)  # Set a reasonable minimum size
     
-    
+    def initialize_directory_structure(self):
+        """Initialize the standardized directory structure"""
+        self.app_dir = get_application_path()
+        self.mame_dir = get_mame_parent_dir(self.app_dir)
+        
+        # Set up directory structure - all data will be stored in these locations
+        self.preview_dir = os.path.join(self.mame_dir, "preview")
+        self.settings_dir = os.path.join(self.preview_dir, "settings")
+        self.info_dir = os.path.join(self.settings_dir, "info")
+
+        # Create these directories if they don't exist
+        os.makedirs(self.preview_dir, exist_ok=True)
+        os.makedirs(self.settings_dir, exist_ok=True)
+        os.makedirs(self.info_dir, exist_ok=True)
+        
+        # Define standard paths for key files
+        self.gamedata_path = os.path.join(self.settings_dir, "gamedata.json")
+        self.db_path = os.path.join(self.settings_dir, "gamedata.db")
+        self.settings_path = os.path.join(self.settings_dir, "control_config_settings.json")
+        
+        # Return if the directories were created successfully
+        return (os.path.exists(self.preview_dir) and 
+                os.path.exists(self.settings_dir) and 
+                os.path.exists(self.info_dir))
     
     def get_application_path(self):
         """Get the base path for the application (handles PyInstaller bundling)"""
@@ -276,17 +289,41 @@ class MAMEControlConfig(QMainWindow):
         return None
         
     def select_first_rom(self):
-        """Select and display the first available ROM"""
+        """Select and display the first available ROM with improved performance"""
         print("\n=== Auto-selecting first ROM ===")
         
         try:
-            # Get the first available ROM that has game data
-            available_games = sorted([rom for rom in self.available_roms if self.get_game_data(rom)])
+            # Get the first available ROM that has game data (using cache when possible)
+            available_games = []
+            
+            # First check cache to avoid database hits
+            if hasattr(self, 'rom_data_cache'):
+                available_games = sorted([rom for rom in self.available_roms if rom in self.rom_data_cache])
+                
+            # If no cached games, do a minimal lookup
+            if not available_games:
+                if hasattr(self, 'db_path') and os.path.exists(self.db_path):
+                    # Use database for faster lookup
+                    try:
+                        conn = sqlite3.connect(self.db_path)
+                        cursor = conn.cursor()
+                        cursor.execute("SELECT rom_name FROM games ORDER BY rom_name LIMIT 5")
+                        db_roms = [row[0] for row in cursor.fetchall()]
+                        conn.close()
+                        
+                        # Filter to only those that are in available_roms
+                        available_games = [rom for rom in db_roms if rom in self.available_roms]
+                    except:
+                        pass
+            
+            # If still no games found, do a full scan
+            if not available_games:
+                available_games = sorted([rom for rom in self.available_roms if self.get_game_data(rom)])
             
             if not available_games:
                 print("No ROMs with game data found")
                 return
-                
+                    
             first_rom = available_games[0]
             print(f"Selected first ROM: {first_rom}")
             
@@ -307,7 +344,7 @@ class MAMEControlConfig(QMainWindow):
             
             # Update game data display
             self.on_game_selected(first_rom, line_number)
-                
+                    
         except Exception as e:
             print(f"Error in auto-selection: {e}")
             import traceback
@@ -560,183 +597,91 @@ class MAMEControlConfig(QMainWindow):
         self.hide_preview_buttons = self.hide_buttons_toggle.isChecked()
         print(f"Hide preview buttons set to: {self.hide_preview_buttons}")
 
-    # Replace the show_preview method with this:
-    # Modify the show_preview method
     def show_preview(self):
-        """Show a preview of the control layout with enhanced path handling and process tracking"""
+        """Launch the preview window with simplified path handling"""
         if not self.current_game:
-            QMessageBox.information(self, "No Game Selected", "Please select a game first")
+            #messagebox.showinfo("No Game Selected", "Please select a game first")
             return
-            
+                
         # Get game data
         game_data = self.get_game_data(self.current_game)
         if not game_data:
-            QMessageBox.information(self, "No Control Data", f"No control data found for {self.current_game}")
+            #messagebox.showinfo("No Control Data", f"No control data found for {self.current_game}")
             return
         
+        # Handle PyInstaller frozen executable
+        if getattr(sys, 'frozen', False):
+            command = [
+                sys.executable,
+                "--preview-only",
+                "--game", self.current_game
+            ]
+            if self.hide_preview_buttons:
+                command.append("--no-buttons")
+                
+            # Launch and track the process
+            process = subprocess.Popen(command)
+            if not hasattr(self, 'preview_processes'):
+                self.preview_processes = []
+            self.preview_processes.append(process)
+            return
+        
+        # Use script-based approach
         try:
-            # Import the preview window module
-            print(f"Attempting to import preview module from: {self.mame_dir}")
+            # First check the main app directory
+            script_path = os.path.join(self.app_dir, "mame_controls_main.py")
             
-            # Try multiple possible locations for the preview module
-            preview_module_paths = [
-                os.path.join(self.app_dir, "mame_controls_preview.py"),
-                os.path.join(self.mame_dir, "mame_controls_preview.py"),
-                os.path.join(self.mame_dir, "preview", "mame_controls_preview.py")
+            # If not found, check the MAME root directory
+            if not os.path.exists(script_path):
+                script_path = os.path.join(self.mame_dir, "mame_controls_main.py")
+            
+            # Still not found, check preview directory
+            if not os.path.exists(script_path):
+                script_path = os.path.join(self.preview_dir, "mame_controls_main.py")
+                
+            # If none of the above worked, we can't find the main script
+            if not os.path.exists(script_path):
+                #messagebox.showerror("Error", "Could not find mame_controls_main.py")
+                return
+                
+            # Found the script, build the command
+            command = [
+                sys.executable,
+                script_path,
+                "--preview-only",
+                "--game", self.current_game
             ]
             
-            # Add directories to sys.path if they're not already there
-            for path in [self.app_dir, self.mame_dir, os.path.join(self.mame_dir, "preview")]:
-                if path not in sys.path:
-                    sys.path.append(path)
-                    print(f"Added {path} to sys.path")
-            
-            # Try to import the module
-            found_module = False
-            for path in preview_module_paths:
-                if os.path.exists(path):
-                    print(f"Found preview module at: {path}")
-                    found_module = True
-                    # Add directory to path if not already there
-                    dir_path = os.path.dirname(path)
-                    if dir_path not in sys.path:
-                        sys.path.append(dir_path)
-                        print(f"Added {dir_path} to sys.path")
-                    break
-                    
-            if not found_module:
-                # If module not found, try launching as a separate process
-                print("Module not found, trying to launch as separate process")
-                try:
-                    # Special handling when running as executable (PyInstaller frozen)
-                    if getattr(sys, 'frozen', False):
-                        command = [
-                            sys.executable,  # Use the same executable
-                            "--preview-only",
-                            "--game", self.current_game
-                        ]
-                        if hasattr(self, 'hide_preview_buttons') and self.hide_preview_buttons:
-                            command.append("--no-buttons")
-                            
-                        # Launch the process
-                        print(f"Launching preview process with command: {command}")
-                        process = subprocess.Popen(command)
-                        
-                        # Track the process for cleanup
-                        self.preview_processes.append(process)
-                        return
-                    
-                    # If not frozen, use the normal script-based approach
-                    script_path = None
-                    possible_paths = [
-                        os.path.join(self.app_dir, "mame_controls_main.py"),
-                        os.path.join(self.mame_dir, "mame_controls_main.py"),
-                        os.path.join(self.mame_dir, "preview", "mame_controls_main.py")
-                    ]
-                    
-                    for path in possible_paths:
-                        if os.path.exists(path):
-                            script_path = path
-                            break
-                    
-                    if script_path:
-                        # Build command with appropriate flags
-                        command = [
-                            sys.executable,
-                            script_path,
-                            "--preview-only",
-                            "--game", self.current_game
-                        ]
-                        
-                        # Add hide buttons flag if enabled
-                        if hasattr(self, 'hide_preview_buttons') and self.hide_preview_buttons:
-                            command.append("--no-buttons")
-                            
-                        # Launch the process
-                        print(f"Launching preview process with command: {command}")
-                        process = subprocess.Popen(command)
-                        
-                        # Track the process for cleanup
-                        self.preview_processes.append(process)
-                        return
-                    else:
-                        QMessageBox.critical(self, "Error", "Could not find mame_controls_preview.py or mame_controls_main.py")
-                        return
-                except Exception as e:
-                    print(f"Error launching preview as separate process: {e}")
-                    import traceback
-                    traceback.print_exc()
-                    QMessageBox.critical(self, "Error", f"Could not launch preview as separate process: {str(e)}")
-                    return
+            if self.hide_preview_buttons:
+                command.append("--no-buttons")
                 
-            # Import from current directory
-            from mame_controls_preview import PreviewWindow
-            print("Successfully imported PreviewWindow")
-            
-            # Create preview window as a modal dialog to ensure it appears on top
-            print(f"Creating preview window for {self.current_game}")
-            self.preview_window = PreviewWindow(self.current_game, game_data, self.mame_dir, self, 
-                                            self.hide_preview_buttons)
-            
-            # Make preview window modal
-            print("Setting preview window as modal")
-            self.preview_window.setWindowModality(Qt.ApplicationModal)
-            
-            # Show the window as a modal dialog
-            print("Showing preview window")
-            self.preview_window.show()
-            self.preview_window.activateWindow()  # Force window to front
-            self.preview_window.raise_()  # Raise window to the top
-            print("Preview window displayed")
-            
-        except ImportError as e:
-            QMessageBox.critical(self, "Error", f"Could not import preview module: {str(e)}")
-            print(f"Import error: {e}")
-            import traceback
-            traceback.print_exc()
+            # Launch and track the process
+            process = subprocess.Popen(command)
+            if not hasattr(self, 'preview_processes'):
+                self.preview_processes = []
+            self.preview_processes.append(process)
         except Exception as e:
-            QMessageBox.critical(self, "Error", f"Error showing preview: {str(e)}")
-            print(f"Error: {e}")
-            import traceback
-            traceback.print_exc()
+            print(f"Error launching preview: {e}")
+            #messagebox.showerror("Error", f"Failed to launch preview: {str(e)}")
+
 
     def check_db_update_needed(self):
         """Check if the SQLite database needs to be updated based on gamedata.json timestamp"""
-        print("Checking if database update is needed...")
-        
-        # Get the path to gamedata.json
-        gamedata_path = self.get_gamedata_path()
-        if not os.path.exists(gamedata_path):
-            print(f"ERROR: gamedata.json not found at {gamedata_path}")
+        # Ensure gamedata.json exists first
+        if not os.path.exists(self.gamedata_path):
             return False
-            
-        # Define the SQLite database path
-        self.db_path = os.path.join(self.settings_dir, "gamedata.db")
-        
+                
         # Check if database exists
         if not os.path.exists(self.db_path):
             print(f"Database doesn't exist yet, creating at: {self.db_path}")
             return True
-            
+                
         # Get file modification timestamps
-        gamedata_mtime = os.path.getmtime(gamedata_path)
+        gamedata_mtime = os.path.getmtime(self.gamedata_path)
         db_mtime = os.path.getmtime(self.db_path)
         
-        # Format timestamps for logging
-        import datetime
-        gamedata_time = datetime.datetime.fromtimestamp(gamedata_mtime).strftime('%Y-%m-%d %H:%M:%S')
-        db_time = datetime.datetime.fromtimestamp(db_mtime).strftime('%Y-%m-%d %H:%M:%S')
-        
-        print(f"  gamedata.json modified: {gamedata_time}")
-        print(f"  gamedata.db modified:   {db_time}")
-        
-        # Compare timestamps
-        if gamedata_mtime > db_mtime:
-            print(f"Database update needed: gamedata.json is newer than database")
-            return True
-        else:
-            print(f"Database is up to date")
-            return False
+        # Compare timestamps - only rebuild if gamedata is newer than database
+        return gamedata_mtime > db_mtime
 
     def get_gamedata_path(self):
         """Get the path to the gamedata.json file based on new folder structure"""
@@ -766,27 +711,20 @@ class MAMEControlConfig(QMainWindow):
     
     def build_gamedata_db(self):
         """Build SQLite database from gamedata.json for faster lookups"""
-        print("Building SQLite database from gamedata.json...")
+        print("Building SQLite database...")
         start_time = time.time()
         
-        # Load gamedata.json
-        gamedata_path = self.get_gamedata_path()
-        if not os.path.exists(gamedata_path):
-            print(f"ERROR: gamedata.json not found at {gamedata_path}")
+        # Load gamedata.json if needed
+        if not hasattr(self, 'gamedata_json') or not self.gamedata_json:
+            self.load_gamedata_json()
+        
+        # Verify gamedata is loaded
+        if not self.gamedata_json:
+            print("ERROR: No gamedata available to build database")
             return False
         
         try:
-            with open(gamedata_path, 'r', encoding='utf-8') as f:
-                gamedata = json.load(f)
-        except Exception as e:
-            print(f"ERROR loading gamedata.json: {e}")
-            return False
-        
-        # Define the SQLite database path
-        self.db_path = os.path.join(self.settings_dir, "gamedata.db")
-        
-        # Create database connection
-        try:
+            # Create database connection
             conn = sqlite3.connect(self.db_path)
             cursor = conn.cursor()
             
@@ -840,7 +778,11 @@ class MAMEControlConfig(QMainWindow):
             clones_inserted = 0
             
             # Process main games first
-            for rom_name, game_data in gamedata.items():
+            for rom_name, game_data in self.gamedata_json.items():
+                # Skip entries that are clones (handled separately below)
+                if 'parent' in game_data:
+                    continue
+                    
                 # Extract basic game properties
                 game_name = game_data.get('description', rom_name)
                 player_count = int(game_data.get('playercount', 1))
@@ -859,14 +801,8 @@ class MAMEControlConfig(QMainWindow):
                 
                 # Extract and insert controls
                 if 'controls' in game_data:
-                    for control_name, control_data in game_data['controls'].items():
-                        display_name = control_data.get('name', '')
-                        if display_name:
-                            cursor.execute(
-                                "INSERT INTO game_controls (rom_name, control_name, display_name) VALUES (?, ?, ?)",
-                                (rom_name, control_name, display_name)
-                            )
-                            controls_inserted += 1
+                    self._insert_controls(cursor, rom_name, game_data['controls'])
+                    controls_inserted += len(game_data['controls'])
                 
                 # Process clones
                 if 'clones' in game_data and isinstance(game_data['clones'], dict):
@@ -895,24 +831,22 @@ class MAMEControlConfig(QMainWindow):
                         
                         # Extract and insert clone controls
                         if 'controls' in clone_data:
-                            for control_name, control_data in clone_data['controls'].items():
-                                display_name = control_data.get('name', '')
-                                if display_name:
-                                    cursor.execute(
-                                        "INSERT INTO game_controls (rom_name, control_name, display_name) VALUES (?, ?, ?)",
-                                        (clone_name, control_name, display_name)
-                                    )
-                                    controls_inserted += 1
+                            self._insert_controls(cursor, clone_name, clone_data['controls'])
+                            controls_inserted += len(clone_data['controls'])
             
             # Commit changes and close connection
             conn.commit()
             conn.close()
             
             elapsed_time = time.time() - start_time
-            print(f"Database build complete in {elapsed_time:.2f} seconds")
-            print(f"Inserted {games_inserted} games, {controls_inserted} controls, and {clones_inserted} clone relationships")
+            print(f"Database built in {elapsed_time:.2f}s with {games_inserted} games, {controls_inserted} controls")
             return True
             
+        except sqlite3.Error as e:
+            print(f"SQLite error: {e}")
+            if 'conn' in locals():
+                conn.close()
+            return False
         except Exception as e:
             print(f"ERROR building database: {e}")
             import traceback
@@ -920,14 +854,16 @@ class MAMEControlConfig(QMainWindow):
             if 'conn' in locals():
                 conn.close()
             return False
-            
-        except Exception as e:
-            print(f"ERROR building database: {e}")
-            import traceback
-            traceback.print_exc()
-            if 'conn' in locals():
-                conn.close()
-            return False
+    
+    def _insert_controls(self, cursor, rom_name, controls_dict):
+        """Helper method to insert controls into the database"""
+        for control_name, control_data in controls_dict.items():
+            display_name = control_data.get('name', '')
+            if display_name:
+                cursor.execute(
+                    "INSERT INTO game_controls (rom_name, control_name, display_name) VALUES (?, ?, ?)",
+                    (rom_name, control_name, display_name)
+                )
     
     # Replace the show_preview method with this:
     def show_preview(self):
@@ -1007,12 +943,254 @@ class MAMEControlConfig(QMainWindow):
             import traceback
             traceback.print_exc()
     
+    def get_game_data(self, romname):
+        """Get game data with integrated database prioritization"""
+        # 1. Check cache first
+        if hasattr(self, 'rom_data_cache') and romname in self.rom_data_cache:
+            return self.rom_data_cache[romname]
+        
+        # 2. Try database first if available
+        if os.path.exists(self.db_path):
+            db_data = self.get_game_data_from_db(romname)
+            if db_data:
+                # Cache the result
+                if hasattr(self, 'rom_data_cache'):
+                    self.rom_data_cache[romname] = db_data
+                return db_data
+        
+        # 3. Fall back to JSON lookup if needed
+        # Load gamedata.json first if needed
+        if not hasattr(self, 'gamedata_json') or not self.gamedata_json:
+            self.load_gamedata_json()
+                
+        # Continue with the existing lookup logic...
+        if romname in self.gamedata_json:
+            game_data = self.gamedata_json[romname]
+            
+            # Simple name defaults
+            default_actions = {
+                'P1_JOYSTICK_UP': 'Up',
+                'P1_JOYSTICK_DOWN': 'Down',
+                'P1_JOYSTICK_LEFT': 'Left',
+                'P1_JOYSTICK_RIGHT': 'Right',
+                'P2_JOYSTICK_UP': 'Up',
+                'P2_JOYSTICK_DOWN': 'Down',
+                'P2_JOYSTICK_LEFT': 'Left',
+                'P2_JOYSTICK_RIGHT': 'Right',
+                'P1_BUTTON1': 'A Button',
+                'P1_BUTTON2': 'B Button',
+                'P1_BUTTON3': 'X Button',
+                'P1_BUTTON4': 'Y Button',
+                'P1_BUTTON5': 'LB Button',
+                'P1_BUTTON6': 'RB Button',
+                # Mirror P1 button names for P2
+                'P2_BUTTON1': 'A Button',
+                'P2_BUTTON2': 'B Button',
+                'P2_BUTTON3': 'X Button',
+                'P2_BUTTON4': 'Y Button',
+                'P2_BUTTON5': 'LB Button',
+                'P2_BUTTON6': 'RB Button',
+            }
+            
+            # Basic structure conversion
+            converted_data = {
+                'romname': romname,
+                'gamename': game_data.get('description', romname),
+                'numPlayers': int(game_data.get('playercount', 1)),
+                'alternating': game_data.get('alternating', False),
+                'mirrored': False,
+                'miscDetails': f"Buttons: {game_data.get('buttons', '?')}, Sticks: {game_data.get('sticks', '?')}",
+                'players': []
+            }
+            
+            # Check if this is a clone and needs to inherit controls from parent
+            needs_parent_controls = False
+            
+            # Find controls (direct or in a clone)
+            controls = None
+            if 'controls' in game_data:
+                controls = game_data['controls']
+                #print(f"Found direct controls for {romname}")
+            else:
+                needs_parent_controls = True
+                #print(f"No direct controls for {romname}, needs parent controls")
+                
+            # If no controls and this is a clone, try to use parent controls
+            if needs_parent_controls:
+                parent_rom = None
+                
+                # Check explicit parent field (should be there from load_gamedata_json)
+                if 'parent' in game_data:
+                    parent_rom = game_data['parent']
+                    #print(f"Found parent {parent_rom} via direct reference")
+                
+                # Also check parent lookup table for redundancy
+                elif hasattr(self, 'parent_lookup') and romname in self.parent_lookup:
+                    parent_rom = self.parent_lookup[romname]
+                    #print(f"Found parent {parent_rom} via lookup table")
+                
+                # If we found a parent, try to get its controls
+                if parent_rom and parent_rom in self.gamedata_json:
+                    parent_data = self.gamedata_json[parent_rom]
+                    if 'controls' in parent_data:
+                        controls = parent_data['controls']
+                        #print(f"Using controls from parent {parent_rom} for clone {romname}")
+            
+            # Now process the controls (either direct or inherited from parent)
+            if controls:
+                # First pass - collect P1 button names to mirror to P2
+                p1_button_names = {}
+                for control_name, control_data in controls.items():
+                    if control_name.startswith('P1_BUTTON') and 'name' in control_data:
+                        button_num = control_name.replace('P1_BUTTON', '')
+                        p1_button_names[f'P2_BUTTON{button_num}'] = control_data['name']
+                        
+                # Process player controls
+                p1_controls = []
+                p2_controls = []
+                
+                for control_name, control_data in controls.items():
+                    # Add P1 controls
+                    if control_name.startswith('P1_'):
+                        # Skip non-joystick/button controls
+                        if 'JOYSTICK' in control_name or 'BUTTON' in control_name:
+                            # Get the friendly name
+                            friendly_name = None
+                            
+                            # First check for explicit name
+                            if 'name' in control_data:
+                                friendly_name = control_data['name']
+                            # Then check for default actions
+                            elif control_name in default_actions:
+                                friendly_name = default_actions[control_name]
+                            # Fallback to control name
+                            else:
+                                parts = control_name.split('_')
+                                if len(parts) > 1:
+                                    friendly_name = parts[-1]
+                                
+                            if friendly_name:
+                                p1_controls.append({
+                                    'name': control_name,
+                                    'value': friendly_name
+                                })
+                    
+                    # Add P2 controls - prioritize matching P1 button names
+                    elif control_name.startswith('P2_'):
+                        if 'JOYSTICK' in control_name or 'BUTTON' in control_name:
+                            friendly_name = None
+                            
+                            # First check for explicit name
+                            if 'name' in control_data:
+                                friendly_name = control_data['name']
+                            # Then check if we have a matching P1 button name
+                            elif control_name in p1_button_names:
+                                friendly_name = p1_button_names[control_name]
+                            # Then check defaults
+                            elif control_name in default_actions:
+                                friendly_name = default_actions[control_name]
+                            # Fallback to control name
+                            else:
+                                parts = control_name.split('_')
+                                if len(parts) > 1:
+                                    friendly_name = parts[-1]
+                                
+                            if friendly_name:
+                                p2_controls.append({
+                                    'name': control_name,
+                                    'value': friendly_name
+                                })
+                
+                # Also check for special direction mappings (P1_UP, etc.)
+                for control_name, control_data in controls.items():
+                    if control_name == 'P1_UP' and 'name' in control_data:
+                        # Update the joystick control if it exists
+                        for control in p1_controls:
+                            if control['name'] == 'P1_JOYSTICK_UP':
+                                control['value'] = control_data['name']
+                    elif control_name == 'P1_DOWN' and 'name' in control_data:
+                        for control in p1_controls:
+                            if control['name'] == 'P1_JOYSTICK_DOWN':
+                                control['value'] = control_data['name']
+                    elif control_name == 'P1_LEFT' and 'name' in control_data:
+                        for control in p1_controls:
+                            if control['name'] == 'P1_JOYSTICK_LEFT':
+                                control['value'] = control_data['name']
+                    elif control_name == 'P1_RIGHT' and 'name' in control_data:
+                        for control in p1_controls:
+                            if control['name'] == 'P1_JOYSTICK_RIGHT':
+                                control['value'] = control_data['name']
+                    # Also handle P2 directional controls the same way
+                    elif control_name == 'P2_UP' and 'name' in control_data:
+                        for control in p2_controls:
+                            if control['name'] == 'P2_JOYSTICK_UP':
+                                control['value'] = control_data['name']
+                    elif control_name == 'P2_DOWN' and 'name' in control_data:
+                        for control in p2_controls:
+                            if control['name'] == 'P2_JOYSTICK_DOWN':
+                                control['value'] = control_data['name']
+                    elif control_name == 'P2_LEFT' and 'name' in control_data:
+                        for control in p2_controls:
+                            if control['name'] == 'P2_JOYSTICK_LEFT':
+                                control['value'] = control_data['name']
+                    elif control_name == 'P2_RIGHT' and 'name' in control_data:
+                        for control in p2_controls:
+                            if control['name'] == 'P2_JOYSTICK_RIGHT':
+                                control['value'] = control_data['name']
+                
+                # Sort controls by name to ensure consistent order (Button 1 before Button 2)
+                p1_controls.sort(key=lambda x: x['name'])
+                p2_controls.sort(key=lambda x: x['name'])
+                            
+                # Add player 1 if we have controls
+                if p1_controls:
+                    converted_data['players'].append({
+                        'number': 1,
+                        'numButtons': int(game_data.get('buttons', 1)),
+                        'labels': p1_controls
+                    })
+
+                # Add player 2 if we have controls
+                if p2_controls:
+                    converted_data['players'].append({
+                        'number': 2,
+                        'numButtons': int(game_data.get('buttons', 1)),
+                        'labels': p2_controls
+                    })
+                
+            # Mark as gamedata source
+            converted_data['source'] = 'gamedata.json'
+            
+            # Cache the result if caching is enabled
+            if hasattr(self, 'rom_data_cache'):
+                self.rom_data_cache[romname] = converted_data
+                
+            return converted_data
+        
+        # Try parent lookup before giving up
+        if hasattr(self, 'parent_lookup') and romname in self.parent_lookup:
+            parent_rom = self.parent_lookup[romname]
+            parent_data = self.get_game_data(parent_rom)  # Recursive call
+            if parent_data:
+                # Update with this ROM's info and cache
+                parent_data['romname'] = romname
+                if romname in self.gamedata_json:
+                    parent_data['gamename'] = self.gamedata_json[romname].get('description', f"{romname} (Clone)")
+                
+                # Cache and return
+                if hasattr(self, 'rom_data_cache'):
+                    self.rom_data_cache[romname] = parent_data
+                return parent_data
+        
+        # Not found anywhere
+        return None
+
     def get_game_data_from_db(self, romname):
-        """Get control data for a ROM from the SQLite database"""
-        if not hasattr(self, 'db_path') or not self.db_path or not os.path.exists(self.db_path):
-            print(f"Database not available for {romname}, falling back to JSON lookup")
+        """Get control data for a ROM from the SQLite database with streamlined error handling"""
+        if not os.path.exists(self.db_path):
             return None
         
+        conn = None
         try:
             # Create connection
             conn = sqlite3.connect(self.db_path)
@@ -1121,11 +1299,14 @@ class MAMEControlConfig(QMainWindow):
             conn.close()
             return game_data
             
+        except sqlite3.Error as e:
+            print(f"Database error: {e}")
+            if conn:
+                conn.close()
+            return None
         except Exception as e:
             print(f"Error getting game data from DB: {e}")
-            import traceback
-            traceback.print_exc()
-            if 'conn' in locals():
+            if conn:
                 conn.close()
             return None
     
@@ -1559,33 +1740,35 @@ class MAMEControlConfig(QMainWindow):
         QMessageBox.information(self, "Coming Soon", "This feature will be implemented in a future version.")
     
     def on_game_selected(self, rom_name, line_number):
-        """Handle game selection and display controls"""
+        """Handle game selection and display controls - optimized PyQt version"""
         try:
             # Store current game
             self.current_game = rom_name
             
-            # Get game data
-            game_data = self.get_game_data(rom_name)
+            # Get game data using cache when possible
+            if hasattr(self, 'rom_data_cache') and rom_name in self.rom_data_cache:
+                game_data = self.rom_data_cache[rom_name]
+            else:
+                game_data = self.get_game_data(rom_name)
             
-            # Clear existing control display
-            for i in reversed(range(self.control_layout.count())):
-                item = self.control_layout.itemAt(i)
-                if item.widget():
-                    item.widget().deleteLater()
-                elif item.layout():
-                    # For QHBoxLayout or QVBoxLayout items
-                    while item.layout().count():
-                        child = item.layout().takeAt(0)
-                        if child.widget():
-                            child.widget().deleteLater()
-                
             if not game_data:
                 # Clear display for ROMs without control data
                 self.game_title.setText(f"No control data: {rom_name}")
+                # Clear the controls display
+                for i in reversed(range(self.control_layout.count())):
+                    item = self.control_layout.itemAt(i)
+                    if item.widget():
+                        item.widget().deleteLater()
+                    elif item.layout():
+                        while item.layout().count():
+                            child = item.layout().takeAt(0)
+                            if child.widget():
+                                child.widget().deleteLater()
                 return
                 
-            # Update game title
-            self.game_title.setText(game_data['gamename'])
+            # Update game title with data source
+            source_text = f" (Source: {game_data.get('source', 'unknown')})" 
+            self.game_title.setText(f"{game_data['gamename']}{source_text}")
             
             # Get custom controls if they exist
             cfg_controls = {}
@@ -1599,92 +1782,118 @@ class MAMEControlConfig(QMainWindow):
                         for control, mapping in cfg_controls.items()
                     }
             
-            # Create basic game info section
-            info_frame = QFrame()
-            info_frame.setFrameShape(QFrame.StyledPanel)
-            info_layout = QVBoxLayout(info_frame)
-            
-            # Game info with larger font and better spacing
-            info_text = (
-                f"ROM: {game_data['romname']}\n\n"
-                f"Players: {game_data['numPlayers']}\n"
-                f"Alternating: {game_data['alternating']}\n"
-                f"Mirrored: {game_data['mirrored']}"
-            )
-            if game_data.get('miscDetails'):
-                info_text += f"\n\nDetails: {game_data['miscDetails']}"
-                
-            info_label = QLabel(info_text)
-            info_label.setFont(QFont("Arial", 14))
-            info_label.setWordWrap(True)
-            info_layout.addWidget(info_label)
-            
-            self.control_layout.addWidget(info_frame)
-            
-            # Create column headers
-            header_frame = QFrame()
-            header_frame.setFrameShape(QFrame.StyledPanel)
-            header_layout = QHBoxLayout(header_frame)
-            
-            headers = ["Control", "Default Action", "Current Mapping"]
-            header_weights = [2, 2, 3]
-            
-            for header, weight in zip(headers, header_weights):
-                header_label = QLabel(header)
-                header_label.setFont(QFont("Arial", 14, QFont.Bold))
-                header_layout.addWidget(header_label, weight)
-                
-            self.control_layout.addWidget(header_frame)
-            
-            # Create controls list frame
-            controls_frame = QFrame()
-            controls_frame.setFrameShape(QFrame.StyledPanel)
-            controls_layout = QGridLayout(controls_frame)
-            
-            # Display control comparisons
-            comparisons = self.compare_controls(game_data, cfg_controls)
-            for row, (control_name, default_label, current_mapping, is_different) in enumerate(comparisons):
-                # Control name
-                display_control = self.format_control_name(control_name)
-                name_label = QLabel(display_control)
-                name_label.setFont(QFont("Arial", 12))
-                controls_layout.addWidget(name_label, row, 0)
-                
-                # Default action
-                default_action_label = QLabel(default_label)
-                default_action_label.setFont(QFont("Arial", 12))
-                controls_layout.addWidget(default_action_label, row, 1)
-                
-                # Current mapping
-                display_mapping = self.format_mapping_display(current_mapping)
-                mapping_label = QLabel(display_mapping)
-                mapping_label.setFont(QFont("Arial", 12))
-                if is_different:
-                    mapping_label.setStyleSheet("color: yellow;")
-                controls_layout.addWidget(mapping_label, row, 2)
-            
-            self.control_layout.addWidget(controls_frame)
-            
-            # Display raw custom config if it exists
-            if rom_name in self.custom_configs:
-                custom_header = QLabel("RAW CONFIGURATION FILE")
-                custom_header.setFont(QFont("Arial", 16, QFont.Bold))
-                self.control_layout.addWidget(custom_header)
-                
-                custom_text = QTextEdit()
-                custom_text.setReadOnly(True)
-                custom_text.setFont(QFont("Courier New", 10))
-                custom_text.setMinimumHeight(200)
-                custom_text.setText(self.custom_configs[rom_name])
-                self.control_layout.addWidget(custom_text)
-                
-            # Add spacer at the bottom
-            self.control_layout.addStretch()
+            # Display game info and controls
+            self.display_controls_table(game_data, cfg_controls)
                 
         except Exception as e:
             print(f"Error displaying game: {str(e)}")
             import traceback
             traceback.print_exc()
+
+    def display_controls_table(self, game_data, cfg_controls):
+        """Display the controls table - optimized PyQt version with fixed vertical alignment"""
+        from PyQt5.QtGui import QFont
+        from PyQt5.QtWidgets import QFrame, QLabel, QVBoxLayout, QHBoxLayout, QGridLayout, QTextEdit, QSpacerItem, QSizePolicy
+        
+        # First clear any existing layout content
+        for i in reversed(range(self.control_layout.count())):
+            item = self.control_layout.itemAt(i)
+            if item.widget():
+                item.widget().deleteLater()
+            elif item.layout():
+                while item.layout().count():
+                    child = item.layout().takeAt(0)
+                    if child.widget():
+                        child.widget().deleteLater()
+            elif item.spacerItem():
+                self.control_layout.removeItem(item)
+        
+        row = 0
+        
+        # Create basic game info section - always at the top
+        info_frame = QFrame()
+        info_frame.setFrameShape(QFrame.StyledPanel)
+        info_layout = QVBoxLayout(info_frame)
+        
+        # Game info with larger font and better spacing
+        info_text = (
+            f"ROM: {game_data['romname']}\n\n"
+            f"Players: {game_data['numPlayers']}\n"
+            f"Alternating: {game_data['alternating']}\n"
+            f"Mirrored: {game_data['mirrored']}"
+        )
+        if game_data.get('miscDetails'):
+            info_text += f"\n\nDetails: {game_data['miscDetails']}"
+            
+        info_label = QLabel(info_text)
+        info_label.setFont(QFont("Arial", 14))
+        info_label.setWordWrap(True)
+        info_layout.addWidget(info_label)
+        
+        self.control_layout.addWidget(info_frame)
+        
+        # Create column headers
+        header_frame = QFrame()
+        header_frame.setFrameShape(QFrame.StyledPanel)
+        header_layout = QHBoxLayout(header_frame)
+        
+        headers = ["Control", "Default Action", "Current Mapping"]
+        header_weights = [2, 2, 3]
+        
+        for header, weight in zip(headers, header_weights):
+            header_label = QLabel(header)
+            header_label.setFont(QFont("Arial", 14, QFont.Bold))
+            header_layout.addWidget(header_label, weight)
+            
+        self.control_layout.addWidget(header_frame)
+        
+        # Create controls list frame
+        controls_frame = QFrame()
+        controls_frame.setFrameShape(QFrame.StyledPanel)
+        controls_layout = QGridLayout(controls_frame)
+        
+        # Display control comparisons
+        comparisons = self.compare_controls(game_data, cfg_controls)
+        for row, (control_name, default_label, current_mapping, is_different) in enumerate(comparisons):
+            # Control name
+            display_control = self.format_control_name(control_name)
+            name_label = QLabel(display_control)
+            name_label.setFont(QFont("Arial", 12))
+            controls_layout.addWidget(name_label, row, 0)
+            
+            # Default action
+            default_action_label = QLabel(default_label)
+            default_action_label.setFont(QFont("Arial", 12))
+            controls_layout.addWidget(default_action_label, row, 1)
+            
+            # Current mapping
+            display_mapping = self.format_mapping_display(current_mapping)
+            mapping_label = QLabel(display_mapping)
+            mapping_label.setFont(QFont("Arial", 12))
+            if is_different:
+                from PyQt5.QtGui import QColor
+                mapping_label.setStyleSheet("color: yellow;")
+            controls_layout.addWidget(mapping_label, row, 2)
+        
+        self.control_layout.addWidget(controls_frame)
+        
+        # Display raw custom config if it exists
+        romname = game_data['romname']
+        if romname in self.custom_configs:
+            custom_header = QLabel("RAW CONFIGURATION FILE")
+            custom_header.setFont(QFont("Arial", 16, QFont.Bold))
+            self.control_layout.addWidget(custom_header)
+            
+            custom_text = QTextEdit()
+            custom_text.setReadOnly(True)
+            custom_text.setFont(QFont("Courier New", 10))
+            custom_text.setMinimumHeight(200)
+            custom_text.setText(self.custom_configs[romname])
+            self.control_layout.addWidget(custom_text)
+        
+        # Add a spacer at the bottom to push content up
+        spacer = QSpacerItem(20, 40, QSizePolicy.Minimum, QSizePolicy.Expanding)
+        self.control_layout.addSpacerItem(spacer)
 
     def create_layout(self):
         """Create the main application layout"""
@@ -2612,83 +2821,52 @@ class MAMEControlConfig(QMainWindow):
         self.update_game_list()
     
     def load_all_data(self):
-        """Load all necessary data sources with database optimization"""
-        print("Loading all data...")
+        """Load all necessary data with streamlined logic"""
         start_time = time.time()
         
         try:
             # Initialize ROM data cache
             self.rom_data_cache = {}
             
-            # Load settings from file
-            print("Loading settings...")
-            settings_time = time.time()
+            # 1. Load settings
             self.load_settings()
-            print(f"Settings loaded in {time.time() - settings_time:.3f} seconds")
             
-            # Scan ROMs directory
-            print("Scanning ROMs directory...")
-            roms_time = time.time()
+            # 2. Scan ROMs directory
             self.scan_roms_directory()
-            print(f"ROM scan complete in {time.time() - roms_time:.3f} seconds. Found {len(self.available_roms)} ROMs")
             
-            # Load default controls
-            print("Loading default controls...")
-            controls_time = time.time()
+            # 3. Load default controls
             self.load_default_config()
-            print(f"Default controls loaded in {time.time() - controls_time:.3f} seconds")
             
-            # Check if we need to update the database
-            print("Checking database status...")
-            db_check_time = time.time()
+            # 4. Check if database needs update
             db_needs_update = self.check_db_update_needed()
-            print(f"Database check completed in {time.time() - db_check_time:.3f} seconds")
             
             if db_needs_update:
-                # If database update is needed, first load gamedata.json
-                print("Database needs update, loading gamedata.json...")
-                json_time = time.time()
+                # If database update is needed, load gamedata.json and build db
                 self.load_gamedata_json()
-                print(f"gamedata.json loaded in {time.time() - json_time:.3f} seconds")
-                
-                # Build the database
-                print("Building SQLite database...")
-                db_build_time = time.time()
                 self.build_gamedata_db()
-                print(f"Database built in {time.time() - db_build_time:.3f} seconds")
             else:
-                print("Using existing SQLite database")
-                # Initialize empty gamedata_json for compatibility with original code
-                self.gamedata_json = {}
-                self.parent_lookup = {}
+                # Using existing SQLite database - no need to load full gamedata.json
+                self.gamedata_json = {}  # Empty placeholder
+                self.parent_lookup = {}  # Empty placeholder
             
-            # Always load custom configs
-            print("Loading custom configs...")
-            config_time = time.time()
+            # 5. Load custom configs
             self.load_custom_configs()
-            print(f"Custom configs loaded in {time.time() - config_time:.3f} seconds")
             
-            # Update UI
-            print("Updating UI elements...")
-            ui_time = time.time()
+            # 6. Update UI
             self.update_stats_label()
             self.update_game_list()
-            print(f"UI updated in {time.time() - ui_time:.3f} seconds")
             
-            # Auto-select first ROM
-            print("Auto-selecting first ROM...")
-            select_time = time.time()
+            # 7. Auto-select first ROM
             self.select_first_rom()
-            print(f"First ROM selected in {time.time() - select_time:.3f} seconds")
             
             total_time = time.time() - start_time
-            print(f"All data loading complete in {total_time:.3f} seconds")
+            print(f"Data loading complete in {total_time:.2f}s")
             
         except Exception as e:
-            print(f"ERROR loading data: {e}")
+            print(f"Error loading data: {e}")
             import traceback
             traceback.print_exc()
-            QMessageBox.critical(self, "Data Loading Error", f"Failed to load application data: {e}")
+            #messagebox.showerror("Data Loading Error", f"Failed to load application data: {e}")
     
     def scan_roms_directory(self):
         """Scan the roms directory for available games with corrected path"""
@@ -2737,175 +2915,73 @@ class MAMEControlConfig(QMainWindow):
             QMessageBox.error(self, "Error", f"Failed to scan ROMs directory: {e}")
     
     def load_gamedata_json(self):
-        """Load and parse the gamedata.json file with enhanced path handling"""
+        """Load gamedata.json from the canonical settings location"""
         if hasattr(self, 'gamedata_json') and self.gamedata_json:
-            # Already loaded
-            return self.gamedata_json
+            return self.gamedata_json  # Already loaded
                 
-        self.gamedata_json = {}
-        self.parent_lookup = {}  # Add a dedicated parent lookup table
+        # Make sure it's been migrated
+        #self.migrate_gamedata_if_needed()
         
-        # Check all possible locations in priority order
-        json_paths = [
-            os.path.join(self.settings_dir, "gamedata.json"),              # New primary location
-            os.path.join(self.preview_dir, "gamedata.json"),               # Legacy preview location
-            os.path.join(self.mame_dir, "gamedata.json"),                  # Root location
-            os.path.join(self.mame_dir, "metadata", "gamedata.json"),      # Metadata location
-            os.path.join(self.mame_dir, "data", "gamedata.json")           # Data location
-        ]
-        
-        print(f"Searching for gamedata.json in {len(json_paths)} possible locations")
-        
-        json_path = None
-        for i, path in enumerate(json_paths):
-            print(f"Checking path {i+1}: {path}")
-            if os.path.exists(path):
-                json_path = path
-                print(f"Found gamedata.json at: {path}")
-                break
-            
-        if not json_path:
-            print("ERROR: gamedata.json not found in any known location")
-            QMessageBox.critical(self, "Missing File", "gamedata.json not found in any known location")
+        # Ensure the file exists
+        if not os.path.exists(self.gamedata_path):
+            print(f"ERROR: gamedata.json not found at {self.gamedata_path}")
+            self.gamedata_json = {}
+            self.parent_lookup = {}
             return {}
                 
         try:
-            print(f"Loading gamedata.json from: {json_path}")
-            with open(json_path, 'r', encoding='utf-8') as f:
+            with open(self.gamedata_path, 'r', encoding='utf-8') as f:
                 data = json.load(f)
             
-            print(f"Successfully loaded gamedata.json with {len(data)} entries")
-                    
-            # Process the data to find both main games and clones
+            # Process the data for main games and clones
+            self.gamedata_json = {}
+            self.parent_lookup = {}
+            
             for rom_name, game_data in data.items():
                 self.gamedata_json[rom_name] = game_data
                     
-                # Index clones with more explicit parent relationship
+                # Build parent-child relationship
                 if 'clones' in game_data:
                     for clone_name, clone_data in game_data['clones'].items():
-                        # Store explicit parent reference
+                        # Store parent reference
                         clone_data['parent'] = rom_name
-                        # Also store in the parent lookup table
                         self.parent_lookup[clone_name] = rom_name
                         self.gamedata_json[clone_name] = clone_data
                 
-            print(f"Processed gamedata.json: {len(self.gamedata_json)} total games, {len(self.parent_lookup)} parent-clone relationships")
             return self.gamedata_json
                 
         except Exception as e:
             print(f"ERROR loading gamedata.json: {str(e)}")
-            import traceback
-            traceback.print_exc()
-            QMessageBox.critical(self, "Error", f"Failed to load gamedata.json: {str(e)}")
+            self.gamedata_json = {}
+            self.parent_lookup = {}
             return {}
     
-    # Modify the load_text_positions method to use caching
-    def load_text_positions(self, game_name):
-        """Load text positions from file with caching"""
-        # Check cache first
-        cache_key = f"positions_{game_name}"
-        if hasattr(self, 'text_positions_cache') and cache_key in self.text_positions_cache:
-            print(f"Using cached positions for {game_name}")
-            return self.text_positions_cache[cache_key]
-        
+    def load_text_positions(self, rom_name):
+        """Load text positions with simplified path handling"""
         positions = {}
         
-        # First try ROM-specific positions in settings dir
-        rom_positions_file = os.path.join(self.settings_dir, f"{game_name}_positions.json")
+        # Try ROM-specific positions first
+        rom_positions_file = os.path.join(self.settings_dir, f"{rom_name}_positions.json")
         if os.path.exists(rom_positions_file):
             try:
                 with open(rom_positions_file, 'r') as f:
-                    positions = json.load(f)
-                print(f"Loaded {len(positions)} ROM-specific positions from: {rom_positions_file}")
-                
-                # Cache the result
-                if hasattr(self, 'text_positions_cache'):
-                    self.text_positions_cache[cache_key] = positions
-                    
-                return positions
-            except Exception as e:
-                print(f"Error loading ROM-specific positions: {e}")
+                    return json.load(f)
+            except Exception:
+                pass
         
-        # Try legacy path in preview dir
-        legacy_rom_file = os.path.join(self.preview_dir, f"{game_name}_positions.json")
-        if os.path.exists(legacy_rom_file):
-            try:
-                with open(legacy_rom_file, 'r') as f:
-                    positions = json.load(f)
-                    
-                # Also save to new location for future use
-                try:
-                    with open(rom_positions_file, 'w') as f:
-                        json.dump(positions, f)
-                    print(f"Migrated positions to new location: {rom_positions_file}")
-                except:
-                    pass
-                    
-                print(f"Loaded {len(positions)} ROM-specific positions from legacy path: {legacy_rom_file}")
-                
-                # Cache the result
-                if hasattr(self, 'text_positions_cache'):
-                    self.text_positions_cache[cache_key] = positions
-                    
-                return positions
-            except Exception as e:
-                print(f"Error loading ROM-specific positions from legacy path: {e}")
-        
-        # Fall back to global positions in settings dir
+        # Fall back to global positions
         global_positions_file = os.path.join(self.settings_dir, "global_positions.json")
         if os.path.exists(global_positions_file):
             try:
                 with open(global_positions_file, 'r') as f:
-                    positions = json.load(f)
-                print(f"Loaded {len(positions)} positions from global file: {global_positions_file}")
-                
-                # Cache the result
-                if hasattr(self, 'text_positions_cache'):
-                    self.text_positions_cache[cache_key] = positions
-                    
-                return positions
-            except Exception as e:
-                print(f"Error loading global positions: {e}")
+                    return json.load(f)
+            except Exception:
+                pass
         
-        # Try legacy global positions in preview dir
-        legacy_global_file = os.path.join(self.preview_dir, "global_positions.json")
-        if os.path.exists(legacy_global_file):
-            try:
-                with open(legacy_global_file, 'r') as f:
-                    positions = json.load(f)
-                    
-                # Also save to new location for future use
-                try:
-                    with open(global_positions_file, 'w') as f:
-                        json.dump(positions, f)
-                    print(f"Migrated global positions to new location: {global_positions_file}")
-                except:
-                    pass
-                    
-                print(f"Loaded {len(positions)} positions from legacy global file: {legacy_global_file}")
-                
-                # Cache the result
-                if hasattr(self, 'text_positions_cache'):
-                    self.text_positions_cache[cache_key] = positions
-                    
-                return positions
-            except Exception as e:
-                print(f"Error loading global positions from legacy path: {e}")
-        
-        # Return empty positions and cache the empty result
-        if hasattr(self, 'text_positions_cache'):
-            self.text_positions_cache[cache_key] = positions
-            
-        return positions
+        return positions  # Return empty dict if nothing found
     
-    # Modify load_text_appearance_settings to use caching
     def load_text_appearance_settings(self):
-        """Load text appearance settings from file with caching"""
-        # Check cache first
-        if hasattr(self, 'appearance_settings_cache') and self.appearance_settings_cache:
-            print("Using cached text appearance settings")
-            return self.appearance_settings_cache
-        
+        """Load text appearance settings with simplified path handling"""
         settings = {
             "font_family": "Arial",
             "font_size": 28,
@@ -2914,42 +2990,15 @@ class MAMEControlConfig(QMainWindow):
             "y_offset": -40
         }
         
-        try:
-            # Check settings directory first
-            settings_file = os.path.join(self.settings_dir, "text_appearance_settings.json")
-            
-            # If not in settings dir, check legacy location
-            if not os.path.exists(settings_file):
-                legacy_file = os.path.join(self.mame_dir, "text_appearance_settings.json")
-                if os.path.exists(legacy_file):
-                    # Migrate from legacy location
-                    with open(legacy_file, 'r') as f:
-                        loaded_settings = json.load(f)
-                        
-                    # Save to new location
-                    with open(settings_file, 'w') as f:
-                        json.dump(loaded_settings, f)
-                        
-                    print(f"Migrated text appearance settings from {legacy_file} to {settings_file}")
-                    settings.update(loaded_settings)
-                    
-                    # Cache the result
-                    if hasattr(self, 'appearance_settings_cache'):
-                        self.appearance_settings_cache = settings
-                        
-                    return settings
-            
-            # Normal loading from settings dir
-            if os.path.exists(settings_file):
+        # Check settings directory
+        settings_file = os.path.join(self.settings_dir, "text_appearance_settings.json")
+        if os.path.exists(settings_file):
+            try:
                 with open(settings_file, 'r') as f:
                     loaded_settings = json.load(f)
                     settings.update(loaded_settings)
-                    
-                # Cache the result
-                if hasattr(self, 'appearance_settings_cache'):
-                    self.appearance_settings_cache = settings
-        except Exception as e:
-            print(f"Error loading text appearance settings: {e}")
+            except Exception as e:
+                print(f"Error loading text appearance settings: {e}")
         
         return settings
     
@@ -3050,152 +3099,81 @@ class MAMEControlConfig(QMainWindow):
         
         return controls
     
-    # Modify the load_settings method to use caching
     def load_settings(self):
-        """Load settings from JSON file with caching"""
-        if hasattr(self, 'settings_cache') and self.settings_cache:
-            print("Using cached settings")
-            return self.settings_cache
-            
-        settings_path = os.path.join(self.settings_dir, "control_config_settings.json")
+        """Load settings from JSON file in settings directory"""
+        # Set sensible defaults
+        self.preferred_preview_screen = 1
+        self.visible_control_types = ["BUTTON"]
+        self.hide_preview_buttons = False
+        self.show_button_names = True
         
-        # Check legacy path if not found in settings dir
-        if not os.path.exists(settings_path):
-            legacy_path = os.path.join(self.preview_dir, "control_config_settings.json")
-            if os.path.exists(legacy_path):
-                # Migrate from legacy location
-                try:
-                    with open(legacy_path, 'r') as f:
-                        settings = json.load(f)
-                    
-                    # Save to new location
-                    with open(settings_path, 'w') as f:
-                        json.dump(settings, f)
-                        
-                    print(f"Migrated control settings from {legacy_path} to {settings_path}")
-                except Exception as e:
-                    print(f"Error migrating settings: {e}")
-        
-        if os.path.exists(settings_path):
+        # Load custom settings if available
+        if os.path.exists(self.settings_path):
             try:
-                with open(settings_path, 'r') as f:
+                with open(self.settings_path, 'r') as f:
                     settings = json.load(f)
                     
                 # Load screen preference
                 if 'preferred_preview_screen' in settings:
                     self.preferred_preview_screen = settings['preferred_preview_screen']
-                    print(f"Loaded preferred screen from settings: {self.preferred_preview_screen}")
-                
+                    
                 # Load visibility settings
                 if 'visible_control_types' in settings:
-                    # Important: Properly handle empty or invalid lists
                     if isinstance(settings['visible_control_types'], list):
                         self.visible_control_types = settings['visible_control_types']
-                        print(f"Loaded visible control types: {self.visible_control_types}")
-                    else:
-                        print(f"Warning: Invalid visible_control_types format in settings: {settings['visible_control_types']}")
                     
-                    # Make sure BUTTON is always included for proper display
+                    # Make sure BUTTON is always included
                     if "BUTTON" not in self.visible_control_types:
                         self.visible_control_types.append("BUTTON")
-                        print("Added BUTTON to visible control types for complete display")
-                        # Update the saved settings
-                        settings['visible_control_types'] = self.visible_control_types
-                        with open(settings_path, 'w') as f:
-                            json.dump(settings, f)
-                else:
-                    # Default to showing just buttons
-                    self.visible_control_types = ["BUTTON"]
-                    settings['visible_control_types'] = self.visible_control_types
-                    with open(settings_path, 'w') as f:
-                        json.dump(settings, f)
 
                 # Load hide preview buttons setting
                 if 'hide_preview_buttons' in settings:
-                    # Handle both boolean and integer (0/1) formats
                     if isinstance(settings['hide_preview_buttons'], bool):
                         self.hide_preview_buttons = settings['hide_preview_buttons']
                     elif isinstance(settings['hide_preview_buttons'], int):
                         self.hide_preview_buttons = bool(settings['hide_preview_buttons'])
-                    print(f"Loaded hide_preview_buttons: {self.hide_preview_buttons}")
                     
                     # Update toggle if it exists
                     if hasattr(self, 'hide_buttons_toggle'):
                         if self.hide_preview_buttons:
-                            self.hide_buttons_toggle.setChecked(True)
+                            self.hide_buttons_toggle.select()
                         else:
-                            self.hide_buttons_toggle.setChecked(False)
-                else:
-                    self.hide_preview_buttons = False
-                    
+                            self.hide_buttons_toggle.deselect()
+                            
                 # Load show button names setting
                 if 'show_button_names' in settings:
-                    # Handle both boolean and integer (0/1) formats
                     if isinstance(settings['show_button_names'], bool):
                         self.show_button_names = settings['show_button_names']
                     elif isinstance(settings['show_button_names'], int):
                         self.show_button_names = bool(settings['show_button_names'])
-                    print(f"Loaded show_button_names: {self.show_button_names}")
-                else:
-                    # Default to showing button names for backward compatibility
-                    self.show_button_names = True
-                    settings['show_button_names'] = True
-                    with open(settings_path, 'w') as f:
-                        json.dump(settings, f)
                         
-                # Cache the settings
-                if hasattr(self, 'settings_cache'):
-                    self.settings_cache = settings
-                    
-                return settings
-                    
             except Exception as e:
                 print(f"Error loading settings: {e}")
-                import traceback
-                traceback.print_exc()
-                self.hide_preview_buttons = False
-                self.visible_control_types = ["BUTTON"]  # Default to just buttons
-                self.show_button_names = True  # Default to showing button names
         else:
-            # Default settings
-            self.hide_preview_buttons = False
-            self.visible_control_types = ["BUTTON"]  # Default to just buttons
-            self.show_button_names = True  # Default to showing button names
-            
             # Create settings file with defaults
-            settings = {
-                'preferred_preview_screen': self.preferred_preview_screen,
-                'visible_control_types': self.visible_control_types,
-                'hide_preview_buttons': self.hide_preview_buttons,
-                'show_button_names': self.show_button_names
-            }
-            try:
-                with open(settings_path, 'w') as f:
-                    json.dump(settings, f)
-                print("Created default settings file")
+            self.save_settings()
                 
-                # Cache the settings
-                if hasattr(self, 'settings_cache'):
-                    self.settings_cache = settings
-                    
-                return settings
-            except Exception as e:
-                print(f"Error creating settings file: {e}")
-        
-        # Debug output of final settings
-        print(f"\nFinal settings:")
-        print(f"  - visible_control_types: {self.visible_control_types}")
-        print(f"  - hide_preview_buttons: {self.hide_preview_buttons}")
-        print(f"  - show_button_names: {self.show_button_names}")
-        print(f"  - preferred_preview_screen: {self.preferred_preview_screen}\n")
-        
-        # Return default settings if nothing else worked
         return {
             'preferred_preview_screen': self.preferred_preview_screen,
             'visible_control_types': self.visible_control_types,
             'hide_preview_buttons': self.hide_preview_buttons,
             'show_button_names': self.show_button_names
         }
+    
+    def save_settings(self):
+        """Save current settings to the standard settings file"""
+        settings = {
+            "preferred_preview_screen": getattr(self, 'preferred_preview_screen', 1),
+            "visible_control_types": self.visible_control_types,
+            "hide_preview_buttons": getattr(self, 'hide_preview_buttons', False),
+            "show_button_names": getattr(self, 'show_button_names', True)
+        }
+        
+        try:
+            with open(self.settings_path, 'w') as f:
+                json.dump(settings, f)
+        except Exception as e:
+            print(f"Error saving settings: {e}")
     
     def update_stats_label(self):
         """Update the statistics label"""
@@ -3223,55 +3201,61 @@ class MAMEControlConfig(QMainWindow):
         return self.available_roms - matched_roms
     
     def update_game_list(self):
-        """Update the game list to show all available ROMs with visual enhancements and improved performance"""
+        """Update the game list to show all available ROMs with improved performance"""
         # Clear existing content
         self.game_list.clear()
         
-        # Sort available ROMs once
+        # Sort available ROMs
         available_roms = sorted(self.available_roms)
         
-        # Get all game data in a single pass to avoid repeated lookups
-        game_data_map = {}
-        print("Preloading game data for UI update...")
+        # Pre-fetch custom config status for all ROMs (faster than checking one by one)
+        has_config = {rom: rom in self.custom_configs for rom in available_roms}
+        
+        # Batch process with fewer database hits
         for romname in available_roms:
-            game_data = self.get_game_data(romname)
-            if game_data:
-                game_data_map[romname] = game_data
-        
-        # Get custom configs once
-        has_config_map = {romname: romname in self.custom_configs for romname in available_roms}
-        
-        print(f"Adding {len(available_roms)} ROMs to the list...")
-        start_time = time.time()
-        
-        # Batch process all the list items
-        for i, romname in enumerate(available_roms):
-            # Get game data from our preloaded map
-            game_data = game_data_map.get(romname)
-            has_config = has_config_map.get(romname, False)
+            # Check first if ROM data is in cache to avoid database lookups
+            if hasattr(self, 'rom_data_cache') and romname in self.rom_data_cache:
+                game_data = self.rom_data_cache[romname]
+                has_data = True
+            else:
+                # Minimal check for existence - don't load full data yet
+                has_data = self.rom_exists_in_db(romname) if hasattr(self, 'db_path') else False
+                game_data = None
             
             # Build the prefix
-            prefix = "* " if has_config else "  "
-            if game_data:
+            prefix = "* " if has_config.get(romname, False) else "  "
+            
+            if has_data:
                 prefix += "+ "
-                display_name = f"{romname} - {game_data['gamename']}"
+                # Only fetch the full data if not in cache and needed for display
+                if not game_data:
+                    game_data = self.get_game_data(romname)
+                
+                if game_data:
+                    display_name = f"{romname} - {game_data['gamename']}"
+                else:
+                    display_name = romname
             else:
                 prefix += "- "
                 display_name = romname
             
-            # Add to list
+            # Insert the line - PyQt specific version
             self.game_list.append(f"{prefix}{display_name}")
+    
+    def rom_exists_in_db(self, romname):
+        """Quick check if ROM exists in database without loading full data"""
+        if not os.path.exists(self.db_path):
+            return False
             
-            # Print progress for very large lists
-            if len(available_roms) > 1000 and i % 500 == 0 and i > 0:
-                elapsed = time.time() - start_time
-                print(f"  Added {i} ROMs in {elapsed:.2f} seconds")
-        
-        total_time = time.time() - start_time
-        print(f"Game list update completed in {total_time:.2f} seconds")
-        print(f"Total ROMs: {len(available_roms)}")
-        print(f"ROMs with control data: {len(game_data_map)}")
-        print(f"ROMs with configs: {sum(has_config_map.values())}")
+        try:
+            conn = sqlite3.connect(self.db_path)
+            cursor = conn.cursor()
+            cursor.execute("SELECT 1 FROM games WHERE rom_name = ? LIMIT 1", (romname,))
+            result = cursor.fetchone() is not None
+            conn.close()
+            return result
+        except:
+            return False
     
     def filter_games(self, search_text):
         """Filter the game list based on search text with improved performance"""
@@ -3285,10 +3269,6 @@ class MAMEControlConfig(QMainWindow):
         
         # Reset selection
         self.game_list.selected_line = None
-        
-        # Use cached game data where possible for faster filtering
-        filtered_count = 0
-        start_time = time.time()
         
         # Track which ROMs match the filter for batch addition
         matching_roms = []
@@ -3307,8 +3287,8 @@ class MAMEControlConfig(QMainWindow):
                     matching_roms.append(romname)
                     continue
             
-            # If not in cache, do a full lookup only if needed
-            if search_text:  # Only do expensive lookup if we're actually searching
+            # If not in cache, only do a full lookup if searching
+            if search_text:  # Only do expensive lookup if we're searching
                 game_data = self.get_game_data(romname)
                 if game_data and 'gamename' in game_data and search_text in game_data['gamename'].lower():
                     matching_roms.append(romname)
@@ -3330,12 +3310,6 @@ class MAMEControlConfig(QMainWindow):
             
             # Add to the list
             self.game_list.append(f"{prefix}{display_name}")
-            filtered_count += 1
-        
-        # Report performance
-        total_time = time.time() - start_time
-        if filtered_count > 500:  # Only log for large lists
-            print(f"Filtered {filtered_count} ROMs in {total_time:.2f} seconds")
     
     def get_game_data(self, romname):
         """Get control data for a ROM with database prioritization"""
