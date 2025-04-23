@@ -210,6 +210,8 @@ class MAMEControlConfig(ctk.CTk):
             # NEW CODE: Replace individual directory setup with the centralized method
             self.initialize_directory_structure()
             
+            self.clean_cache_directory(max_age_days=None, max_files=None)
+
             # Migrate gamedata.json if needed
             #self.migrate_gamedata_if_needed()
             
@@ -268,6 +270,310 @@ class MAMEControlConfig(ctk.CTk):
             debug_print(f"CRITICAL ERROR in initialization: {e}")
             traceback.print_exc()
             messagebox.showerror("Initialization Error", f"Failed to initialize: {e}")
+    
+    def load_cache_settings(self):
+        """Load cache management settings from JSON file"""
+        default_settings = {
+            "max_age_days": 7,
+            "max_files": 100,
+            "auto_cleanup_enabled": True
+        }
+        
+        settings_file = os.path.join(self.settings_dir, "cache_settings.json")
+        
+        try:
+            if os.path.exists(settings_file):
+                with open(settings_file, 'r') as f:
+                    settings = json.load(f)
+                    
+                # Validate and use settings, falling back to defaults if needed
+                self.cache_max_age = int(settings.get("max_age_days", default_settings["max_age_days"]))
+                self.cache_max_files = int(settings.get("max_files", default_settings["max_files"]))
+                self.cache_auto_cleanup = bool(settings.get("auto_cleanup_enabled", default_settings["auto_cleanup_enabled"]))
+            else:
+                # Use defaults
+                self.cache_max_age = default_settings["max_age_days"]
+                self.cache_max_files = default_settings["max_files"]
+                self.cache_auto_cleanup = default_settings["auto_cleanup_enabled"]
+                
+                # Create default settings file
+                self.save_cache_settings()
+        except Exception as e:
+            print(f"Error loading cache settings: {e}")
+            # Use defaults on error
+            self.cache_max_age = default_settings["max_age_days"]
+            self.cache_max_files = default_settings["max_files"]
+            self.cache_auto_cleanup = default_settings["auto_cleanup_enabled"]
+
+    def save_cache_settings(self):
+        """Save cache management settings to JSON file"""
+        settings = {
+            "max_age_days": self.cache_max_age,
+            "max_files": self.cache_max_files,
+            "auto_cleanup_enabled": self.cache_auto_cleanup
+        }
+        
+        settings_file = os.path.join(self.settings_dir, "cache_settings.json")
+        
+        try:
+            with open(settings_file, 'w') as f:
+                json.dump(settings, f, indent=4)
+            print(f"Cache settings saved to: {settings_file}")
+        except Exception as e:
+            print(f"Error saving cache settings: {e}")
+    
+    # Update the clean_cache_directory method to use the saved settings
+    def clean_cache_directory(self, max_age_days=None, max_files=None):
+        """Clean old cache files to prevent unlimited growth"""
+        # Load settings if not provided
+        if max_age_days is None:
+            if not hasattr(self, 'cache_max_age'):
+                self.load_cache_settings()
+            max_age_days = self.cache_max_age
+            
+        if max_files is None:
+            if not hasattr(self, 'cache_max_files'):
+                self.load_cache_settings()
+            max_files = self.cache_max_files
+            
+        # Skip cleanup if auto-cleanup is disabled
+        if hasattr(self, 'cache_auto_cleanup') and not self.cache_auto_cleanup:
+            print("Automatic cache cleanup is disabled")
+            return
+            
+        try:
+            cache_dir = os.path.join(self.preview_dir, "cache")
+            
+            # Skip if directory doesn't exist
+            if not os.path.exists(cache_dir):
+                print("No cache directory found. Skipping cleanup.")
+                return
+                
+            # Get all cache files with their modification times
+            cache_files = []
+            for filename in os.listdir(cache_dir):
+                if filename.endswith('_cache.json'):
+                    filepath = os.path.join(cache_dir, filename)
+                    mtime = os.path.getmtime(filepath)
+                    cache_files.append((filepath, mtime))
+            
+            if not cache_files:
+                print("No cache files found. Skipping cleanup.")
+                return
+            
+            # If we have more than max_files, remove oldest files
+            if len(cache_files) > max_files:
+                # Sort by modification time (oldest first)
+                cache_files.sort(key=lambda x: x[1])
+                # Delete oldest files beyond our limit
+                files_to_remove = cache_files[:(len(cache_files) - max_files)]
+                for filepath, _ in files_to_remove:
+                    try:
+                        os.remove(filepath)
+                        print(f"Removed old cache file: {os.path.basename(filepath)}")
+                    except Exception as e:
+                        print(f"Error removing {os.path.basename(filepath)}: {e}")
+                        
+            # Remove any files older than max_age_days
+            cutoff_time = time.time() - (max_age_days * 86400)  # 86400 seconds in a day
+            for filepath, mtime in cache_files:
+                if mtime < cutoff_time:
+                    try:
+                        os.remove(filepath)
+                        print(f"Removed expired cache file: {os.path.basename(filepath)}")
+                    except Exception as e:
+                        print(f"Error removing {os.path.basename(filepath)}: {e}")
+                        
+            print(f"Cache cleanup complete. Directory: {cache_dir}")
+        except Exception as e:
+            print(f"Error cleaning cache: {e}")
+    
+    # Replace your clear_cache function with this enhanced version
+    def clear_cache(self):
+        """Show cache management dialog with options to clear cache and configure settings"""
+        try:
+            # Ensure settings are loaded
+            if not hasattr(self, 'cache_max_age'):
+                self.load_cache_settings()
+                
+            # Create the dialog window
+            dialog = tk.Toplevel(self)
+            dialog.title("Cache Management")
+            dialog.geometry("400x350")
+            dialog.resizable(False, False)
+            dialog.transient(self)  # Make dialog modal
+            dialog.grab_set()
+            
+            # Count existing cache files
+            cache_dir = os.path.join(self.preview_dir, "cache")
+            if not os.path.exists(cache_dir):
+                os.makedirs(cache_dir, exist_ok=True)
+                cache_files = []
+            else:
+                cache_files = [f for f in os.listdir(cache_dir) if f.endswith('_cache.json')]
+            
+            # Calculate cache size
+            total_size = 0
+            for filename in cache_files:
+                filepath = os.path.join(cache_dir, filename)
+                total_size += os.path.getsize(filepath)
+            
+            # Convert size to readable format
+            if total_size < 1024:
+                size_str = f"{total_size} bytes"
+            elif total_size < 1024 * 1024:
+                size_str = f"{total_size / 1024:.1f} KB"
+            else:
+                size_str = f"{total_size / (1024 * 1024):.1f} MB"
+            
+            # Dialog layout
+            frame = ttk.Frame(dialog, padding=20)
+            frame.pack(fill=tk.BOTH, expand=True)
+            
+            # Cache info section
+            ttk.Label(frame, text="Cache Information", font=("Arial", 12, "bold")).grid(row=0, column=0, columnspan=2, sticky="w", pady=(0, 10))
+            ttk.Label(frame, text=f"Total cache files: {len(cache_files)}").grid(row=1, column=0, columnspan=2, sticky="w")
+            ttk.Label(frame, text=f"Total cache size: {size_str}").grid(row=2, column=0, columnspan=2, sticky="w", pady=(0, 20))
+            
+            # Settings section
+            ttk.Label(frame, text="Cache Settings", font=("Arial", 12, "bold")).grid(row=3, column=0, columnspan=2, sticky="w", pady=(0, 10))
+            
+            # Auto cleanup enabled
+            self.auto_cleanup_var = tk.BooleanVar(value=self.cache_auto_cleanup)
+            ttk.Checkbutton(frame, text="Enable automatic cache cleanup", variable=self.auto_cleanup_var).grid(row=4, column=0, columnspan=2, sticky="w", pady=(0, 10))
+            
+            # Max age setting
+            ttk.Label(frame, text="Maximum age of cache files (days):").grid(row=5, column=0, sticky="w")
+            self.max_age_var = tk.StringVar(value=str(self.cache_max_age))
+            max_age_entry = ttk.Spinbox(frame, from_=1, to=365, textvariable=self.max_age_var, width=5)
+            max_age_entry.grid(row=5, column=1, sticky="e", pady=5)
+            
+            # Max files setting
+            ttk.Label(frame, text="Maximum number of cache files:").grid(row=6, column=0, sticky="w")
+            self.max_files_var = tk.StringVar(value=str(self.cache_max_files))
+            max_files_entry = ttk.Spinbox(frame, from_=10, to=1000, textvariable=self.max_files_var, width=5)
+            max_files_entry.grid(row=6, column=1, sticky="e", pady=5)
+            
+            # Buttons section
+            buttons_frame = ttk.Frame(frame)
+            buttons_frame.grid(row=7, column=0, columnspan=2, pady=20)
+            
+            # Clear all button
+            ttk.Button(
+                buttons_frame, 
+                text="Clear All Cache", 
+                command=lambda: self.perform_cache_clear(dialog, all_files=True)
+            ).pack(side=tk.LEFT, padx=10)
+            
+            # Save settings button
+            ttk.Button(
+                buttons_frame, 
+                text="Save Settings", 
+                command=lambda: self.save_cache_dialog_settings(dialog)
+            ).pack(side=tk.LEFT, padx=10)
+            
+            # Close button
+            ttk.Button(
+                buttons_frame, 
+                text="Close", 
+                command=dialog.destroy
+            ).pack(side=tk.LEFT, padx=10)
+            
+            # Center the dialog on the screen
+            dialog.update_idletasks()
+            width = dialog.winfo_width()
+            height = dialog.winfo_height()
+            x = (dialog.winfo_screenwidth() // 2) - (width // 2)
+            y = (dialog.winfo_screenheight() // 2) - (height // 2)
+            dialog.geometry(f'{width}x{height}+{x}+{y}')
+            
+        except Exception as e:
+            messagebox.showerror("Error", f"Failed to create cache dialog: {str(e)}")
+            print(f"Cache dialog error: {e}")
+
+    def perform_cache_clear(self, dialog=None, all_files=True, rom_name=None):
+        """Perform the actual cache clearing operation"""
+        try:
+            cache_dir = os.path.join(self.preview_dir, "cache")
+            if not os.path.exists(cache_dir):
+                if dialog:
+                    messagebox.showinfo("Info", "No cache directory found.", parent=dialog)
+                return False
+            
+            if all_files:
+                # Clear all cache files
+                deleted_count = 0
+                for filename in os.listdir(cache_dir):
+                    if filename.endswith('_cache.json'):
+                        try:
+                            os.remove(os.path.join(cache_dir, filename))
+                            deleted_count += 1
+                        except Exception as e:
+                            print(f"Error deleting {filename}: {e}")
+                
+                # Also clear memory cache
+                if hasattr(self, 'rom_data_cache'):
+                    self.rom_data_cache = {}
+                    
+                if dialog:
+                    messagebox.showinfo("Cache Cleared", 
+                                    f"Successfully deleted {deleted_count} cache files.", parent=dialog)
+                print(f"Cleared all cache files: {deleted_count} files deleted")
+                return deleted_count > 0
+            elif rom_name:
+                # Clear cache for specific ROM
+                cache_file = os.path.join(cache_dir, f"{rom_name}_cache.json")
+                if os.path.exists(cache_file):
+                    os.remove(cache_file)
+                    print(f"Cleared cache for ROM: {rom_name}")
+                    
+                    # Also clear from memory cache if it exists
+                    if hasattr(self, 'rom_data_cache') and rom_name in self.rom_data_cache:
+                        del self.rom_data_cache[rom_name]
+                        print(f"Cleared memory cache for ROM: {rom_name}")
+                    return True
+                else:
+                    print(f"No cache file found for ROM: {rom_name}")
+                    return False
+            
+            return False
+        except Exception as e:
+            print(f"Error clearing cache: {e}")
+            if dialog:
+                messagebox.showerror("Error", f"Failed to clear cache: {str(e)}", parent=dialog)
+            return False
+    
+    def save_cache_dialog_settings(self, dialog):
+        """Save settings from the cache dialog"""
+        try:
+            # Update instance variables with dialog values
+            self.cache_auto_cleanup = self.auto_cleanup_var.get()
+            
+            try:
+                self.cache_max_age = int(self.max_age_var.get())
+                if self.cache_max_age < 1:
+                    self.cache_max_age = 1
+            except ValueError:
+                self.cache_max_age = 7  # Default if invalid value
+                
+            try:
+                self.cache_max_files = int(self.max_files_var.get())
+                #if self.cache_max_files < 10:
+                    #self.cache_max_files = 10
+            except ValueError:
+                self.cache_max_files = 100  # Default if invalid value
+            
+            # Save to file
+            self.save_cache_settings()
+            
+            # Run cleanup with new settings if enabled
+            if self.cache_auto_cleanup:
+                self.clean_cache_directory(max_age_days=self.cache_max_age, max_files=self.cache_max_files)
+            
+            messagebox.showinfo("Settings Saved", "Cache settings have been saved.", parent=dialog)
+        except Exception as e:
+            print(f"Error saving cache settings: {e}")
+            messagebox.showerror("Error", f"Failed to save settings: {str(e)}", parent=dialog)
     
     def initialize_directory_structure(self):
         """Initialize the standardized directory structure"""
@@ -990,6 +1296,15 @@ class MAMEControlConfig(ctk.CTk):
             )
             self.analyze_button.grid(row=0, column=4, padx=5, pady=5, sticky="e")
             debug_print("Buttons created")
+
+            # Clear cache button
+            self.clear_cache_button = ctk.CTkButton(
+                self.stats_frame,
+                text="Clear Cache",
+                command=self.clear_cache,
+                width=150
+            )
+            self.clear_cache_button.grid(row=0, column=3, padx=5, pady=5, sticky="e")
 
             # Search box
             debug_print("Creating search box...")
@@ -1845,6 +2160,9 @@ class MAMEControlConfig(ctk.CTk):
                             self.y = 10
                     self.on_game_select(MockEvent())
                 
+                # Call cache clear, to remove the games cache if found
+                self.perform_cache_clear(rom_name=rom_name, all_files=False)
+                
                 # Close the editor
                 editor.destroy()
                 
@@ -2331,7 +2649,6 @@ class MAMEControlConfig(ctk.CTk):
         os.makedirs(os.path.dirname(settings_path), exist_ok=True)
         
         return settings_path
-
     
     def create_game_list_with_edit(self, parent_frame, game_list, title_text):
         """Helper function to create a consistent list with edit button for games"""

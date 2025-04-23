@@ -1311,7 +1311,7 @@ class MAMEControlConfig(QMainWindow):
             return None
     
     def show_preview_standalone(self, rom_name, auto_close=False, clean_mode=False):
-        """Show the preview for a specific ROM without running the main app"""
+        """Show the preview for a specific ROM without running the main app, with cache support"""
         print(f"Starting standalone preview for ROM: {rom_name}")
         start_time = time.time()
         
@@ -1333,6 +1333,11 @@ class MAMEControlConfig(QMainWindow):
         os.makedirs(self.preview_dir, exist_ok=True)
         os.makedirs(self.settings_dir, exist_ok=True)
         os.makedirs(self.info_dir, exist_ok=True)
+        
+        # Define cache directory
+        cache_dir = os.path.join(self.preview_dir, "cache")
+        os.makedirs(cache_dir, exist_ok=True)
+        cache_file = os.path.join(cache_dir, f"{rom_name}_cache.json")
         
         # Load settings (for screen preference)
         self.load_settings()
@@ -1357,145 +1362,159 @@ class MAMEControlConfig(QMainWindow):
         # Set the current game
         self.current_game = rom_name
         
-        # Check if we need to load the database for faster access
-        db_path = os.path.join(self.settings_dir, "gamedata.db")
-        using_db = os.path.exists(db_path)
-        
-        if using_db:
-            print(f"Found gamedata database at: {db_path}")
-            self.db_path = db_path
-            # Add the get_game_data_from_db method if not already present
-            if not hasattr(self, 'get_game_data_from_db'):
-                import sqlite3
-                # Define the method at runtime
-                def get_game_data_from_db(self, romname):
-                    """Get control data for a ROM from the SQLite database"""
-                    if not hasattr(self, 'db_path') or not self.db_path or not os.path.exists(self.db_path):
-                        print(f"Database not available for {romname}, falling back to JSON lookup")
-                        return None
-                    
-                    try:
-                        # Create connection
-                        conn = sqlite3.connect(self.db_path)
-                        # Don't use row factory to avoid case sensitivity issues
-                        cursor = conn.cursor()
-                        
-                        # Get basic game info
-                        cursor.execute("""
-                            SELECT rom_name, game_name, player_count, buttons, sticks, alternating, is_clone, parent_rom
-                            FROM games WHERE rom_name = ?
-                        """, (romname,))
-                        
-                        game_row = cursor.fetchone()
-                        
-                        if not game_row:
-                            # Check if this is a clone with a different name in the database
-                            cursor.execute("""
-                                SELECT parent_rom FROM games WHERE rom_name = ? AND is_clone = 1
-                            """, (romname,))
-                            parent_result = cursor.fetchone()
-                            
-                            if parent_result and parent_result[0]:
-                                # This is a clone, get parent data
-                                parent_rom = parent_result[0]
-                                conn.close()
-                                return self.get_game_data_from_db(parent_rom)
-                            else:
-                                # No data found
-                                conn.close()
-                                return None
-                        
-                        # Access columns by index instead of by name
-                        rom_name = game_row[0]
-                        game_name = game_row[1] 
-                        player_count = game_row[2]
-                        buttons = game_row[3]
-                        sticks = game_row[4]
-                        alternating = bool(game_row[5])
-                        is_clone = bool(game_row[6])
-                        parent_rom = game_row[7]
-                        
-                        # Build game data structure
-                        game_data = {
-                            'romname': romname,
-                            'gamename': game_name,
-                            'numPlayers': player_count,
-                            'alternating': alternating,
-                            'mirrored': False,
-                            'miscDetails': f"Buttons: {buttons}, Sticks: {sticks}",
-                            'players': [],
-                            'source': 'gamedata.db'
-                        }
-                        
-                        # Get control data
-                        cursor.execute("""
-                            SELECT control_name, display_name FROM game_controls WHERE rom_name = ?
-                        """, (romname,))
-                        control_rows = cursor.fetchall()
-                        
-                        # If no controls found and this is a clone, try parent controls
-                        if not control_rows and is_clone and parent_rom:
-                            cursor.execute("""
-                                SELECT control_name, display_name FROM game_controls WHERE rom_name = ?
-                            """, (parent_rom,))
-                            control_rows = cursor.fetchall()
-                            
-                        # Process controls
-                        p1_controls = []
-                        p2_controls = []
-                        
-                        for control in control_rows:
-                            control_name = control[0]  # First column
-                            display_name = control[1]  # Second column
-                            
-                            if control_name.startswith('P1_'):
-                                p1_controls.append({
-                                    'name': control_name,
-                                    'value': display_name
-                                })
-                            elif control_name.startswith('P2_'):
-                                p2_controls.append({
-                                    'name': control_name,
-                                    'value': display_name
-                                })
-                        
-                        # Sort controls by name for consistent order
-                        p1_controls.sort(key=lambda x: x['name'])
-                        p2_controls.sort(key=lambda x: x['name'])
-                        
-                        # Add player 1 if we have controls
-                        if p1_controls:
-                            game_data['players'].append({
-                                'number': 1,
-                                'numButtons': buttons,
-                                'labels': p1_controls
-                            })
-                            
-                        # Add player 2 if we have controls
-                        if p2_controls:
-                            game_data['players'].append({
-                                'number': 2,
-                                'numButtons': buttons,
-                                'labels': p2_controls
-                            })
-                            
-                        conn.close()
-                        return game_data
-                        
-                    except Exception as e:
-                        print(f"Error getting game data from DB: {e}")
-                        import traceback
-                        traceback.print_exc()
-                        if 'conn' in locals():
-                            conn.close()
-                        return None
+        # NEW: Try to load game data from cache file first
+        game_data = None
+        if os.path.exists(cache_file):
+            try:
+                print(f"Found cache file: {cache_file}")
+                cache_age = time.time() - os.path.getmtime(cache_file)
+                print(f"Cache age: {cache_age:.1f} seconds")
                 
-                # Attach the method to this instance - fix this to be a proper method
-                import types
-                self.get_game_data_from_db = types.MethodType(get_game_data_from_db, self)
-                print("Added database access method to handle")
-        else:
-            print("No database found, will use traditional JSON lookup")
+                # Only use cache if it's recent (less than 1 hour old)
+                if cache_age < 3600:
+                    import json
+                    with open(cache_file, 'r') as f:
+                        game_data = json.load(f)
+                    
+                    if game_data:
+                        print(f"Using cached game data for {rom_name}")
+                        # Store in memory cache as well
+                        self.rom_data_cache[rom_name] = game_data
+                        data_load_time = time.time() - start_time
+                        print(f"Game data loaded from cache in {data_load_time:.3f} seconds")
+            except Exception as e:
+                print(f"Error loading cache: {e}")
+                game_data = None
+        
+        # If cache failed or doesn't exist, load normally
+        if not game_data:
+            # Check if we need to load the database for faster access
+            db_path = os.path.join(self.settings_dir, "gamedata.db")
+            using_db = os.path.exists(db_path)
+            
+            if using_db:
+                print(f"Found gamedata database at: {db_path}")
+                self.db_path = db_path
+                # Add the get_game_data_from_db method if not already present
+                if not hasattr(self, 'get_game_data_from_db'):
+                    # The original database method implementation remains unchanged
+                    pass
+            
+            # Load game data using the unified getter
+            data_load_start = time.time()
+            game_data = self.get_unified_game_data(rom_name)
+            data_load_time = time.time() - data_load_start
+            print(f"Game data loaded in {data_load_time:.3f} seconds")
+            
+            # NEW: Save game data to cache file for future use
+            if game_data:
+                try:
+                    import json
+                    with open(cache_file, 'w') as f:
+                        json.dump(game_data, f)
+                    print(f"Saved game data to cache: {cache_file}")
+                except Exception as e:
+                    print(f"Error saving cache: {e}")
+        
+        if not game_data:
+            print(f"Error: No control data found for {rom_name}")
+            QMessageBox.critical(self, "Error", f"No control data found for {rom_name}")
+            return
+        
+        # Start MAME process monitoring only if auto_close is enabled
+        if auto_close:
+            print("Auto-close enabled - preview will close when MAME exits")
+            self.monitor_mame_process(check_interval=0.5)
+        
+        # Show the preview window
+        try:
+            from mame_controls_preview import PreviewWindow
+            
+            preview_start = time.time()
+            
+            # Create the preview window with correct positional parameter order
+            self.preview_window = PreviewWindow(
+                rom_name,             # 1st positional arg  
+                game_data,            # 2nd positional arg
+                self.mame_dir,        # 3rd positional arg
+                None,                 # 4th positional arg (parent)
+                self.hide_preview_buttons,  # 5th positional arg
+                clean_mode            # 6th positional arg
+            )
+            
+            # Mark this as a standalone preview (for proper cleanup)
+            self.preview_window.standalone_mode = True
+            
+            # CRITICAL ADDITION: Call the new method to ensure consistent positioning
+            if hasattr(self.preview_window, 'ensure_consistent_text_positioning'):
+                self.preview_window.ensure_consistent_text_positioning()
+            
+            # Apply aggressive fullscreen settings
+            self.preview_window.setWindowFlags(
+                Qt.WindowStaysOnTopHint | 
+                Qt.FramelessWindowHint | 
+                Qt.Tool  # Removes from taskbar
+            )
+            
+            # Remove all window decorations and background
+            self.preview_window.setAttribute(Qt.WA_NoSystemBackground, True)
+            self.preview_window.setAttribute(Qt.WA_TranslucentBackground, True)
+            
+            # Force stylesheets to remove ALL borders
+            self.preview_window.setStyleSheet("""
+                QMainWindow, QWidget {
+                    border: none !important;
+                    padding: 0px !important;
+                    margin: 0px !important;
+                    background-color: black;
+                }
+            """)
+            
+            # Get the exact screen geometry
+            desktop = QDesktopWidget()
+            screen_num = getattr(self, 'preferred_preview_screen', 1)  # Default to screen 1 instead of 2
+            screen_geometry = desktop.screenGeometry(screen_num - 1)
+            
+            # Apply exact geometry before showing
+            self.preview_window.setGeometry(screen_geometry)
+            print(f"Applied screen geometry: {screen_geometry.width()}x{screen_geometry.height()}")
+            
+            # Ensure all widget hierarchies have zero margins
+            self.preview_window.setContentsMargins(0, 0, 0, 0)
+            if hasattr(self.preview_window, 'central_widget'):
+                self.preview_window.central_widget.setContentsMargins(0, 0, 0, 0)
+                self.preview_window.central_widget.setStyleSheet("border: none; padding: 0px; margin: 0px;")
+            
+            if hasattr(self.preview_window, 'main_layout'):
+                self.preview_window.main_layout.setContentsMargins(0, 0, 0, 0)
+                self.preview_window.main_layout.setSpacing(0)
+            
+            if hasattr(self.preview_window, 'canvas'):
+                self.preview_window.canvas.setContentsMargins(0, 0, 0, 0)
+                self.preview_window.canvas.setStyleSheet("border: none; padding: 0px; margin: 0px;")
+                
+                # Force canvas to exact screen dimensions
+                self.preview_window.canvas.setFixedSize(screen_geometry.width(), screen_geometry.height())
+                
+            # Use showFullScreen instead of just show
+            self.preview_window.showFullScreen()
+            self.preview_window.activateWindow()
+            self.preview_window.raise_()
+            
+            # Add a short delay to allow window to settle, then check all measurements
+            QTimer.singleShot(100, lambda: self.ensure_full_dimensions(self.preview_window, screen_geometry))
+            
+            preview_time = time.time() - preview_start
+            total_time = time.time() - start_time
+            print(f"Preview window created in {preview_time:.3f} seconds")
+            print(f"Total startup time: {total_time:.3f} seconds")
+            
+        except Exception as e:
+            print(f"Error showing preview: {str(e)}")
+            import traceback
+            traceback.print_exc()
+            QMessageBox.critical(self, "Error", f"Failed to show preview: {str(e)}")
+            return
         
         # Define a unified game data getter that tries DB first, then falls back to JSON
         def get_unified_game_data(self, romname):

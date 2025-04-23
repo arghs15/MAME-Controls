@@ -1,6 +1,6 @@
 """
-Updates to mame_controls_main.py to support the new directory structure
-where the main app runs from the preview folder, with Tkinter as default UI
+Updates to mame_controls_main.py to support pre-caching game data
+which speeds up preview rendering when the user presses pause
 """
 
 import atexit
@@ -10,6 +10,7 @@ import signal
 import sys
 import argparse
 import traceback  # Add this import
+
 # Add this function somewhere in your mame_controls_main.py file
 def cleanup_on_exit():
     """Clean up resources when the application exits"""
@@ -73,7 +74,6 @@ def get_mame_parent_dir(app_path=None):
         return app_path
 
 
-# Modify the main function to add signal handling for proper shutdown
 def main():
     """Main entry point for the application with improved path handling"""
     print("Starting MAME Controls application...")
@@ -108,6 +108,8 @@ def main():
         parser.add_argument('--no-buttons', action='store_true', help='Hide buttons in preview mode (overrides settings)')
         parser.add_argument('--pyqt', action='store_true', help='Use the PyQt version of the main GUI (default: Tkinter)')
         parser.add_argument('--use-db', action='store_true', help='Force using SQLite database if available')
+        # Add new precache argument
+        parser.add_argument('--precache', action='store_true', help='Precache game data without showing the preview')
         args = parser.parse_args()
         print("Arguments parsed.")
         
@@ -142,9 +144,9 @@ def main():
             print("No database found, will use traditional JSON lookup")
             use_database = False
 
-        # Check for preview-only mode - always use PyQt
-        if args.preview_only and args.game:
-            print(f"Preview-only mode for ROM: {args.game}")
+        # Check for preview-only mode or precache mode - always use PyQt for both
+        if args.game and (args.preview_only or args.precache):
+            print(f"Mode: {'Preview-only' if args.preview_only else 'Precache'} for ROM: {args.game}")
             try:
                 # Initialize PyQt preview
                 from PyQt5.QtWidgets import QApplication
@@ -305,68 +307,110 @@ def main():
                                 if 'conn' in locals():
                                     conn.close()
                                 return None
-                        
-                        # Define unified game data getter
-                        def get_unified_game_data(self, romname):
-                            """Get game data from database if available, falling back to JSON lookup"""
-                            # First check cache
-                            if hasattr(self, 'rom_data_cache') and romname in self.rom_data_cache:
-                                print(f"Using cached data for {romname}")
-                                return self.rom_data_cache[romname]
-                            
-                            # Try database if available
-                            if hasattr(self, 'get_game_data_from_db') and hasattr(self, 'use_database') and self.use_database:
-                                import time
-                                start_time = time.time()
-                                db_data = self.get_game_data_from_db(romname)
-                                load_time = time.time() - start_time
                                 
-                                if db_data:
-                                    print(f"Retrieved {romname} from database in {load_time:.3f} seconds")
-                                    # Cache the result
-                                    if not hasattr(self, 'rom_data_cache'):
-                                        self.rom_data_cache = {}
-                                    self.rom_data_cache[romname] = db_data
-                                    return db_data
-                            
-                            # Fall back to original method
-                            print(f"Falling back to JSON lookup for {romname}")
-                            import time
-                            start_time = time.time()
-                            json_data = self.get_game_data(romname)
-                            load_time = time.time() - start_time
-                            print(f"JSON lookup completed in {load_time:.3f} seconds")
-                            
-                            # Cache the result
-                            if json_data:
-                                if not hasattr(self, 'rom_data_cache'):
-                                    self.rom_data_cache = {}
-                                self.rom_data_cache[romname] = json_data
-                            return json_data
-                        
-                        # After adding methods to the config instance
+                        # Add method to config instance
                         config.get_game_data_from_db = types.MethodType(get_game_data_from_db, config)
-                        config.get_unified_game_data = types.MethodType(get_unified_game_data, config)
-                        config.rom_data_cache = {}
-
-                        # Patch the config's get_game_data to use unified getter
-                        original_get_game_data = config.get_game_data
-
-                        def patched_get_game_data(self, romname):
-                            print(f"Patched get_game_data called for: {romname}")
-                            return self.get_unified_game_data(romname)
-
-                        config.get_game_data = types.MethodType(patched_get_game_data, config)
-                        print("Added database support to preview")
-                        print(f"Methods added: {hasattr(config, 'get_unified_game_data')}")
-                        print(f"Original get_game_data patched: {config.get_game_data != original_get_game_data}")
                 
-                # Show preview for specified game with clean mode if requested
-                config.show_preview_standalone(args.game, args.auto_close, clean_mode=args.clean_preview)
+                # Always define and attach the unified game data getter
+                import types
                 
-                # Run app
-                app.exec_()
-                return 0
+                def get_unified_game_data(self, romname):
+                    """Get game data from database if available, falling back to JSON lookup"""
+                    # First check cache
+                    if hasattr(self, 'rom_data_cache') and romname in self.rom_data_cache:
+                        print(f"Using cached data for {romname}")
+                        return self.rom_data_cache[romname]
+                    
+                    # Try database if available
+                    if hasattr(self, 'get_game_data_from_db') and hasattr(self, 'use_database') and self.use_database:
+                        import time
+                        start_time = time.time()
+                        db_data = self.get_game_data_from_db(romname)
+                        load_time = time.time() - start_time
+                        
+                        if db_data:
+                            print(f"Retrieved {romname} from database in {load_time:.3f} seconds")
+                            # Cache the result
+                            if not hasattr(self, 'rom_data_cache'):
+                                self.rom_data_cache = {}
+                            self.rom_data_cache[romname] = db_data
+                            return db_data
+                    
+                    # Fall back to original method
+                    print(f"Falling back to JSON lookup for {romname}")
+                    import time
+                    start_time = time.time()
+                    json_data = self.get_game_data(romname)
+                    load_time = time.time() - start_time
+                    print(f"JSON lookup completed in {load_time:.3f} seconds")
+                    
+                    # Cache the result
+                    if json_data:
+                        if not hasattr(self, 'rom_data_cache'):
+                            self.rom_data_cache = {}
+                        self.rom_data_cache[romname] = json_data
+                    return json_data
+                
+                # Make sure the method is attached
+                config.get_unified_game_data = types.MethodType(get_unified_game_data, config)
+                
+                # Initialize the ROM data cache if not already done
+                if not hasattr(config, 'rom_data_cache'):
+                    config.rom_data_cache = {}
+                
+                # Patch the config's get_game_data to use unified getter
+                original_get_game_data = config.get_game_data
+                
+                def patched_get_game_data(self, romname):
+                    print(f"Patched get_game_data called for: {romname}")
+                    return self.get_unified_game_data(romname)
+                
+                # Only replace if it's not already patched
+                if not hasattr(config, '_patched_get_game_data'):
+                    config.get_game_data = types.MethodType(patched_get_game_data, config)
+                    config._patched_get_game_data = True
+                    print("Added unified game data support")
+                
+                # Handle the two modes differently
+                if args.precache:
+                    # Just precache the game data without showing preview
+                    print(f"Precaching game data for: {args.game}")
+                    import time
+                    start_time = time.time()
+                    
+                    # Make sure we have a cache directory
+                    cache_dir = os.path.join(app_dir, "cache")
+                    os.makedirs(cache_dir, exist_ok=True)
+                    cache_file = os.path.join(cache_dir, f"{args.game}_cache.json")
+                    
+                    # Load the game data
+                    try:
+                        game_data = config.get_unified_game_data(args.game)
+                        
+                        if game_data:
+                            # Save to cache file
+                            import json
+                            with open(cache_file, 'w') as f:
+                                json.dump(game_data, f)
+                            
+                            load_time = time.time() - start_time
+                            print(f"Precached {args.game} in {load_time:.3f} seconds, saved to {cache_file}")
+                        else:
+                            print(f"Error: Failed to get game data for {args.game}")
+                    except Exception as e:
+                        print(f"Error precaching data: {e}")
+                        import traceback
+                        traceback.print_exc()
+                    
+                    # Exit without showing UI
+                    return 0
+                else:
+                    # Show preview for specified game with clean mode if requested
+                    config.show_preview_standalone(args.game, args.auto_close, clean_mode=args.clean_preview)
+                    
+                    # Run app
+                    app.exec_()
+                    return 0
             except ImportError:
                 print("PyQt5 or necessary modules not found for preview mode.")
                 return 1
