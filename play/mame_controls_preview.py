@@ -3548,12 +3548,12 @@ class PreviewWindow(QMainWindow):
     def save_image(self):
         """Enhanced save_image method with proper text centering and vertical gradients"""
         try:
-            # Create preview directory if it doesn't exist
-            preview_dir = os.path.join(self.mame_dir, "preview")
-            os.makedirs(preview_dir, exist_ok=True)
+            # Create the images directory if it doesn't exist
+            images_dir = os.path.join(self.preview_dir, "images")
+            os.makedirs(images_dir, exist_ok=True)
             
             # Define the output path
-            output_path = os.path.join(preview_dir, f"{self.rom_name}.png")
+            output_path = os.path.join(images_dir, f"{self.rom_name}.png")
             
             # Check if file already exists
             if os.path.exists(output_path):
@@ -3642,9 +3642,9 @@ class PreviewWindow(QMainWindow):
                         if prefix and ": " in label.text():
                             prefix_text = f"{prefix}: "
                             
-                            # Calculate widths for centering
-                            prefix_width = metrics.horizontalAdvance(prefix_text)
-                            action_width = metrics.horizontalAdvance(action)
+                            # Calculate widths for centering - Using width() for Qt compatibility
+                            prefix_width = metrics.width(prefix_text)
+                            action_width = metrics.width(action)
                             total_width = prefix_width + action_width
                             
                             # Center the text within the label
@@ -3658,7 +3658,7 @@ class PreviewWindow(QMainWindow):
                             )
                         else:
                             # Center the single text
-                            text_width = metrics.horizontalAdvance(label.text())
+                            text_width = metrics.width(label.text())
                             x = int(pos.x() + (label_width - text_width) / 2)
                             
                             # Draw shadow
@@ -3672,9 +3672,9 @@ class PreviewWindow(QMainWindow):
                     if prefix and ": " in label.text():
                         prefix_text = f"{prefix}: "
                         
-                        # Calculate widths for centering
-                        prefix_width = metrics.horizontalAdvance(prefix_text)
-                        action_width = metrics.horizontalAdvance(action)
+                        # Calculate widths for centering - Using width() for Qt compatibility
+                        prefix_width = metrics.width(prefix_text)
+                        action_width = metrics.width(action)
                         total_width = prefix_width + action_width
                         
                         # Center the text within the label
@@ -3745,7 +3745,7 @@ class PreviewWindow(QMainWindow):
                         painter.drawText(int(x + prefix_width), int(y), action)
                     else:
                         # Single text - center it
-                        text_width = metrics.horizontalAdvance(label.text())
+                        text_width = metrics.width(label.text())
                         x = int(pos.x() + (label_width - text_width) / 2)
                         
                         # Use action color/gradient for the whole text
@@ -3811,7 +3811,7 @@ class PreviewWindow(QMainWindow):
                 f"Failed to save image: {str(e)}"
             )
             return False
-        
+
     def handle_key_press(self, event):
         """Handle key press events"""
         if event.key() == Qt.Key_Escape:
@@ -5672,112 +5672,7 @@ class PreviewWindow(QMainWindow):
             print("----------------------------------")
         except Exception as e:
             print(f"Error in verify_font_application: {e}")
-    
-    def save_image(self):
-        """Save current preview as an image with consistent text positioning to preview/images folder"""
-        try:
-            # Create the images directory if it doesn't exist
-            images_dir = os.path.join(self.preview_dir, "images")
-            os.makedirs(images_dir, exist_ok=True)
-            
-            # Define the output path
-            output_path = os.path.join(images_dir, f"{self.rom_name}.png")
-            
-            # Check if file already exists
-            if os.path.exists(output_path):
-                # Ask for confirmation
-                if QMessageBox.question(
-                    self, 
-                    "Confirm Overwrite", 
-                    f"Image already exists for {self.rom_name}. Overwrite?",
-                    QMessageBox.Yes | QMessageBox.No
-                ) != QMessageBox.Yes:
-                    return False
-            
-            # Create a new image with the same size as the canvas
-            image = QImage(
-                self.canvas.width(),
-                self.canvas.height(),
-                QImage.Format_ARGB32
-            )
-            # Fill with black background
-            image.fill(Qt.black)
-            
-            # Create painter for the image
-            painter = QPainter(image)
-            painter.setRenderHint(QPainter.Antialiasing)
-            painter.setRenderHint(QPainter.TextAntialiasing)
-            painter.setRenderHint(QPainter.SmoothPixmapTransform)
-            
-            # Draw the background image
-            if hasattr(self, 'background_pixmap') and self.background_pixmap and not self.background_pixmap.isNull():
-                bg_pixmap = self.background_pixmap
-                
-                # Calculate position to center the pixmap
-                x = (self.canvas.width() - bg_pixmap.width()) // 2
-                y = (self.canvas.height() - bg_pixmap.height()) // 2
-                
-                # Draw the pixmap
-                painter.drawPixmap(x, y, bg_pixmap)
-            
-            # Draw the bezel if it's visible
-            if hasattr(self, 'bezel_visible') and self.bezel_visible and hasattr(self, 'bezel_pixmap') and not self.bezel_pixmap.isNull():
-                bezel_pixmap = self.bezel_pixmap
-                # Position bezel in center
-                x = (self.canvas.width() - bezel_pixmap.width()) // 2
-                y = (self.canvas.height() - bezel_pixmap.height()) // 2
-                painter.drawPixmap(x, y, bezel_pixmap)
-            
-            # Draw the logo if visible
-            if hasattr(self, 'logo_label') and self.logo_label and self.logo_label.isVisible():
-                logo_pixmap = self.logo_label.pixmap()
-                if logo_pixmap and not logo_pixmap.isNull():
-                    painter.drawPixmap(self.logo_label.pos(), logo_pixmap)
-            
-            # Draw control labels with color preservation
-            if hasattr(self, 'control_labels'):
-                for control_name, control_data in self.control_labels.items():
-                    label = control_data['label']
-                    
-                    # Skip if not visible
-                    if not label.isVisible():
-                        continue
-                    
-                    # Rest of drawing code unchanged...
-                    # [Keep existing drawing code for controls]
-            
-            # End painting
-            painter.end()
-            
-            # Save the image
-            if image.save(output_path, "PNG"):
-                print(f"Image saved successfully to {output_path}")
-                QMessageBox.information(
-                    self,
-                    "Success",
-                    f"Image saved to:\n{output_path}"
-                )
-                return True
-            else:
-                print(f"Failed to save image to {output_path}")
-                QMessageBox.warning(
-                    self,
-                    "Error",
-                    f"Failed to save image. Could not write to file."
-                )
-                return False
-                
-        except Exception as e:
-            print(f"Error saving image: {e}")
-            import traceback
-            traceback.print_exc()
-            QMessageBox.critical(
-                self,
-                "Error",
-                f"Failed to save image: {str(e)}"
-            )
-            return False
-    
+ 
     # Add these methods to the PreviewWindow class in mame_controls_preview.py
     def closeEvent(self, event):
         """Override close event to ensure proper cleanup"""
