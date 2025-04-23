@@ -1,14 +1,26 @@
+Cache
+-improve how cache is removed. currently only abides by number of next time it opens, and deletes anything over the number
+
 Remove redundant code
-Remove multi checks for game data
+
+####################################
+mame_controls_pyqt
+####################################
 
 mame_controls_pyqt
 -for analyze controls button, on the edit game screen, edit the white background for the buttons and joystick numbers dropdown items. Initial number might be there, but same colour - white
+
 -Also analyse button has a tkinter type theme. Might be easier going forward to edit the whole gui, and I may delete tkinter and only use this. Simplifies things. 
+
+-Add generate images from previous exe
+
+####################################
+Show Preview (mame_controls_preview)
+####################################
 
 Text Settings
 -show all xinput and then normal controls sets a default font. exit, and re-enter shows correct font
+
 -Gradient no longer dynamically updates and have to also exit and re-enter. Sometime it works after you've done it..
 
-Add generate images from previous exe
-
-Remove redundant logo code - there's a lot. also, compare old center-left etc logo functions. They may work better.
+-Remove redundant logo code - there's a lot. also, compare old center-left etc logo functions. They may work better.

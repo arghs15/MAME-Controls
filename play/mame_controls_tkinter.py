@@ -211,9 +211,6 @@ class MAMEControlConfig(ctk.CTk):
             self.initialize_directory_structure()
             
             self.clean_cache_directory(max_age_days=None, max_files=None)
-
-            # Migrate gamedata.json if needed
-            #self.migrate_gamedata_if_needed()
             
             # The rest of your initialization code...
             debug_print(f"App directory: {self.app_dir}")
@@ -395,11 +392,11 @@ class MAMEControlConfig(ctk.CTk):
             # Ensure settings are loaded
             if not hasattr(self, 'cache_max_age'):
                 self.load_cache_settings()
-                
-            # Create the dialog window
-            dialog = tk.Toplevel(self)
+                    
+            # Create the dialog window using CTkToplevel instead of tk.Toplevel
+            dialog = ctk.CTkToplevel(self)
             dialog.title("Cache Management")
-            dialog.geometry("400x350")
+            dialog.geometry("450x400")
             dialog.resizable(False, False)
             dialog.transient(self)  # Make dialog modal
             dialog.grab_set()
@@ -426,58 +423,98 @@ class MAMEControlConfig(ctk.CTk):
             else:
                 size_str = f"{total_size / (1024 * 1024):.1f} MB"
             
-            # Dialog layout
-            frame = ttk.Frame(dialog, padding=20)
-            frame.pack(fill=tk.BOTH, expand=True)
+            # Dialog layout - use CTkFrame instead of ttk.Frame
+            frame = ctk.CTkFrame(dialog, corner_radius=0)
+            frame.pack(fill="both", expand=True)
             
-            # Cache info section
-            ttk.Label(frame, text="Cache Information", font=("Arial", 12, "bold")).grid(row=0, column=0, columnspan=2, sticky="w", pady=(0, 10))
-            ttk.Label(frame, text=f"Total cache files: {len(cache_files)}").grid(row=1, column=0, columnspan=2, sticky="w")
-            ttk.Label(frame, text=f"Total cache size: {size_str}").grid(row=2, column=0, columnspan=2, sticky="w", pady=(0, 20))
+            # Cache info section - use CTkLabel instead of ttk.Label
+            ctk.CTkLabel(
+                frame, 
+                text="Cache Information", 
+                font=("Arial", 14, "bold")
+            ).pack(anchor="w", padx=20, pady=(20, 10))
+            
+            ctk.CTkLabel(
+                frame, 
+                text=f"Total cache files: {len(cache_files)}"
+            ).pack(anchor="w", padx=20, pady=2)
+            
+            ctk.CTkLabel(
+                frame, 
+                text=f"Total cache size: {size_str}"
+            ).pack(anchor="w", padx=20, pady=(2, 20))
             
             # Settings section
-            ttk.Label(frame, text="Cache Settings", font=("Arial", 12, "bold")).grid(row=3, column=0, columnspan=2, sticky="w", pady=(0, 10))
+            ctk.CTkLabel(
+                frame, 
+                text="Cache Settings", 
+                font=("Arial", 14, "bold")
+            ).pack(anchor="w", padx=20, pady=(0, 10))
             
-            # Auto cleanup enabled
+            # Auto cleanup enabled - use CTkCheckBox instead of ttk.Checkbutton
             self.auto_cleanup_var = tk.BooleanVar(value=self.cache_auto_cleanup)
-            ttk.Checkbutton(frame, text="Enable automatic cache cleanup", variable=self.auto_cleanup_var).grid(row=4, column=0, columnspan=2, sticky="w", pady=(0, 10))
+            ctk.CTkCheckBox(
+                frame, 
+                text="Enable automatic cache cleanup", 
+                variable=self.auto_cleanup_var
+            ).pack(anchor="w", padx=20, pady=(0, 10))
+            
+            # Settings grid frame
+            settings_frame = ctk.CTkFrame(frame, fg_color="transparent")
+            settings_frame.pack(fill="x", padx=20, pady=5)
             
             # Max age setting
-            ttk.Label(frame, text="Maximum age of cache files (days):").grid(row=5, column=0, sticky="w")
+            ctk.CTkLabel(
+                settings_frame, 
+                text="Maximum age of cache files (days):"
+            ).grid(row=0, column=0, sticky="w", pady=5)
+            
             self.max_age_var = tk.StringVar(value=str(self.cache_max_age))
-            max_age_entry = ttk.Spinbox(frame, from_=1, to=365, textvariable=self.max_age_var, width=5)
-            max_age_entry.grid(row=5, column=1, sticky="e", pady=5)
+            max_age_entry = ctk.CTkEntry(
+                settings_frame, 
+                width=70, 
+                textvariable=self.max_age_var
+            )
+            max_age_entry.grid(row=0, column=1, padx=(10, 0), pady=5)
             
             # Max files setting
-            ttk.Label(frame, text="Maximum number of cache files:").grid(row=6, column=0, sticky="w")
+            ctk.CTkLabel(
+                settings_frame, 
+                text="Maximum number of cache files:"
+            ).grid(row=1, column=0, sticky="w", pady=5)
+            
             self.max_files_var = tk.StringVar(value=str(self.cache_max_files))
-            max_files_entry = ttk.Spinbox(frame, from_=10, to=1000, textvariable=self.max_files_var, width=5)
-            max_files_entry.grid(row=6, column=1, sticky="e", pady=5)
+            max_files_entry = ctk.CTkEntry(
+                settings_frame, 
+                width=70, 
+                textvariable=self.max_files_var
+            )
+            max_files_entry.grid(row=1, column=1, padx=(10, 0), pady=5)
             
             # Buttons section
-            buttons_frame = ttk.Frame(frame)
-            buttons_frame.grid(row=7, column=0, columnspan=2, pady=20)
+            buttons_frame = ctk.CTkFrame(frame, fg_color="transparent")
+            buttons_frame.pack(pady=20)
             
             # Clear all button
-            ttk.Button(
+            ctk.CTkButton(
                 buttons_frame, 
                 text="Clear All Cache", 
                 command=lambda: self.perform_cache_clear(dialog, all_files=True)
-            ).pack(side=tk.LEFT, padx=10)
+            ).pack(side="left", padx=10)
             
             # Save settings button
-            ttk.Button(
+            ctk.CTkButton(
                 buttons_frame, 
                 text="Save Settings", 
                 command=lambda: self.save_cache_dialog_settings(dialog)
-            ).pack(side=tk.LEFT, padx=10)
+            ).pack(side="left", padx=10)
             
             # Close button
-            ttk.Button(
+            ctk.CTkButton(
                 buttons_frame, 
                 text="Close", 
                 command=dialog.destroy
-            ).pack(side=tk.LEFT, padx=10)
+            ).pack(side="left", padx=10)
             
             # Center the dialog on the screen
             dialog.update_idletasks()
@@ -486,7 +523,7 @@ class MAMEControlConfig(ctk.CTk):
             x = (dialog.winfo_screenwidth() // 2) - (width // 2)
             y = (dialog.winfo_screenheight() // 2) - (height // 2)
             dialog.geometry(f'{width}x{height}+{x}+{y}')
-            
+                
         except Exception as e:
             messagebox.showerror("Error", f"Failed to create cache dialog: {str(e)}")
             print(f"Cache dialog error: {e}")
@@ -1144,93 +1181,6 @@ class MAMEControlConfig(ctk.CTk):
             
             # Restore scroll position
             self.control_frame._scrollbar.set(*scroll_pos)
-
-    def switch_to_ingame_mode(self):
-        """Switch to a simplified, large-format display for in-game reference"""
-        if not self.current_game:
-            return
-            
-        # Clear existing display
-        for widget in self.control_frame.winfo_children():
-            widget.destroy()
-            
-        # Get the current game's controls
-        game_data = self.get_game_data(self.current_game)
-        if not game_data:
-            return
-            
-        # Get custom controls
-        cfg_controls = {}
-        if self.current_game in self.custom_configs:
-            cfg_controls = self.parse_cfg_controls(self.custom_configs[self.current_game])
-            if self.use_xinput:
-                cfg_controls = {
-                    control: self.convert_mapping(mapping, True)
-                    for control, mapping in cfg_controls.items()
-                }
-
-        # Configure single column layout
-        self.control_frame.grid_columnconfigure(0, weight=1)
-
-        # Create controls display with large font
-        controls_frame = ctk.CTkFrame(self.control_frame)
-        controls_frame.grid(row=0, column=0, padx=10, pady=10, sticky="nsew")
-        
-        row = 0
-        for player in game_data.get('players', []):
-            # Player header
-            player_label = ctk.CTkLabel(
-                controls_frame,
-                text=f"Player {player['number']}",
-                font=("Arial", 24, "bold")
-            )
-            player_label.grid(row=row, column=0, padx=10, pady=(20,10), sticky="w")
-            row += 1
-            
-            # Player controls
-            for label in player.get('labels', []):
-                control_name = label['name']
-                default_action = label['value']
-                current_mapping = cfg_controls.get(control_name, "Default")
-                
-                display_control = self.format_control_name(control_name)
-                display_mapping = self.format_mapping_display(current_mapping)
-                
-                # Create a frame for each control to better organize the information
-                control_frame = ctk.CTkFrame(controls_frame)
-                control_frame.grid(row=row, column=0, padx=20, pady=5, sticky="ew")
-                control_frame.grid_columnconfigure(1, weight=1)  # Make action column expandable
-                
-                # Control name
-                ctk.CTkLabel(
-                    control_frame,
-                    text=display_control,
-                    font=("Arial", 20, "bold"),
-                    anchor="w"
-                ).grid(row=0, column=0, padx=5, pady=2, sticky="w")
-
-                # Default action
-                default_label = ctk.CTkLabel(
-                    control_frame,
-                    text=f"Action: {default_action}",
-                    font=("Arial", 18),
-                    text_color="gray75",
-                    anchor="w"
-                )
-                default_label.grid(row=1, column=0, columnspan=2, padx=20, pady=2, sticky="w")
-                
-                # Current mapping (if different from default)
-                if current_mapping != "Default":
-                    mapping_label = ctk.CTkLabel(
-                        control_frame,
-                        text=f"Mapped to: {display_mapping}",
-                        font=("Arial", 18),
-                        text_color="yellow",
-                        anchor="w"
-                    )
-                    mapping_label.grid(row=2, column=0, columnspan=2, padx=20, pady=2, sticky="w")
-                
-                row += 1
 
     # Update create_layout method with debugging
     def create_layout(self):
@@ -3690,9 +3640,6 @@ class MAMEControlConfig(ctk.CTk):
         """Load gamedata.json from the canonical settings location"""
         if hasattr(self, 'gamedata_json') and self.gamedata_json:
             return self.gamedata_json  # Already loaded
-                
-        # Make sure it's been migrated
-        #self.migrate_gamedata_if_needed()
         
         # Ensure the file exists
         if not os.path.exists(self.gamedata_path):
@@ -3749,55 +3696,6 @@ class MAMEControlConfig(ctk.CTk):
                             print(f"Copied: {item} to preview folder")
         return preview_dir
 
-    def create_default_image(self, output_dir=None):
-        """Create a default image if none exists"""
-        if output_dir is None:
-            output_dir = os.path.join(self.mame_dir, "preview")  # Default to preview directory
-        
-        # Check if default image already exists
-        default_png_path = os.path.join(output_dir, "default.png")
-        default_jpg_path = os.path.join(output_dir, "default.jpg")
-        
-        if os.path.exists(default_png_path):
-            print("Default PNG image already exists")
-            return default_png_path
-        elif os.path.exists(default_jpg_path):
-            print("Default JPG image already exists")
-            return default_jpg_path
-        
-        # No default image found, create one
-        try:
-            from PIL import Image, ImageDraw, ImageFont
-            
-            # Create a new black image
-            img = Image.new('RGB', (1280, 720), color='black')
-            
-            # Get a drawing context
-            draw = ImageDraw.Draw(img)
-            
-            # Draw some text
-            try:
-                font = ImageFont.truetype("arial.ttf", 32)
-            except:
-                font = ImageFont.load_default()
-            
-            draw.text((640, 300), "MAME Controls Preview", fill="white", anchor="mm", font=font)
-            draw.text((640, 360), "Place game screenshots in preview folder", fill="gray", anchor="mm", font=font)
-            draw.text((640, 420), "with rom name (e.g., pacman.png)", fill="gray", anchor="mm", font=font)
-            
-            # Save the image
-            created_path = os.path.join(output_dir, "default.png")
-            img.save(created_path)
-            print(f"Created default image at: {created_path}")
-            
-            return created_path
-        except ImportError:
-            print("PIL not installed, cannot create default image")
-            return None
-        except Exception as e:
-            print(f"Error creating default image: {e}")
-            return None
-
     def is_control_visible(self, control_name):
         """Check if a control type should be visible based on current settings"""
         if "JOYSTICK" in control_name:
@@ -3805,55 +3703,6 @@ class MAMEControlConfig(ctk.CTk):
         elif "BUTTON" in control_name:
             return "BUTTON" in self.visible_control_types
         return True
-
-    def create_text_with_shadow(self, canvas, x, y, text, font):
-        """Create text with shadow effect for better visibility"""
-        # Create shadow text
-        shadow = canvas.create_text(
-            x + 2, y + 2,
-            text=text,
-            font=font,
-            fill="black",
-            anchor="sw"
-        )
-        
-        # Create main text
-        text_item = canvas.create_text(
-            x, y,
-            text=text,
-            font=font,
-            fill="white",
-            anchor="sw"
-        )
-        
-        return text_item, shadow
-
-    def get_display_text(self, action, settings=None):
-        """Get the display text with proper case according to settings"""
-        if settings is None:
-            settings = self.load_text_appearance_settings()
-            
-        use_uppercase = settings.get("use_uppercase", False)
-        if use_uppercase:
-            return action.upper()
-        return action
-
-    def get_tkfont(self, settings=None):
-        """Create a TkFont object based on settings"""
-        import tkinter.font as tkfont
-        
-        if settings is None:
-            settings = self.load_text_appearance_settings()
-            
-        font_family = settings.get("font_family", "Arial")
-        font_size = settings.get("font_size", 28)
-        
-        # Apply scaling factor
-        adjusted_font_size = self.apply_font_scaling(font_family, font_size)
-        
-        # Create font object
-        font = tkfont.Font(family=font_family, size=adjusted_font_size, weight="bold")
-        return font
 
     def apply_font_scaling(self, font_family, font_size):
         """Apply scaling factor for certain fonts that appear small"""

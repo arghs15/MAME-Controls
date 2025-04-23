@@ -156,7 +156,6 @@ class MAMEControlConfig(QMainWindow):
         
         # NEW CODE: Use the centralized directory structure method
         self.initialize_directory_structure()
-        #self.migrate_gamedata_if_needed()
         
         # Check for critical directory
         if not self.mame_dir:
@@ -583,14 +582,6 @@ class MAMEControlConfig(QMainWindow):
                     
                 # Redisplay the game
                 self.on_game_selected(self.current_game, line_number)
-    
-    def toggle_ingame_mode(self):
-        """Toggle between normal and in-game display modes"""
-        # Simplified implementation for now
-        if self.ingame_toggle.isChecked():
-            QMessageBox.information(self, "In-Game Mode", "In-Game Mode is not yet implemented in the PyQt version.")
-            # Uncheck the toggle to avoid confusion
-            self.ingame_toggle.setChecked(False)
     
     def toggle_hide_preview_buttons(self):
         """Toggle whether preview buttons should be hidden"""
@@ -1311,7 +1302,7 @@ class MAMEControlConfig(QMainWindow):
             return None
     
     def show_preview_standalone(self, rom_name, auto_close=False, clean_mode=False):
-        """Show the preview for a specific ROM without running the main app, with cache support"""
+        """Show the preview for a specific ROM without running the main app, with optimized cache prioritization"""
         print(f"Starting standalone preview for ROM: {rom_name}")
         start_time = time.time()
         
@@ -1324,45 +1315,23 @@ class MAMEControlConfig(QMainWindow):
         
         print(f"Using MAME directory: {self.mame_dir}")
         
-        # Make sure settings directory exists
+        # Make sure preview and cache directories exist (minimal setup for cache check)
         self.preview_dir = os.path.join(self.mame_dir, "preview")
-        self.settings_dir = os.path.join(self.preview_dir, "settings")
-        self.info_dir = os.path.join(self.preview_dir, "info")
-        
-        # Create these directories if they don't exist
         os.makedirs(self.preview_dir, exist_ok=True)
-        os.makedirs(self.settings_dir, exist_ok=True)
-        os.makedirs(self.info_dir, exist_ok=True)
         
-        # Define cache directory
+        # Define and check cache first - before any other operations
         cache_dir = os.path.join(self.preview_dir, "cache")
         os.makedirs(cache_dir, exist_ok=True)
         cache_file = os.path.join(cache_dir, f"{rom_name}_cache.json")
         
-        # Load settings (for screen preference)
-        self.load_settings()
-        
-        # Initialize ROM data cache
+        # Initialize ROM data cache if needed (minimal memory setup)
         if not hasattr(self, 'rom_data_cache'):
             self.rom_data_cache = {}
-        
-        # ADDED: Get command line arguments for screen and button visibility
-        import sys
-        for i, arg in enumerate(sys.argv):
-            if arg == '--screen' and i+1 < len(sys.argv):
-                try:
-                    self.preferred_preview_screen = int(sys.argv[i+1])
-                    print(f"OVERRIDE: Using screen {self.preferred_preview_screen} from command line")
-                except:
-                    pass
-            elif arg == '--no-buttons':
-                self.hide_preview_buttons = True
-                print(f"OVERRIDE: Hiding buttons due to command line flag")
         
         # Set the current game
         self.current_game = rom_name
         
-        # NEW: Try to load game data from cache file first
+        # Check for cached data first
         game_data = None
         if os.path.exists(cache_file):
             try:
@@ -1382,12 +1351,38 @@ class MAMEControlConfig(QMainWindow):
                         self.rom_data_cache[rom_name] = game_data
                         data_load_time = time.time() - start_time
                         print(f"Game data loaded from cache in {data_load_time:.3f} seconds")
+                    else:
+                        print("Warning: Cache file exists but contains no valid data")
             except Exception as e:
                 print(f"Error loading cache: {e}")
                 game_data = None
         
-        # If cache failed or doesn't exist, load normally
+        # Only if we don't have valid cached data, continue with the full setup
         if not game_data:
+            print("No valid cache found, proceeding with full data load...")
+            
+            # Now complete the settings directory setup only if needed
+            self.settings_dir = os.path.join(self.preview_dir, "settings")
+            self.info_dir = os.path.join(self.settings_dir, "info")
+            os.makedirs(self.settings_dir, exist_ok=True)
+            os.makedirs(self.info_dir, exist_ok=True)
+            
+            # Load settings (for screen preference)
+            self.load_settings()
+            
+            # ADDED: Get command line arguments for screen and button visibility
+            import sys
+            for i, arg in enumerate(sys.argv):
+                if arg == '--screen' and i+1 < len(sys.argv):
+                    try:
+                        self.preferred_preview_screen = int(sys.argv[i+1])
+                        print(f"OVERRIDE: Using screen {self.preferred_preview_screen} from command line")
+                    except:
+                        pass
+                elif arg == '--no-buttons':
+                    self.hide_preview_buttons = True
+                    print(f"OVERRIDE: Hiding buttons due to command line flag")
+            
             # Check if we need to load the database for faster access
             db_path = os.path.join(self.settings_dir, "gamedata.db")
             using_db = os.path.exists(db_path)
@@ -1406,7 +1401,7 @@ class MAMEControlConfig(QMainWindow):
             data_load_time = time.time() - data_load_start
             print(f"Game data loaded in {data_load_time:.3f} seconds")
             
-            # NEW: Save game data to cache file for future use
+            # Save game data to cache file for future use
             if game_data:
                 try:
                     import json
@@ -1415,10 +1410,30 @@ class MAMEControlConfig(QMainWindow):
                     print(f"Saved game data to cache: {cache_file}")
                 except Exception as e:
                     print(f"Error saving cache: {e}")
+        else:
+            # We have valid cached data, so load just the settings needed for display
+            self.load_settings()
+            
+            # Apply command line overrides for screen/buttons
+            import sys
+            for i, arg in enumerate(sys.argv):
+                if arg == '--screen' and i+1 < len(sys.argv):
+                    try:
+                        self.preferred_preview_screen = int(sys.argv[i+1])
+                        print(f"OVERRIDE: Using screen {self.preferred_preview_screen} from command line")
+                    except:
+                        pass
+                elif arg == '--no-buttons':
+                    self.hide_preview_buttons = True
+                    print(f"OVERRIDE: Hiding buttons due to command line flag")
         
+        # Exit if we still don't have game data
         if not game_data:
             print(f"Error: No control data found for {rom_name}")
-            QMessageBox.critical(self, "Error", f"No control data found for {rom_name}")
+            # Only show message box if we have Qt loaded
+            if hasattr(sys, 'modules') and 'PyQt5.QtWidgets' in sys.modules:
+                from PyQt5.QtWidgets import QMessageBox
+                QMessageBox.critical(self, "Error", f"No control data found for {rom_name}")
             return
         
         # Start MAME process monitoring only if auto_close is enabled
@@ -1445,11 +1460,12 @@ class MAMEControlConfig(QMainWindow):
             # Mark this as a standalone preview (for proper cleanup)
             self.preview_window.standalone_mode = True
             
-            # CRITICAL ADDITION: Call the new method to ensure consistent positioning
+            # CRITICAL ADDITION: Call the method to ensure consistent positioning
             if hasattr(self.preview_window, 'ensure_consistent_text_positioning'):
                 self.preview_window.ensure_consistent_text_positioning()
             
-            # Apply aggressive fullscreen settings
+            # Apply fullscreen settings
+            from PyQt5.QtCore import Qt
             self.preview_window.setWindowFlags(
                 Qt.WindowStaysOnTopHint | 
                 Qt.FramelessWindowHint | 
@@ -1460,7 +1476,7 @@ class MAMEControlConfig(QMainWindow):
             self.preview_window.setAttribute(Qt.WA_NoSystemBackground, True)
             self.preview_window.setAttribute(Qt.WA_TranslucentBackground, True)
             
-            # Force stylesheets to remove ALL borders
+            # Apply stylesheets to remove ALL borders
             self.preview_window.setStyleSheet("""
                 QMainWindow, QWidget {
                     border: none !important;
@@ -1471,37 +1487,22 @@ class MAMEControlConfig(QMainWindow):
             """)
             
             # Get the exact screen geometry
+            from PyQt5.QtWidgets import QDesktopWidget
             desktop = QDesktopWidget()
-            screen_num = getattr(self, 'preferred_preview_screen', 1)  # Default to screen 1 instead of 2
+            screen_num = getattr(self, 'preferred_preview_screen', 1)  # Default to screen 1
             screen_geometry = desktop.screenGeometry(screen_num - 1)
             
             # Apply exact geometry before showing
             self.preview_window.setGeometry(screen_geometry)
             print(f"Applied screen geometry: {screen_geometry.width()}x{screen_geometry.height()}")
             
-            # Ensure all widget hierarchies have zero margins
-            self.preview_window.setContentsMargins(0, 0, 0, 0)
-            if hasattr(self.preview_window, 'central_widget'):
-                self.preview_window.central_widget.setContentsMargins(0, 0, 0, 0)
-                self.preview_window.central_widget.setStyleSheet("border: none; padding: 0px; margin: 0px;")
-            
-            if hasattr(self.preview_window, 'main_layout'):
-                self.preview_window.main_layout.setContentsMargins(0, 0, 0, 0)
-                self.preview_window.main_layout.setSpacing(0)
-            
-            if hasattr(self.preview_window, 'canvas'):
-                self.preview_window.canvas.setContentsMargins(0, 0, 0, 0)
-                self.preview_window.canvas.setStyleSheet("border: none; padding: 0px; margin: 0px;")
-                
-                # Force canvas to exact screen dimensions
-                self.preview_window.canvas.setFixedSize(screen_geometry.width(), screen_geometry.height())
-                
-            # Use showFullScreen instead of just show
+            # Final setup before display
             self.preview_window.showFullScreen()
             self.preview_window.activateWindow()
             self.preview_window.raise_()
             
-            # Add a short delay to allow window to settle, then check all measurements
+            # Add a short delay to allow window to settle
+            from PyQt5.QtCore import QTimer
             QTimer.singleShot(100, lambda: self.ensure_full_dimensions(self.preview_window, screen_geometry))
             
             preview_time = time.time() - preview_start
@@ -1513,143 +1514,8 @@ class MAMEControlConfig(QMainWindow):
             print(f"Error showing preview: {str(e)}")
             import traceback
             traceback.print_exc()
-            QMessageBox.critical(self, "Error", f"Failed to show preview: {str(e)}")
             return
-        
-        # Define a unified game data getter that tries DB first, then falls back to JSON
-        def get_unified_game_data(self, romname):
-            # First check cache
-            if romname in self.rom_data_cache:
-                print(f"Using cached data for {romname}")
-                return self.rom_data_cache[romname]
-            
-            # Try database if available
-            if hasattr(self, 'get_game_data_from_db'):
-                db_data = self.get_game_data_from_db(romname)
-                if db_data:
-                    print(f"Retrieved {romname} from database")
-                    self.rom_data_cache[romname] = db_data
-                    return db_data
-            
-            # Fall back to original method
-            print(f"Falling back to JSON lookup for {romname}")
-            json_data = self.get_game_data(romname)
-            if json_data:
-                self.rom_data_cache[romname] = json_data
-            return json_data
-        
-        # Store the method on the instance for reuse - fix this to be a proper method
-        import types
-        self.get_unified_game_data = types.MethodType(get_unified_game_data, self)
-        
-        # Load game data using the unified getter
-        data_load_start = time.time()
-        game_data = self.get_unified_game_data(rom_name)
-        data_load_time = time.time() - data_load_start
-        print(f"Game data loaded in {data_load_time:.3f} seconds")
-        
-        if not game_data:
-            print(f"Error: No control data found for {rom_name}")
-            QMessageBox.critical(self, "Error", f"No control data found for {rom_name}")
-            return
-        
-        # Start MAME process monitoring only if auto_close is enabled
-        if auto_close:
-            print("Auto-close enabled - preview will close when MAME exits")
-            self.monitor_mame_process(check_interval=0.5)
-        
-        # Show the preview window
-        try:
-            from mame_controls_preview import PreviewWindow
-            
-            preview_start = time.time()
-            
-            # Create the preview window with correct positional parameter order
-            # Based on error message, PreviewWindow expects positional arguments
-            # Expected order: rom_name, game_data, mame_dir, parent, hide_buttons, clean_mode
-            self.preview_window = PreviewWindow(
-                rom_name,             # 1st positional arg  
-                game_data,            # 2nd positional arg
-                self.mame_dir,        # 3rd positional arg
-                None,                 # 4th positional arg (parent)
-                self.hide_preview_buttons,  # 5th positional arg
-                clean_mode            # 6th positional arg
-            )
-            
-            # Mark this as a standalone preview (for proper cleanup)
-            self.preview_window.standalone_mode = True
-            
-            # CRITICAL ADDITION: Call the new method to ensure consistent positioning
-            if hasattr(self.preview_window, 'ensure_consistent_text_positioning'):
-                self.preview_window.ensure_consistent_text_positioning()
-            
-            # Apply aggressive fullscreen settings
-            self.preview_window.setWindowFlags(
-                Qt.WindowStaysOnTopHint | 
-                Qt.FramelessWindowHint | 
-                Qt.Tool  # Removes from taskbar
-            )
-            
-            # Remove all window decorations and background
-            self.preview_window.setAttribute(Qt.WA_NoSystemBackground, True)
-            self.preview_window.setAttribute(Qt.WA_TranslucentBackground, True)
-            
-            # Force stylesheets to remove ALL borders
-            self.preview_window.setStyleSheet("""
-                QMainWindow, QWidget {
-                    border: none !important;
-                    padding: 0px !important;
-                    margin: 0px !important;
-                    background-color: black;
-                }
-            """)
-            
-            # Get the exact screen geometry
-            desktop = QDesktopWidget()
-            screen_num = getattr(self, 'preferred_preview_screen', 1)  # Default to screen 1 instead of 2
-            screen_geometry = desktop.screenGeometry(screen_num - 1)
-            
-            # Apply exact geometry before showing
-            self.preview_window.setGeometry(screen_geometry)
-            print(f"Applied screen geometry: {screen_geometry.width()}x{screen_geometry.height()}")
-            
-            # Ensure all widget hierarchies have zero margins
-            self.preview_window.setContentsMargins(0, 0, 0, 0)
-            if hasattr(self.preview_window, 'central_widget'):
-                self.preview_window.central_widget.setContentsMargins(0, 0, 0, 0)
-                self.preview_window.central_widget.setStyleSheet("border: none; padding: 0px; margin: 0px;")
-            
-            if hasattr(self.preview_window, 'main_layout'):
-                self.preview_window.main_layout.setContentsMargins(0, 0, 0, 0)
-                self.preview_window.main_layout.setSpacing(0)
-            
-            if hasattr(self.preview_window, 'canvas'):
-                self.preview_window.canvas.setContentsMargins(0, 0, 0, 0)
-                self.preview_window.canvas.setStyleSheet("border: none; padding: 0px; margin: 0px;")
-                
-                # Force canvas to exact screen dimensions
-                self.preview_window.canvas.setFixedSize(screen_geometry.width(), screen_geometry.height())
-                
-            # Use showFullScreen instead of just show
-            self.preview_window.showFullScreen()
-            self.preview_window.activateWindow()
-            self.preview_window.raise_()
-            
-            # Add a short delay to allow window to settle, then check all measurements
-            QTimer.singleShot(100, lambda: self.ensure_full_dimensions(self.preview_window, screen_geometry))
-            
-            preview_time = time.time() - preview_start
-            total_time = time.time() - start_time
-            print(f"Preview window created in {preview_time:.3f} seconds")
-            print(f"Total startup time: {total_time:.3f} seconds")
-            
-        except Exception as e:
-            print(f"Error showing preview: {str(e)}")
-            import traceback
-            traceback.print_exc()
-            QMessageBox.critical(self, "Error", f"Failed to show preview: {str(e)}")
-            return
-        
+
     def ensure_full_dimensions(self, window, screen_geometry):
         """Ensure the window and all children use the full dimensions"""
         if not window:
@@ -2009,11 +1875,6 @@ class MAMEControlConfig(QMainWindow):
         self.xinput_toggle.setChecked(True)
         self.xinput_toggle.toggled.connect(self.toggle_xinput)
         toggle_row.addWidget(self.xinput_toggle)
-        
-        # In-Game Mode toggle
-        self.ingame_toggle = QCheckBox("In-Game Mode")
-        self.ingame_toggle.toggled.connect(self.toggle_ingame_mode)
-        toggle_row.addWidget(self.ingame_toggle)
         
         toggle_row.addStretch()
         right_layout.addLayout(toggle_row)
@@ -2937,9 +2798,6 @@ class MAMEControlConfig(QMainWindow):
         """Load gamedata.json from the canonical settings location"""
         if hasattr(self, 'gamedata_json') and self.gamedata_json:
             return self.gamedata_json  # Already loaded
-                
-        # Make sure it's been migrated
-        #self.migrate_gamedata_if_needed()
         
         # Ensure the file exists
         if not os.path.exists(self.gamedata_path):
