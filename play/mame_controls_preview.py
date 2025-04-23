@@ -332,9 +332,6 @@ class PreviewWindow(QMainWindow):
         print(f"Info directory: {self.info_dir}")
         print("---------------------------\n")
         
-        # Migration check - look for files in legacy locations and move to new structure
-        #self.migrate_legacy_files()
-        
         return True
     
     def detect_screen_after_startup(self):
@@ -516,9 +513,6 @@ class PreviewWindow(QMainWindow):
     def enhance_preview_window_init(self):
         """Call this in PreviewWindow.__init__ after setting up controls"""
         try:
-            # Set up alignment features - grid, snapping, etc.
-            self.setup_alignment_features_safe()
-            self.setup_snapping_controls_safe()
             
             # Load any saved settings
             if hasattr(self, 'load_grid_settings'):
@@ -871,9 +865,6 @@ class PreviewWindow(QMainWindow):
             self.grid_button.clicked.connect(self.toggle_alignment_grid)
             self.grid_button.setStyleSheet(button_style)
             self.bottom_row.addWidget(self.grid_button)
-            
-        # Create a edit grid settings dialog
-        self.create_grid_settings_dialog()
 
     def initialize_alignment_grid(self):
         """Initialize the alignment grid system"""
@@ -995,10 +986,6 @@ class PreviewWindow(QMainWindow):
             for line in self.grid_lines:
                 line.deleteLater()
             self.grid_lines = []
-
-    def create_grid_settings_dialog(self):
-        """Create a dialog for editing grid settings"""
-        from PyQt5.QtWidgets import QDialog, QVBoxLayout, QHBoxLayout, QLabel, QSpinBox, QPushButton, QGroupBox
     
     # 1. Add show_alignment_guides method to PreviewWindow
     def show_alignment_guides(self, guide_lines):
@@ -1683,24 +1670,6 @@ class PreviewWindow(QMainWindow):
         if hasattr(self, 'bezel_button'):
             self.bezel_button.setText("Hide Bezel" if self.bezel_visible else "Show Bezel")
     
-    # Add this method to the PreviewWindow class in mame_controls_preview.py
-    def ensure_consistent_text_positioning(self):
-        """
-        Ensure text positioning is consistent across all display methods.
-        Call this after creating control labels.
-        """
-        # Apply standard positioning logic to all labels
-        for control_name, control_data in self.control_labels.items():
-            label = control_data['label']
-            
-            # ADDED: Ensure labels can expand to fit text
-            label.setMinimumSize(0, 0)
-            label.setMaximumSize(16777215, 16777215)
-            label.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)
-            label.adjustSize()
-        
-        print("Applied consistent text positioning to all controls")
-    
     def force_resize_all_labels(self):
         """Force all control labels to resize according to their content"""
         if not hasattr(self, 'control_labels'):
@@ -1786,39 +1755,6 @@ class PreviewWindow(QMainWindow):
         
         print(f"No bezel found for {rom_name}")
         return None
-
-    # Replace the toggle_bezel_improved method to ensure the bezel is properly shown
-    # Replace toggle_bezel_improved to save settings when toggled
-    def add_global_bezel_button(self):
-        """Add a button to save current bezel state as global default"""
-        # Button style (reuse existing style)
-        button_style = """
-            QPushButton {
-                background-color: #3d3d3d;
-                color: white;
-                border: 1px solid #5a5a5a;
-                border-radius: 4px;
-                padding: 6px 12px;
-                font-weight: bold;
-                min-width: 90px;
-            }
-            QPushButton:hover {
-                background-color: #4a4a4a;
-            }
-            QPushButton:pressed {
-                background-color: #2a2a2a;
-            }
-        """
-        
-        # Create button
-        self.global_bezel_button = QPushButton("Global Bezel")
-        self.global_bezel_button.clicked.connect(lambda: self.save_bezel_settings(is_global=True))
-        self.global_bezel_button.setStyleSheet(button_style)
-        self.global_bezel_button.setToolTip("Save current bezel visibility as global default")
-        
-        # Add to bottom row if it exists
-        if hasattr(self, 'bottom_row'):
-            self.bottom_row.addWidget(self.global_bezel_button)
 
     # Replace the show_bezel_with_background method for better bezel display
     def show_bezel_with_background(self):
@@ -2511,8 +2447,7 @@ class PreviewWindow(QMainWindow):
         """Handle resize events with bezel support"""
         # Call the original resize handler first
         if hasattr(self, 'on_canvas_resize'):
-            self.on_canvas_resize_original = self.on_canvas_resize
-        self.canvas.resizeEvent = self.on_canvas_resize_with_background
+            self.canvas.resizeEvent = self.on_canvas_resize_with_background
         # Update bezel size if it exists and is visible
         if hasattr(self, 'bezel_visible') and self.bezel_visible and hasattr(self, 'bezel_label') and self.bezel_label:
             window_width = self.width()
@@ -2534,36 +2469,6 @@ class PreviewWindow(QMainWindow):
                 self.bezel_label.setGeometry(0, 0, window_width, window_height)
                 
                 print(f"Bezel resized to {window_width}x{window_height}")
-    
-    # Add a force resize button to the UI
-    def add_force_resize_button(self):
-        """Add a button to force logo resize"""
-        if hasattr(self, 'bottom_row'):
-            button_style = """
-                QPushButton {
-                    background-color: #3d3d3d;
-                    color: white;
-                    border: 1px solid #5a5a5a;
-                    border-radius: 4px;
-                    padding: 6px 12px;
-                    font-weight: bold;
-                    min-width: 90px;
-                }
-                QPushButton:hover {
-                    background-color: #4a4a4a;
-                }
-                QPushButton:pressed {
-                    background-color: #2a2a2a;
-                }
-            """
-            
-            self.resize_logo_button = QPushButton("Fix Logo")
-            self.resize_logo_button.clicked.connect(self.force_logo_resize)
-            self.resize_logo_button.setStyleSheet(button_style)
-            self.resize_logo_button.setToolTip("Force logo to resize to stored settings")
-            
-            # Add to your bottom row layout
-            self.bottom_row.addWidget(self.resize_logo_button)
     
     # Add helper method to explicitly save global text settings
     def save_global_text_settings(self):
@@ -2587,40 +2492,6 @@ class PreviewWindow(QMainWindow):
             import traceback
             traceback.print_exc()
     
-    # Add a global button to save text settings
-    def add_global_text_settings_button(self):
-        """Add a button to save text settings as global defaults"""
-        # Button style (reusing existing style)
-        button_style = """
-            QPushButton {
-                background-color: #3d3d3d;
-                color: white;
-                border: 1px solid #5a5a5a;
-                border-radius: 4px;
-                padding: 6px 12px;
-                font-weight: bold;
-                min-width: 90px;
-            }
-            QPushButton:hover {
-                background-color: #4a4a4a;
-            }
-            QPushButton:pressed {
-                background-color: #2a2a2a;
-            }
-        """
-        
-        # Create button
-        self.global_text_button = QPushButton("Global Text")
-        self.global_text_button.clicked.connect(self.save_global_text_settings)
-        self.global_text_button.setStyleSheet(button_style)
-        
-        # Add to bottom row if it exists
-        if hasattr(self, 'bottom_row'):
-            self.bottom_row.addWidget(self.global_text_button)
-    
-    # Add a new method to load bezel settings
-    # Update load_bezel_settings to prioritize global settings
-    # Update load_bezel_settings to include joystick visibility
     def load_bezel_settings(self):
         """Load bezel and joystick visibility settings from file in settings directory"""
         settings = {
@@ -3940,60 +3811,6 @@ class PreviewWindow(QMainWindow):
                 f"Failed to save image: {str(e)}"
             )
             return False
-
-    # Add this method to properly force bezel rendering (useful when troubleshooting)
-    def force_bezel_render(self):
-        """Force bezel to render - useful for debugging"""
-        if not hasattr(self, 'bezel_visible') or not self.bezel_visible:
-            print("Bezel is not marked as visible, cannot force render")
-            return False
-        
-        bezel_path = self.find_bezel_path(self.rom_name)
-        if not bezel_path:
-            print("No bezel path found for this ROM")
-            return False
-        
-        try:
-            # Load the bezel image directly
-            bezel_pixmap = QPixmap(bezel_path)
-            if bezel_pixmap.isNull():
-                print(f"Failed to load bezel from {bezel_path}")
-                return False
-                
-            # Scale with high quality
-            window_width = self.canvas.width()
-            window_height = self.canvas.height()
-            
-            # Scale with high quality
-            scaled_bezel = bezel_pixmap.scaled(
-                window_width,
-                window_height,
-                Qt.KeepAspectRatio,
-                Qt.SmoothTransformation
-            )
-            
-            # Store for later use in saving
-            self.bezel_pixmap = scaled_bezel
-            
-            # Update the bezel label if it exists
-            if hasattr(self, 'bezel_label') and self.bezel_label:
-                self.bezel_label.setPixmap(scaled_bezel)
-                
-                # Position centered
-                x = (window_width - scaled_bezel.width()) // 2
-                y = (window_height - scaled_bezel.height()) // 2
-                self.bezel_label.move(x, y)
-                
-                # Make sure it's visible
-                self.bezel_label.show()
-                print(f"Forced bezel rendering: {scaled_bezel.width()}x{scaled_bezel.height()} at ({x},{y})")
-                return True
-            else:
-                print("No bezel label exists to update")
-                return False
-        except Exception as e:
-            print(f"Error in force_bezel_render: {e}")
-            return False
         
     def handle_key_press(self, event):
         """Handle key press events"""
@@ -4005,86 +3822,6 @@ class PreviewWindow(QMainWindow):
             if getattr(self, 'standalone_mode', False):
                 # Give a short delay before quitting to allow cleanup
                 QTimer.singleShot(100, QApplication.quit)
-            
-    # Update the __init__ method to remove margins and borders
-    def fix_borders_in_init(self):
-        """Fix borders and margins in window setup"""
-        # Set layout margins to zero
-        if hasattr(self, 'main_layout'):
-            self.main_layout.setContentsMargins(0, 0, 0, 0)
-            self.main_layout.setSpacing(0)
-        
-        # Set window margin/padding to zero
-        self.setContentsMargins(0, 0, 0, 0)
-        
-        # Set central widget margins to zero
-        if hasattr(self, 'central_widget'):
-            self.central_widget.setContentsMargins(0, 0, 0, 0)
-            
-            # Add specific style for central widget
-            self.central_widget.setStyleSheet("""
-                QWidget {
-                    background-color: black;
-                    margin: 0px;
-                    padding: 0px;
-                    border: none;
-                }
-            """)
-        
-        # Set canvas margins to zero
-        if hasattr(self, 'canvas'):
-            self.canvas.setContentsMargins(0, 0, 0, 0)
-            
-            # Add specific style for canvas 
-            self.canvas.setStyleSheet("""
-                QWidget {
-                    background-color: black;
-                    margin: 0px;
-                    padding: 0px;
-                    border: none;
-                }
-            """)
-        
-        # Apply borderless style to the main window
-        self.setStyleSheet("""
-            QMainWindow {
-                border: none;
-                margin: 0px;
-                padding: 0px;
-            }
-        """)
-        
-        print("Removed borders and margins from preview window")
-    
-    # Improve the button frame to avoid it creating border issues
-    def fix_button_frame(self):
-        """Fix button frame styling to avoid borders"""
-        if hasattr(self, 'button_frame'):
-            # Use a more transparent style
-            self.button_frame.setStyleSheet("""
-                QFrame {
-                    background-color: rgba(20, 20, 20, 180);
-                    border: none;
-                    margin: 0px;
-                    padding: 0px;
-                }
-            """)
-            
-            # Remove margins from button layout
-            if hasattr(self, 'button_layout'):
-                self.button_layout.setContentsMargins(10, 2, 10, 2)
-                self.button_layout.setSpacing(2)
-            
-            # Update rows spacing too
-            if hasattr(self, 'top_row'):
-                self.top_row.setContentsMargins(0, 0, 0, 0)
-                self.top_row.setSpacing(4)
-            
-            if hasattr(self, 'bottom_row'):
-                self.bottom_row.setContentsMargins(0, 0, 0, 0)
-                self.bottom_row.setSpacing(4)
-                
-            print("Fixed button frame styling")
     
     # Make sure the window is full screen without borders
     def set_fullscreen(self):
@@ -4736,10 +4473,6 @@ class PreviewWindow(QMainWindow):
             
             # Update logo positioning
             self.handle_logo_during_resize()
-                    
-            # Call the original resize handler if it exists
-            if hasattr(self, 'on_canvas_resize_original'):
-                self.on_canvas_resize_original(event)
 
             # Redraw grid if it's currently visible
             if hasattr(self, 'alignment_grid_visible') and self.alignment_grid_visible:
@@ -4821,22 +4554,7 @@ class PreviewWindow(QMainWindow):
         
         print("--------------------------------")
 
-    # Add this to toggle_bezel_improved
-    # Add this call at the end of toggle_bezel_improved
         self.check_layer_visibility()
-    
-    # Force background to update on demand
-    def force_background_fullscreen(self):
-        """Force background to update to fullscreen"""
-        if hasattr(self, 'bg_label') and self.bg_label and hasattr(self, 'canvas'):
-            # Ensure the label fills the entire canvas
-            self.bg_label.setGeometry(0, 0, self.canvas.width(), self.canvas.height())
-            self.bg_label.setScaledContents(True)
-            self.bg_label.lower()
-            self.bg_label.show()
-            print(f"Force-updated background to fullscreen: {self.canvas.width()}x{self.canvas.height()}")
-            return True
-        return False
     
     def on_canvas_resize(self, event):
         """Handle canvas resize to update background image"""
@@ -5648,40 +5366,6 @@ class PreviewWindow(QMainWindow):
         
         print(f"Text settings updated and applied: {self.text_settings}")
     
-    def apply_specific_font(self, font_file_name, font_size, bold=False):
-        """Load and apply a specific font from file"""
-        from PyQt5.QtGui import QFont, QFontDatabase
-        
-        # Path to the font file - check in preview/fonts directory
-        font_path = os.path.join(self.mame_dir, "preview", "fonts", font_file_name)
-        
-        # Check if file exists
-        if not os.path.exists(font_path):
-            print(f"Font file not found: {font_path}")
-            return QFont("Arial", font_size, QFont.Bold if bold else QFont.Normal)
-        
-        # Load the font file
-        font_id = QFontDatabase.addApplicationFont(font_path)
-        if font_id < 0:
-            print(f"Error loading font file: {font_path}")
-            return QFont("Arial", font_size, QFont.Bold if bold else QFont.Normal)
-        
-        # Get the font family name as recognized by Qt
-        families = QFontDatabase.applicationFontFamilies(font_id)
-        if not families:
-            print(f"No font families found in: {font_path}")
-            return QFont("Arial", font_size, QFont.Bold if bold else QFont.Normal)
-        
-        # Use the first family name
-        family_name = families[0]
-        print(f"Successfully loaded font: {font_file_name} → {family_name}")
-        
-        # Create font with the exact family name
-        font = QFont(family_name, font_size)
-        font.setBold(bold)
-        
-        return font
-    
     def apply_text_settings(self):
         """Apply current text settings to all controls with both font and gradient support"""
         # Import QTimer at the beginning of the method
@@ -5988,70 +5672,6 @@ class PreviewWindow(QMainWindow):
             print("----------------------------------")
         except Exception as e:
             print(f"Error in verify_font_application: {e}")
-
-    def ensure_font_loaded(self, font_family):
-        """Ensure the specified font is loaded into the application"""
-        from PyQt5.QtGui import QFontDatabase
-        
-        # Check if it's a system font
-        system_fonts = ["Arial", "Verdana", "Tahoma", "Times New Roman", "Courier New", 
-                    "Segoe UI", "Calibri", "Georgia", "Impact", "System"]
-        
-        if font_family in system_fonts:
-            return True  # System font, no need to load
-        
-        # Check custom fonts directory
-        fonts_dir = os.path.join(self.mame_dir, "preview", "fonts")
-        if not os.path.exists(fonts_dir):
-            print(f"Custom fonts directory not found: {fonts_dir}")
-            return False
-        
-        # Look for font files with matching family name
-        found = False
-        for filename in os.listdir(fonts_dir):
-            if filename.lower().endswith(('.ttf', '.otf')):
-                font_path = os.path.join(fonts_dir, filename)
-                
-                # Load font into QFontDatabase to check family name
-                font_id = QFontDatabase.addApplicationFont(font_path)
-                if font_id >= 0:
-                    font_families = QFontDatabase.applicationFontFamilies(font_id)
-                    if font_families and font_family in font_families:
-                        found = True
-                        print(f"Successfully loaded font {font_family} from {filename}")
-                        break
-        
-        if not found:
-            print(f"Warning: Could not find font file for '{font_family}' in {fonts_dir}")
-            
-        return found
-    
-    def debug_font_availability(self):
-        """Debug helper to check font availability"""
-        from PyQt5.QtGui import QFontDatabase
-        
-        # Get all available font families
-        font_families = QFontDatabase().families()
-        
-        # Check if our target font is available
-        current_font = self.text_settings.get("font_family", "Arial")
-        
-        print("\n--- Font Availability Debug ---")
-        print(f"Current font from settings: {current_font}")
-        print(f"Font exists in database: {current_font in font_families}")
-        
-        # Print some available custom fonts as examples
-        custom_fonts = [f for f in font_families if f not in ["Arial", "Verdana", "Tahoma"]]
-        print(f"Sample of available custom fonts: {custom_fonts[:5] if custom_fonts else 'None'}")
-        
-        # Check if any label is actually using the font
-        if hasattr(self, 'control_labels') and self.control_labels:
-            sample_label = next(iter(self.control_labels.values()))['label']
-            if hasattr(sample_label, 'font'):
-                current_label_font = sample_label.font().family()
-                print(f"Font actually being used in label: {current_label_font}")
-        
-        print("----------------------------")
     
     def save_image(self):
         """Save current preview as an image with consistent text positioning to preview/images folder"""
