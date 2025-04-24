@@ -1,7 +1,6 @@
-Cache
--improve how cache is removed. currently only abides by number of next time it opens, and deletes anything over the number
+Shadow font is a standard font, and not the font used. Also doesn't align correctly. Likely remove all toghter. 
 
-Remove redundant code
+Update default image to use fighter arcades background for png reflection effect
 
 ####################################
 mame_controls_pyqt
