@@ -1115,8 +1115,9 @@ class PreviewWindow(QMainWindow):
         
         return show_prefixes
     
+    # Fix 3: Enhanced load_and_register_fonts with better debugging
     def load_and_register_fonts(self):
-        """Load and register fonts from settings at startup with updated paths"""
+        """Load and register fonts from settings at startup with improved error detection"""
         from PyQt5.QtGui import QFontDatabase, QFont, QFontInfo
         
         print("\n=== LOADING FONTS ===")
@@ -1131,7 +1132,7 @@ class PreviewWindow(QMainWindow):
         font_found = False
         exact_family_name = None
         
-        if os.path.exists(self.fonts_dir):
+        if hasattr(self, 'fonts_dir') and os.path.exists(self.fonts_dir):
             print(f"Scanning fonts directory: {self.fonts_dir}")
             for filename in os.listdir(self.fonts_dir):
                 if filename.lower().endswith(('.ttf', '.otf')):
@@ -1170,7 +1171,7 @@ class PreviewWindow(QMainWindow):
         self.current_font = QFont(self.font_name, font_size)
         self.current_font.setBold(bold_strength > 0)
         
-        # 5. Force exact matching - this is critical (CORRECTED)
+        # 5. Force exact matching - this is critical
         self.current_font.setStyleStrategy(QFont.PreferMatch)
         
         # Print font diagnostic info
@@ -1178,11 +1179,20 @@ class PreviewWindow(QMainWindow):
         print(f"Created font object: {self.font_name}")
         print(f"Weight: {self.current_font.weight()}, Size: {self.current_font.pointSize()}")
         print(f"Actual family being used: {info.family()}")
+        
+        # Debug whether there's a font substitution
+        if info.family() != self.font_name:
+            print(f"WARNING: FONT SUBSTITUTION DETECTED! Requested: {self.font_name}, Using: {info.family()}")
+        else:
+            print(f"PERFECT MATCH: {self.font_name} is being used exactly as requested")
+        
         print("=== FONT LOADING COMPLETE ===\n")
         
         # Apply the font to existing controls if any
         self.apply_current_font_to_controls()
-    
+        
+        return self.current_font  # Return the created font for reference
+
     def apply_current_font_to_controls(self):
         """Apply the current font to all control labels and properly resize them"""
         if not hasattr(self, 'current_font'):
@@ -1967,20 +1977,42 @@ class PreviewWindow(QMainWindow):
                 QTimer.singleShot(100, self.show_bezel_with_background)
                 print("Bezel initialized as visible based on settings")
     
-    # First, add the missing on_label_move method to the PreviewWindow class
+    # 2. For the on_label_move method in PreviewWindow, we need to update it too
     def on_label_move(self, event, label, shadow, orig_func):
-        """Handle label movement and update shadow position"""
-        # Call the original mouseMoveEvent method for the label
-        orig_func(event)
+        """Handle label movement and update shadow position with proper offset preservation"""
+        # If we should use the original function, do that
+        if orig_func is not None:
+            # Call the original mouseMoveEvent method for the label
+            orig_func(event)
+            
+            # Update shadow position to match the label with offset
+            if shadow:
+                shadow_pos = label.pos()
+                shadow.move(shadow_pos.x() + 2, shadow_pos.y() + 2)
+            return
+            
+        # Direct handling (if orig_func is None)
+        if hasattr(label, 'dragging') and label.dragging:
+            # Get the current mouse position
+            delta = event.pos() - label.drag_start_pos
+            
+            # FIXED: Use original position + delta to preserve offset
+            if hasattr(label, 'original_label_pos'):
+                new_pos = label.original_label_pos + delta
+            else:
+                # Fallback to mapToParent
+                new_pos = label.mapToParent(event.pos() - label.drag_start_pos)
+            
+            # Move the label
+            label.move(new_pos)
+            
+            # Update shadow position if provided
+            if shadow:
+                shadow.move(new_pos.x() + 2, new_pos.y() + 2)
         
-        # Update shadow position to match the label with offset
-        if shadow:
-            shadow_pos = label.pos()
-            shadow.move(shadow_pos.x() + 2, shadow_pos.y() + 2)
+        # Let event propagate
+        event.accept()
 
-    # Update the show_all_xinput_controls method to fix text truncation in RS/LS buttons
-    # Fixed show_all_xinput_controls method to ensure consistent text positioning
-    # Add this helper method to presizing labels before positioning
     def create_presized_label(self, text, font, control_name=""):
         """Create a properly sized label before positioning it"""
         from PyQt5.QtWidgets import QSizePolicy
@@ -2015,9 +2047,9 @@ class PreviewWindow(QMainWindow):
         
         return label, width, height
 
-    # Completely rewritten show_all_xinput_controls with a new approach
+    # Fix 4: Improve show_all_xinput_controls to properly handle font creation
     def show_all_xinput_controls(self):
-        """Show all possible P1 XInput controls for global positioning with proper styling and font handling"""
+        """Show all possible P1 XInput controls for global positioning with improved font handling"""
         # Standard XInput controls for positioning - P1 ONLY
         xinput_controls = {
             "P1_JOYSTICK_UP": "LS Up",
@@ -2048,7 +2080,12 @@ class PreviewWindow(QMainWindow):
             from PyQt5.QtWidgets import QLabel, QSizePolicy
             import os
             
-            print("\n--- Showing all P1 XInput controls with proper font handling ---")
+            print("\n--- Showing all P1 XInput controls with improved font handling ---")
+            
+            # CRITICAL FIX: First ensure fonts are properly loaded/registered
+            if not hasattr(self, 'current_font') or self.current_font is None:
+                print("Font not initialized - forcing font loading before showing XInput controls")
+                self.load_and_register_fonts()
             
             # Save existing control positions
             if not hasattr(self, 'original_controls_backup'):
@@ -2096,62 +2133,23 @@ class PreviewWindow(QMainWindow):
             action_gradient_start = self.text_settings.get("action_gradient_start", "#2196F3")
             action_gradient_end = self.text_settings.get("action_gradient_end", "#4CAF50")
             
-            # IMPORTANT: Ensure we have the best possible font loaded
-            # First try to use the font that's already been initialized in the app
-            if hasattr(self, 'font_name') and self.font_name:
-                font_family = self.font_name
-                print(f"Using initialized font name: {font_family}")
-            
-            # Create font object with all available methods for best compatibility
-            font = None
-            
-            # Method 1: Try to use current_font if available
+            # CRITICAL FIX: Use font objects that already exist rather than creating new ones
             if hasattr(self, 'current_font') and self.current_font:
-                font = QFont(self.current_font)
-                print(f"Using current_font: {self.current_font.family()} ({font.family()})")
-            
-            # Method 2: Try to use initialized_font if available
+                font = QFont(self.current_font)  # Create a copy to avoid modifying the original
+                print(f"Using existing current_font for XInput controls: {font.family()}")
             elif hasattr(self, 'initialized_font') and self.initialized_font:
                 font = QFont(self.initialized_font)
-                print(f"Using initialized_font: {self.initialized_font.family()} ({font.family()})")
-            
-            # Method 3: Try to explicitly load the font from the fonts directory
-            elif hasattr(self, 'fonts_dir') and os.path.exists(self.fonts_dir):
-                found_font = False
-                
-                # First try exact filename match
-                for filename in os.listdir(self.fonts_dir):
-                    if filename.lower().endswith(('.ttf', '.otf')):
-                        name_base = os.path.splitext(filename)[0].lower()
-                        if name_base == font_family.lower() or font_family.lower() in name_base:
-                            font_path = os.path.join(self.fonts_dir, filename)
-                            
-                            # Register the font
-                            font_id = QFontDatabase.addApplicationFont(font_path)
-                            if font_id >= 0:
-                                families = QFontDatabase.applicationFontFamilies(font_id)
-                                if families and len(families) > 0:
-                                    exact_family = families[0]
-                                    font = QFont(exact_family, font_size)
-                                    font.setBold(bold_strength)
-                                    font.setStyleStrategy(QFont.PreferMatch)
-                                    found_font = True
-                                    print(f"Loaded custom font: {exact_family} from {filename}")
-                                    break
-                
-                # If no font found, create standard font
-                if not found_font:
-                    font = QFont(font_family, font_size)
-                    font.setBold(bold_strength)
-                    font.setStyleStrategy(QFont.PreferMatch)
-                    print(f"Using system font: {font_family}")
-            
-            # Method 4: Fallback to creating a basic font
+                print(f"Using initialized_font for XInput controls: {font.family()}")
             else:
+                # Create a standard font as a last resort
                 font = QFont(font_family, font_size)
                 font.setBold(bold_strength)
-                font.setStyleStrategy(QFont.PreferMatch)
-                print(f"Using basic font: {font_family}")
+                font.setStyleStrategy(QFont.PreferMatch)  # Force exact matching
+                print(f"Created new font for XInput controls: {font.family()} (fallback)")
+            
+            # Print actual font info for debugging
+            font_info = QFontInfo(font)
+            print(f"Actual font being used: {font_info.family()}, size: {font_info.pointSize()}")
             
             # Calculate the maximum text width needed 
             font_metrics = QFontMetrics(font)
@@ -2210,8 +2208,12 @@ class PreviewWindow(QMainWindow):
                     # Use color-enabled label
                     label = ColoredDraggableLabel(display_text, self.canvas, settings=self.text_settings.copy())
                 
-                # Apply font and styles
+                # CRITICAL FIX: Apply font directly using existing font object
                 label.setFont(font)
+                
+                # Additional precautions to ensure proper font application
+                label.setStyleSheet(f"background-color: transparent; border: none; font-family: '{font.family()}';")
+                
                 label.prefix = button_prefix
                 label.action = action_text
                 
@@ -2232,9 +2234,6 @@ class PreviewWindow(QMainWindow):
                 label_width = max(label.width(), max_text_width)
                 label_height = label.height()
                 label.resize(label_width, label_height)
-                
-                # Also set a more aggressive font style with CSS as a fallback
-                label.setStyleSheet(f"background-color: transparent; border: none; font-family: '{font.family()}';")
                 
                 # Create shadow label with similar properties but plain black text
                 shadow = QLabel(display_text, self.canvas)
@@ -2312,15 +2311,15 @@ class PreviewWindow(QMainWindow):
             # Set XInput mode flag
             self.showing_all_xinput_controls = True
             
-            # Force updates with staggered timers for reliable application
-            QTimer.singleShot(50, lambda: self.apply_text_settings())
-            QTimer.singleShot(100, lambda: self.force_resize_all_labels())
-            QTimer.singleShot(200, lambda: self.force_resize_all_labels())  # Second attempt for reliability
+            # CRITICAL FIX: Force updates with staggered timers for reliable application
+            QTimer.singleShot(50, lambda: self.force_resize_all_labels())
+            QTimer.singleShot(150, lambda: self.apply_text_settings())
+            QTimer.singleShot(250, lambda: self.force_resize_all_labels())  # Second pass
             
             # Force a canvas update
             self.canvas.update()
             
-            print(f"Created and displayed {len(xinput_controls)} P1 XInput controls with proper styling and font handling")
+            print(f"Created and displayed {len(xinput_controls)} P1 XInput controls with improved font handling")
             return True
             
         except Exception as e:
@@ -2329,19 +2328,32 @@ class PreviewWindow(QMainWindow):
             traceback.print_exc()
             return False
 
-    # Improved toggle_xinput_controls method that restores original controls properly
+    # Fix 1: Modify the toggle_xinput_controls method to explicitly force font reloading
     def toggle_xinput_controls(self):
-        """Toggle between normal game controls and all XInput controls"""
+        """Toggle between normal game controls and all XInput controls with improved font handling"""
         # Check if already showing all XInput controls
         if hasattr(self, 'showing_all_xinput_controls') and self.showing_all_xinput_controls:
             # Switch back to normal game controls
             self.showing_all_xinput_controls = False
             
-            # CRITICAL FIX: Clear all current controls
+            # CRITICAL FIX: Store current font information before clearing controls
+            if hasattr(self, 'current_font'):
+                stored_font = self.current_font
+                print(f"Stored current font before control reset: {stored_font.family()}")
+            else:
+                stored_font = None
+                print("No current_font to store")
+            
+            # CRITICAL FIX: Before clearing, ensure the fonts are loaded/registered
+            self.load_and_register_fonts()
+            
+            # Clear all current controls
             for control_name in list(self.control_labels.keys()):
                 # Remove the control from the canvas
                 if control_name in self.control_labels:
                     self.control_labels[control_name]['label'].deleteLater()
+                    if 'shadow' in self.control_labels[control_name]:
+                        self.control_labels[control_name]['shadow'].deleteLater()
                     del self.control_labels[control_name]
 
             # Clear collections
@@ -2354,7 +2366,11 @@ class PreviewWindow(QMainWindow):
             # Reload the current game controls from scratch
             self.create_control_labels()
             
-            print("Switched back to normal game controls")
+            # CRITICAL FIX: Force apply the font after recreating controls
+            QTimer.singleShot(100, self.apply_text_settings)
+            QTimer.singleShot(200, self.force_resize_all_labels)
+            
+            print("Switched back to normal game controls with font restoration")
         else:
             # Switch to showing all XInput controls
             self.show_all_xinput_controls()
@@ -4664,11 +4680,16 @@ class PreviewWindow(QMainWindow):
             traceback.print_exc()
 
 
-    # Improved create_control_labels method that respects joystick visibility
+    # Fix 2: Enhance create_control_labels to better handle font application
     def create_control_labels(self, clean_mode=False):
-        """Create control labels with option for clean mode and joystick visibility support"""
+        """Create control labels with improved font handling"""
         if not self.game_data or 'players' not in self.game_data:
             return
+        
+        # CRITICAL FIX: Make sure we have properly loaded fonts
+        if not hasattr(self, 'current_font') or self.current_font is None:
+            print("Font not initialized before creating labels - forcing font loading")
+            self.load_and_register_fonts()
         
         # Load saved positions
         saved_positions = {}
@@ -4762,17 +4783,32 @@ class PreviewWindow(QMainWindow):
                         # Use the color-enabled label
                         label = ColoredDraggableLabel(display_text, self.canvas, settings=self.text_settings)
                     
-                    # Apply font
-                    if hasattr(self, 'current_font'):
+                    # CRITICAL FIX: Apply font with priority order and debug info
+                    font_applied = False
+                    
+                    # 1. First try current_font (most specific)
+                    if hasattr(self, 'current_font') and self.current_font:
                         label.setFont(self.current_font)
-                    elif hasattr(self, 'initialized_font'):
+                        print(f"Applied current_font to {control_name}: {self.current_font.family()}")
+                        font_applied = True
+                    
+                    # 2. Next try initialized_font
+                    elif hasattr(self, 'initialized_font') and self.initialized_font:
                         label.setFont(self.initialized_font)
-                    else:
+                        print(f"Applied initialized_font to {control_name}: {self.initialized_font.family()}")
+                        font_applied = True
+                    
+                    # 3. If neither is available, create a new font with identical specs
+                    # to what would have been created by load_and_register_fonts
+                    if not font_applied:
                         from PyQt5.QtGui import QFont
-                        font = QFont(self.text_settings.get("font_family", "Arial"), 
-                                self.text_settings.get("font_size", 28))
+                        font_family = self.text_settings.get("font_family", "Arial")
+                        font_size = self.text_settings.get("font_size", 28)
+                        font = QFont(font_family, font_size)
                         font.setBold(self.text_settings.get("bold_strength", 2) > 0)
+                        font.setStyleStrategy(QFont.PreferMatch)  # CRITICAL: Ensure exact matching
                         label.setFont(font)
+                        print(f"Created new font for {control_name}: {font.family()} (fallback)")
                     
                     # Position the label
                     label.move(x, y)
@@ -4791,28 +4827,47 @@ class PreviewWindow(QMainWindow):
                         label.action_gradient_start = QColor(self.text_settings.get("action_gradient_start", "#2196F3"))
                         label.action_gradient_end = QColor(self.text_settings.get("action_gradient_end", "#4CAF50"))
                     
-                    # Add drag events if not in clean mode
-                    if not clean_mode:
-                        label.mousePressEvent = lambda event, lbl=label: self.on_label_press(event, lbl)
-                        label.mouseMoveEvent = lambda event, lbl=label: self.on_label_move(event, lbl)
-                        label.mouseReleaseEvent = lambda event, lbl=label: self.on_label_release(event, lbl)
+                    # CRITICAL FIX: Apply text color via stylesheet as a reinforcement
+                    text_color = self.text_settings.get("action_color", "#FFFFFF")
+                    label.setStyleSheet(f"color: {text_color}; background-color: transparent; font-family: '{label.font().family()}';")
+                    
+                    # Create shadow effect for better visibility
+                    shadow_label = QLabel(display_text, self.canvas)
+                    shadow_label.setStyleSheet("color: black; background-color: transparent; border: none;")
+                    shadow_label.setFont(label.font())  # Apply same font
+                    shadow_label.resize(label.size())   # Match size
+                    shadow_label.move(x + 2, y + 2)     # Offset for shadow effect
+                    
+                    # Connect shadow movement
+                    original_mouseMoveEvent = label.mouseMoveEvent
+                    label.mouseMoveEvent = lambda event, lbl=label, shadow=shadow_label, orig_func=original_mouseMoveEvent: self.on_label_move(event, lbl, shadow, orig_func)
                     
                     # Apply visibility
                     label.setVisible(is_visible)
+                    shadow_label.setVisible(is_visible)
+                    shadow_label.lower()  # Ensure shadow is behind text
                     
-                    # Store the label
+                    # Add drag events if not in clean mode
+                    if not clean_mode:
+                        label.mousePressEvent = lambda event, lbl=label: self.on_label_press(event, lbl)
+                        label.mouseReleaseEvent = lambda event, lbl=label: self.on_label_release(event, lbl)
+                    
+                    # Store the label and shadow
                     self.control_labels[control_name] = {
                         'label': label,
+                        'shadow': shadow_label,
                         'action': action_text,
                         'prefix': button_prefix,
                         'original_pos': original_pos
                     }
                 except Exception as e:
                     print(f"Error creating label for {control_name}: {e}")
+                    import traceback
+                    traceback.print_exc()
         
         # Force a canvas update
         self.canvas.update()
-        print(f"Created {len(self.control_labels)} control labels")
+        print(f"Created {len(self.control_labels)} control labels with improved font handling")
                 
     def on_label_press(self, event, label):
         """Handle mouse press on label"""
@@ -5954,25 +6009,40 @@ class DraggableLabel(EnhancedLabel):
         else:
             self.setText(text)
             
+    # 1. Fix the base DraggableLabel class first
     def mousePressEvent(self, event):
-        """Handle mouse press events for dragging"""
+        """Handle mouse press events for dragging with correct offset tracking"""
         from PyQt5.QtCore import Qt
+        
         if event.button() == Qt.LeftButton:
+            # Make sure dragging flag is set
             self.dragging = True
-            self.offset = event.pos()
-            self.setCursor(Qt.ClosedHandCursor)
-        
-    def mouseMoveEvent(self, event):
-        """Enhanced mouseMoveEvent with improved snapping controls"""
-        from PyQt5.QtCore import Qt
-        
-        # Handle dragging with better snapping control
-        if self.dragging:
-            # Fix the import - QApplication is in QtWidgets, not QtCore
-            from PyQt5.QtWidgets import QApplication
             
-            # Calculate new position based on mouse position
-            new_pos = self.mapToParent(event.pos() - self.offset)
+            # CRITICAL FIX: Store both the mouse position and the label's current position
+            self.drag_start_pos = event.pos()
+            self.original_label_pos = self.pos()
+            
+            self.setCursor(Qt.ClosedHandCursor)
+            event.accept()
+
+    def mouseMoveEvent(self, event):
+        """Handle mouse move with proper offset preservation"""
+        from PyQt5.QtCore import Qt
+        from PyQt5.QtWidgets import QApplication
+        
+        if hasattr(self, 'dragging') and self.dragging and hasattr(self, 'drag_start_pos'):
+            # Calculate the delta from the initial click position
+            delta = event.pos() - self.drag_start_pos
+            
+            # FIXED: Apply the delta to the original label position to preserve offset
+            # This ensures that wherever you click on the label, it maintains that relative position
+            if hasattr(self, 'original_label_pos'):
+                new_pos = self.original_label_pos + delta
+            else:
+                # Fallback for compatibility (shouldn't happen with the fixed mousePressEvent)
+                new_pos = self.mapToParent(event.pos() - self.drag_start_pos)
+                
+            # Rest of the snapping and guidance code remains the same
             original_pos = new_pos  # Store original position before any snapping
             
             # Initialize guide lines list and snapping variables
@@ -6035,6 +6105,10 @@ class DraggableLabel(EnhancedLabel):
                                     snapped = True
                                     break
                         
+                        # Apply the move
+                        self.move(new_pos)
+                        
+                        # Rest of snapping logic...
                         # 2. Screen center alignment (if enabled)
                         if hasattr(preview_window, 'snap_to_screen_center') and preview_window.snap_to_screen_center:
                             # Horizontal center
@@ -6098,30 +6172,47 @@ class DraggableLabel(EnhancedLabel):
                     # 5. Calculate distance indicators for display
                     # Show dynamic measurement guides
                     if hasattr(preview_window, 'show_measurement_guides'):
-                        preview_window.show_measurement_guides(
-                            new_pos.x(), new_pos.y(), 
-                            self.width(), self.height()
-                        )
+                        try:
+                            preview_window.show_measurement_guides(
+                                new_pos.x(), new_pos.y(), 
+                                self.width(), self.height()
+                            )
+                        except Exception as e:
+                            print(f"Error showing measurement guides: {e}")
 
                     # Add snapping status info if needed
                     if disable_snap and hasattr(preview_window, 'show_position_indicator'):
-                        preview_window.show_position_indicator(
-                            new_pos.x(), new_pos.y(), 
-                            "Snapping temporarily disabled (Shift)"
-                        )
+                        try:
+                            preview_window.show_position_indicator(
+                                new_pos.x(), new_pos.y(), 
+                                "Snapping temporarily disabled (Shift)"
+                            )
+                        except Exception as e:
+                            print(f"Error showing position indicator with status: {e}")
                     
                     # Show alignment guides if snapped
                     if snapped and guide_lines and hasattr(preview_window, 'show_alignment_guides'):
-                        preview_window.show_alignment_guides(guide_lines)
+                        try:
+                            preview_window.show_alignment_guides(guide_lines)
+                        except Exception as e:
+                            print(f"Error showing alignment guides: {e}")
                     elif hasattr(preview_window, 'hide_alignment_guides'):
-                        preview_window.hide_alignment_guides()
+                        try:
+                            preview_window.hide_alignment_guides()
+                        except Exception as e:
+                            print(f"Error hiding alignment guides: {e}")
                 
-                # Apply the move
+                # Apply the final position (if not already applied in snapping code)
                 self.move(new_pos)
                 
                 # Notify the parent to update shadow label if it exists
                 if hasattr(parent, "update_shadow_position"):
                     parent.update_shadow_position(self)
+            
+            # Apply the move
+            self.move(new_pos)
+                
+            event.accept()
         
     def find_preview_window_parent(self):
         """Find the PreviewWindow parent to access alignment guide methods"""
@@ -7453,6 +7544,7 @@ class ColoredPrefixLabel(DraggableLabel):
             painter.setPen(action_color)
             painter.drawText(x, y, text)
 
+# 4. Similar approach for ColoredDraggableLabel
 class ColoredDraggableLabel(DraggableLabel):
     """A draggable label that supports different colors for prefix and action text"""
     def __init__(self, text, parent=None, shadow_offset=2, settings=None):
@@ -7461,6 +7553,16 @@ class ColoredDraggableLabel(DraggableLabel):
         self.prefix = ""
         self.action = ""
         self.parse_text(text)
+    
+    def mousePressEvent(self, event):
+        """Override to ensure proper offset tracking"""
+        # IMPORTANT: Call DraggableLabel's method to ensure proper offset tracking
+        super().mousePressEvent(event)
+    
+    def mouseMoveEvent(self, event):
+        """Override to ensure proper offset preservation"""
+        # IMPORTANT: Call DraggableLabel's method to ensure proper movement
+        super().mouseMoveEvent(event)
     
     def parse_text(self, text):
         """Parse text into prefix and action components"""
@@ -7545,6 +7647,16 @@ class GradientDraggableLabel(DraggableLabel):
         self.prefix_gradient_end = QColor(self.settings.get("prefix_gradient_end", "#FF5722"))
         self.action_gradient_start = QColor(self.settings.get("action_gradient_start", "#2196F3"))
         self.action_gradient_end = QColor(self.settings.get("action_gradient_end", "#4CAF50"))
+    
+    def mousePressEvent(self, event):
+        """Override to ensure proper offset tracking"""
+        # IMPORTANT: Call DraggableLabel's method to ensure proper offset tracking
+        super().mousePressEvent(event)
+    
+    def mouseMoveEvent(self, event):
+        """Override to ensure proper offset preservation"""
+        # IMPORTANT: Call DraggableLabel's method to ensure proper movement
+        super().mouseMoveEvent(event)
     
     def parse_text(self, text):
         """Parse text into prefix and action components"""
