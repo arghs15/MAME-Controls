@@ -17,5 +17,3 @@ mame_controls_pyqt
 ####################################
 Show Preview (mame_controls_preview)
 ####################################
-
--Remove redundant logo code - there's a lot. also, compare old center-left etc logo functions. They may work better.
