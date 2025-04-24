@@ -1,4 +1,3 @@
-Shadow font is a standard font, and not the font used. Also doesn't align correctly. Likely remove all toghter. 
 
 Update default image to use fighter arcades background for png reflection effect
 
