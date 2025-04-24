@@ -1299,6 +1299,7 @@ class PreviewWindow(QMainWindow):
         
         print("--- FONT INITIALIZATION COMPLETE ---\n")
 
+    # 1. First, modify the create_floating_button_frame method to add a proper drag handle
     def create_floating_button_frame(self):
         """Create clean, simple floating button frame with improved drag and click handling"""
         from PyQt5.QtWidgets import QFrame, QVBoxLayout, QHBoxLayout, QLabel, QPushButton
@@ -1321,21 +1322,24 @@ class PreviewWindow(QMainWindow):
         main_layout.setContentsMargins(10, 5, 10, 10)
         main_layout.setSpacing(5)
         
-        # Add a visible drag handle at the top
+        # Add a visible drag handle at the top - THIS IS THE DESIGNATED DRAG AREA
         handle_layout = QHBoxLayout()
         handle_layout.setContentsMargins(0, 0, 0, 0)
         
         # Create a drag handle label with grip dots
-        drag_handle = QLabel("• • •")
-        drag_handle.setStyleSheet("""
+        self.drag_handle = QLabel("• • •")
+        self.drag_handle.setStyleSheet("""
             color: #888888;
             font-size: 14px;
             font-weight: bold;
             padding: 0px;
+            background-color: rgba(60, 60, 65, 100);
+            border-radius: 4px;
         """)
-        drag_handle.setAlignment(Qt.AlignCenter)
-        drag_handle.setCursor(Qt.OpenHandCursor)
-        handle_layout.addWidget(drag_handle)
+        self.drag_handle.setAlignment(Qt.AlignCenter)
+        self.drag_handle.setCursor(Qt.OpenHandCursor)
+        self.drag_handle.setFixedHeight(20)
+        handle_layout.addWidget(self.drag_handle)
         
         # Add the handle to the main layout
         main_layout.addLayout(handle_layout)
@@ -1395,11 +1399,6 @@ class PreviewWindow(QMainWindow):
         self.xinput_controls_button.setStyleSheet(button_style)
         self.top_row.addWidget(self.xinput_controls_button)
 
-        #self.bezel_button = QPushButton("Show Bezel")
-        #self.bezel_button.clicked.connect(self.toggle_bezel_improved)
-        #self.bezel_button.setStyleSheet(button_style)
-        #self.top_row.addWidget(self.bezel_button)
-        
         # Second row buttons
         self.toggle_texts_button = QPushButton("Hide Texts")
         self.toggle_texts_button.clicked.connect(self.toggle_texts)
@@ -1444,13 +1443,13 @@ class PreviewWindow(QMainWindow):
         self.save_image_button.setStyleSheet(button_style)
         self.bottom_row.addWidget(self.save_image_button)
         
-        # Add dragging functionality with improved event handling
-        self.button_frame.mousePressEvent = self.button_frame_mouse_press
-        self.button_frame.mouseMoveEvent = self.button_frame_mouse_move
-        self.button_frame.mouseReleaseEvent = self.button_frame_mouse_release
+        # IMPROVED: Add dragging functionality to the drag handle only
+        self.drag_handle.mousePressEvent = self.handle_drag_press
+        self.drag_handle.mouseMoveEvent = self.handle_drag_move
+        self.drag_handle.mouseReleaseEvent = self.handle_drag_release
         
-        # Set initial cursor
-        self.button_frame.setCursor(Qt.OpenHandCursor)
+        # CRITICAL FIX: The button frame itself should NOT have drag behavior
+        # Remove the mouse event handlers from the button frame
         
         # Store a flag to track frame dragging state
         self.button_dragging = False
@@ -1487,46 +1486,45 @@ class PreviewWindow(QMainWindow):
         # Determine button frame position
         self.position_button_frame()
         
-        # Make drag handle exclusively handle dragging events
-        drag_handle.mousePressEvent = lambda event: self.handle_drag_press(event, self.button_frame)
-        drag_handle.mouseMoveEvent = lambda event: self.handle_drag_move(event, self.button_frame)
-        drag_handle.mouseReleaseEvent = lambda event: self.handle_drag_release(event)
-        
         # Update logo button text after a short delay to ensure settings are loaded
         QTimer.singleShot(100, self.update_center_logo_button_text)
         
         # Show button frame
         self.button_frame.show()
 
-    def handle_drag_press(self, event, frame):
-        """Handle mouse press on the drag handle"""
+    # 2. Now, update the drag handle event handlers
+    # Fix the drag handling to prevent jittering
+    def handle_drag_press(self, event):
+        """Handle mouse press on the drag handle with smooth drag initiation"""
         from PyQt5.QtCore import Qt
         
         if event.button() == Qt.LeftButton:
             self.button_dragging = True
-            self.button_drag_pos = event.pos()
-            self.button_drag_start_pos = event.pos()  # Store for distance calculation
-            frame.setCursor(Qt.ClosedHandCursor)
+            # IMPORTANT: Store the global position of the mouse when dragging starts
+            self.drag_start_global_pos = event.globalPos()
+            # Store the initial position of the button frame
+            self.button_frame_start_pos = self.button_frame.pos()
+            self.drag_handle.setCursor(Qt.ClosedHandCursor)
             event.accept()
 
-    def handle_drag_move(self, event, frame):
-        """Handle mouse move on the drag handle"""
+    def handle_drag_move(self, event):
+        """Handle mouse move on the drag handle with consistent delta calculation"""
         from PyQt5.QtCore import Qt
         
-        if self.button_dragging and hasattr(self, 'button_drag_pos'):
-            # Get global positions to properly calculate movement
-            global_pos = event.globalPos()
-            relative_pos = self.button_drag_pos
+        if self.button_dragging and hasattr(self, 'drag_start_global_pos'):
+            # Calculate movement delta from the initial global position
+            # This ensures consistent movement without jittering
+            delta = event.globalPos() - self.drag_start_global_pos
             
-            # Calculate new position in parent coordinates
-            new_pos = frame.mapToParent(global_pos - frame.mapToGlobal(relative_pos))
+            # Apply delta to the original frame position
+            new_pos = self.button_frame_start_pos + delta
             
             # Keep within window bounds
-            new_pos.setX(max(0, min(self.width() - frame.width(), new_pos.x())))
-            new_pos.setY(max(0, min(self.height() - frame.height(), new_pos.y())))
+            new_pos.setX(max(0, min(self.width() - self.button_frame.width(), new_pos.x())))
+            new_pos.setY(max(0, min(self.height() - self.button_frame.height(), new_pos.y())))
             
             # Move the frame
-            frame.move(new_pos)
+            self.button_frame.move(new_pos)
             event.accept()
 
     def handle_drag_release(self, event):
@@ -1535,10 +1533,13 @@ class PreviewWindow(QMainWindow):
         
         if event.button() == Qt.LeftButton:
             self.button_dragging = False
-            self.button_frame.setCursor(Qt.OpenHandCursor)
+            self.drag_handle.setCursor(Qt.OpenHandCursor)
+            # Clear the global position reference
+            if hasattr(self, 'drag_start_global_pos'):
+                delattr(self, 'drag_start_global_pos')
             event.accept()
     
-    def button_frame_mouse_press(self, event):
+    '''def button_frame_mouse_press(self, event):
         """Handle mouse press on button frame for dragging with improved button handling"""
         from PyQt5.QtCore import Qt
         from PyQt5.QtWidgets import QApplication
@@ -1607,7 +1608,7 @@ class PreviewWindow(QMainWindow):
                     event.accept()
             else:
                 # Accept the event if no start position info
-                event.accept()
+                event.accept()'''
 
     def position_button_frame(self, initial_position=None):
         """Position the button frame with option for custom initial position"""

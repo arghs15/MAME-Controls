@@ -18,9 +18,4 @@ mame_controls_pyqt
 Show Preview (mame_controls_preview)
 ####################################
 
-Text Settings
--show all xinput and then normal controls sets a default font. exit, and re-enter shows correct font
-
--Gradient no longer dynamically updates and have to also exit and re-enter. Sometime it works after you've done it..
-
 -Remove redundant logo code - there's a lot. also, compare old center-left etc logo functions. They may work better.
