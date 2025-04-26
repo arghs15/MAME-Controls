@@ -10,8 +10,6 @@ mame_controls_pyqt
 
 -Also analyse button has a tkinter type theme. Might be easier going forward to edit the whole gui, and I may delete tkinter and only use this. Simplifies things. 
 
--Add generate images from previous exe
-
 ####################################
 Show Preview (mame_controls_preview)
 ####################################
